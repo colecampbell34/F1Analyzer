@@ -3,6 +3,7 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import fastf1
 import fastf1.plotting
 import os
@@ -27,17 +28,14 @@ sidebar = html.Div([
     html.Br(),
 
     dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
-    # Options populated dynamically by Callback 1!
     dcc.Dropdown(id='race-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Session", style={"fontSize": "0.9rem"}),
-    # Options populated dynamically by Callback 2!
     dcc.Dropdown(id='session-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Driver 1", style={"fontSize": "0.9rem"}),
-    # Options populated dynamically by Callback 3!
     dcc.Dropdown(id='driver1-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
@@ -70,14 +68,17 @@ content = html.Div([
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
-        dcc.Tab(label='Track Dominance Map', children=[
+        # TAB 2: The Merged 3D Dominance Map
+        dcc.Tab(label='3D Track Dominance', children=[
             dcc.Loading(type="default", color="#ff0000",
-                        children=dcc.Graph(id='dominance-graph', style={'height': '75vh'}))
+                        children=dcc.Graph(id='3d-dominance-graph', style={'height': '75vh'}))
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
-        dcc.Tab(label='3D Elevation Map', children=[
-            dcc.Loading(type="default", color="#ff0000", children=dcc.Graph(id='3d-graph', style={'height': '75vh'}))
+        # TAB 3: NEW! Race Pace & Weather Strategy
+        dcc.Tab(label='Strategy & Weather', children=[
+            dcc.Loading(type="default", color="#ff0000",
+                        children=dcc.Graph(id='strategy-graph', style={'height': '75vh'}))
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'})
     ])
@@ -88,81 +89,54 @@ app.layout = dbc.Container([
 ], fluid=True, style={"padding": "0px"})
 
 
-# ==============================================================================
-# --- 4. THE CASCADING CALLBACKS (The Ripple Effect) ---
-# ==============================================================================
-
-# Callback 1: Year -> Populates Races
-@app.callback([Output('race-dropdown', 'options'), Output('race-dropdown', 'value')], [Input('year-dropdown', 'value')]
-              )
+# --- CALLBACKS 1-3 (DYNAMIC DROPDOWNS) ---
+@app.callback([Output('race-dropdown', 'options'), Output('race-dropdown', 'value')], [Input('year-dropdown', 'value')])
 def update_races(year):
     if not year: return dash.no_update, dash.no_update
     schedule = fastf1.get_event_schedule(year)
     schedule = schedule[schedule['EventFormat'] != 'testing']
     races = schedule['EventName'].tolist()
-    options = [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races]
-    return options, races[0] if races else None
+    return [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races], races[0] if races else None
 
 
-# Callback 2: Race -> Populates Actual Sessions for that specific weekend
 @app.callback([Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
-              [Input('race-dropdown', 'value')], [State('year-dropdown', 'value')]
-              )
+              [Input('race-dropdown', 'value')], [State('year-dropdown', 'value')])
 def update_sessions(race, year):
     if not race or not year: return dash.no_update, dash.no_update
     event = fastf1.get_event(year, race)
-
-    options = []
-    # Every F1 event has up to 5 sessions. This extracts their exact names (e.g. "Sprint Qualifying")
-    for i in range(1, 6):
-        s_name = event[f'Session{i}']
-        if pd.notna(s_name) and s_name:
-            options.append({'label': s_name, 'value': s_name})
-
-    # Default to Qualifying if it exists, otherwise the last session (Race)
+    options = [{'label': event[f'Session{i}'], 'value': event[f'Session{i}']} for i in range(1, 6) if
+               pd.notna(event[f'Session{i}']) and event[f'Session{i}']]
     val = options[-1]['value'] if options else None
     for opt in options:
-        if opt['label'] == 'Qualifying':
-            val = opt['value']
-
+        if opt['label'] == 'Qualifying': val = opt['value']
     return options, val
 
 
-# Callback 3: Session -> Populates Drivers who ACTUALLY drove in that session
-@app.callback([Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'),
-               Output('driver2-dropdown', 'options'), Output('driver2-dropdown', 'value')],
-              [Input('session-dropdown', 'value')], [State('race-dropdown', 'value'), State('year-dropdown', 'value')]
-              )
+@app.callback(
+    [Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'), Output('driver2-dropdown', 'options'),
+     Output('driver2-dropdown', 'value')], [Input('session-dropdown', 'value')],
+    [State('race-dropdown', 'value'), State('year-dropdown', 'value')])
 def update_drivers(session_name, race, year):
     if not session_name or not race or not year: return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-
     try:
         session = fastf1.get_session(year, race, session_name)
-        # We load ONLY the results, turning off telemetry/weather to make this lightning fast (1-2 seconds)
         session.load(telemetry=False, laps=False, weather=False, messages=False)
-
-        results = session.results['Abbreviation'].dropna().tolist()
-        valid_drivers = [d for d in results if isinstance(d, str) and len(d) == 3]
-
-        # Sort options alphabetically for the dropdown list
+        valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if
+                         isinstance(d, str) and len(d) == 3]
         options = [{'label': d, 'value': d} for d in sorted(valid_drivers)]
-
-        # Smart Default: Pick the 1st and 2nd place drivers from the results!
-        val1 = valid_drivers[0] if len(valid_drivers) > 0 else None
-        val2 = valid_drivers[1] if len(valid_drivers) > 1 else val1
-
-        return options, val1, options, val2
-    except Exception as e:
+        return options, (valid_drivers[0] if len(valid_drivers) > 0 else None), options, (
+            valid_drivers[1] if len(valid_drivers) > 1 else None)
+    except:
         return [], None, [], None
 
 
-# Callback 4: Update All Graphs (Only fires when everything is selected!)
-@app.callback([Output('speed-graph', 'figure'), Output('dominance-graph', 'figure'), Output('3d-graph', 'figure'),
-               Output('main-title', 'children')],
-              [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-               Input('metric-dropdown', 'value')],
-              [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
-              )
+# --- CALLBACK 4: UPDATE ALL 3 GRAPHS ---
+@app.callback(
+    [Output('speed-graph', 'figure'), Output('3d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
+     Output('main-title', 'children')],
+    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'), Input('metric-dropdown', 'value')],
+    [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
+    )
 def update_graphs(driver1, driver2, metric, session_type, race, year):
     empty_fig = go.Figure().update_layout(template='plotly_dark')
     if not all([year, race, session_type, driver1, driver2, metric]):
@@ -170,8 +144,10 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
     try:
         session = fastf1.get_session(year, race, session_type)
-        session.load(telemetry=True, weather=False, messages=False)
+        # CRITICAL: We now MUST load Weather = True for Tab 3!
+        session.load(telemetry=True, weather=True, messages=False)
 
+        # FASTEST LAPS (For Tab 1 & Tab 2)
         lap1 = session.laps.pick_drivers(driver1).pick_fastest()
         lap2 = session.laps.pick_drivers(driver2).pick_fastest()
 
@@ -180,19 +156,19 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
-        t1 = lap1['LapTime'].total_seconds()
-        t2 = lap2['LapTime'].total_seconds()
+        t1, t2 = lap1['LapTime'].total_seconds(), lap2['LapTime'].total_seconds()
 
+        # DYNAMIC COLORS
         try:
-            c1 = fastf1.plotting.get_driver_color(driver1, session)
-            c2 = fastf1.plotting.get_driver_color(driver2, session)
+            c1, c2 = fastf1.plotting.get_driver_color(driver1, session), fastf1.plotting.get_driver_color(driver2,
+                                                                                                          session)
         except:
             c1, c2 = '#00ffff', '#ff00ff'
-
         if not c1.startswith('#'): c1 = f"#{c1}"
         if not c2.startswith('#'): c2 = f"#{c2}"
         if c1.lower() == c2.lower(): c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
 
+        # SORTING FASTEST DRIVER
         if t1 <= t2:
             fast_driver, fast_tel, fast_c, fast_t = driver1, tel1, c1, t1
             slow_driver, slow_tel, slow_c, slow_t = driver2, tel2, c2, t2
@@ -213,13 +189,13 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
         y_labels = {'Speed': 'Speed (km/h)', 'Throttle': 'Throttle (%)', 'Brake': 'Brake Pressure (%)', 'nGear': 'Gear',
                     'RPM': 'Engine RPM'}
-        fig_speed.update_layout(title=f'{metric} Trace', xaxis_title='Distance along track (meters)',
+        fig_speed.update_layout(title=f'{metric} Trace (Fastest lap)', xaxis_title='Distance along track (meters)',
                                 yaxis_title=y_labels.get(metric, metric), template='plotly_dark', hovermode='x unified',
                                 margin=dict(l=40, r=40, t=40, b=40),
                                 legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99))
 
         # ==========================================
-        # GRAPH 2: DOMINANCE MAP
+        # GRAPH 2: COMBINED 3D DOMINANCE MAP
         # ==========================================
         num_minisectors = 15
         sector_length = max(tel1['Distance'].max(), tel2['Distance'].max()) / num_minisectors
@@ -228,56 +204,103 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
         v1_avg = tel1.groupby('MiniSector')['Speed'].mean()
         v2_avg = tel2.groupby('MiniSector')['Speed'].mean()
-
         winner_list = [driver1 if v1_avg.get(i, 0) > v2_avg.get(i, 0) else driver2 for i in range(num_minisectors + 1)]
-        fig_map = go.Figure()
 
-        fig_map.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=fast_c, width=10),
-                                     name=f'{fast_driver} Faster ({fast_t:.3f}s)'))
-        fig_map.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=slow_c, width=10),
-                                     name=f'{slow_driver} Faster ({slow_t:.3f}s)'))
-
-        for ms in range(num_minisectors):
-            sector_data = tel1[tel1['MiniSector'] == ms]
-            if sector_data.empty: continue
-            next_sector_data = tel1[tel1['MiniSector'] == ms + 1]
-            if not next_sector_data.empty: sector_data = pd.concat([sector_data, next_sector_data.iloc[[0]]])
-            winner = winner_list[ms]
-            color = c1 if winner == driver1 else c2
-            fig_map.add_trace(
-                go.Scatter(x=sector_data['X'], y=sector_data['Y'], mode='lines', line=dict(color=color, width=10),
-                           showlegend=False, hoverinfo='skip'))
-
-        fig_map.update_layout(title="Track Dominance (15 Mini-Sectors)", template='plotly_dark',
-                              yaxis=dict(scaleanchor="x", scaleratio=1, visible=False), xaxis=dict(visible=False),
-                              margin=dict(l=0, r=0, t=40, b=0),
-                              legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99))
-
-        # ==========================================
-        # GRAPH 3: 3D ELEVATION MAP
-        # ==========================================
+        # Calculate Aspect Ratio to preserve track shape but boost Elevation (Z)
         x_range = fast_tel['X'].max() - fast_tel['X'].min()
         y_range = fast_tel['Y'].max() - fast_tel['Y'].min()
         max_range = max(x_range, y_range)
-        x_ratio, y_ratio = x_range / max_range, y_range / max_range
 
-        fig_3d = go.Figure()
-        fig_3d.add_trace(go.Scatter3d(x=fast_tel['X'], y=fast_tel['Y'], z=fast_tel['Z'], mode='lines',
-                                      line=dict(color=fast_tel['Speed'], colorscale='Turbo', width=6,
-                                                colorbar=dict(title='Speed (km/h)', x=0.9)),
-                                      name=f'{fast_driver} Path'))
-        fig_3d.add_trace(go.Scatter3d(x=slow_tel['X'], y=slow_tel['Y'], z=slow_tel['Z'], mode='lines',
-                                      line=dict(color=slow_c, width=4), name=f'{slow_driver} Path (Click to view)',
-                                      visible='legendonly'))
+        fig_3d_dom = go.Figure()
 
-        fig_3d.update_layout(title=f"3D Track Elevation & Speed Profile", template='plotly_dark',
-                             scene=dict(xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
-                                        aspectmode='manual', aspectratio=dict(x=x_ratio, y=y_ratio, z=0.15)),
-                             margin=dict(l=0, r=0, t=40, b=0),
-                             legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+        # Add Dummy Legend Items
+        fig_3d_dom.add_trace(go.Scatter3d(x=[None], y=[None], z=[None], mode='lines', line=dict(color=fast_c, width=6),
+                                          name=f'{fast_driver} Faster ({fast_t:.3f}s)'))
+        fig_3d_dom.add_trace(go.Scatter3d(x=[None], y=[None], z=[None], mode='lines', line=dict(color=slow_c, width=6),
+                                          name=f'{slow_driver} Faster ({slow_t:.3f}s)'))
+
+        # Draw the 3D Mini-Sectors
+        for ms in range(num_minisectors):
+            # We map the physical path of the overall fastest driver, but color it by the sector winner
+            sector_data = fast_tel[fast_tel['MiniSector'] == ms]
+            if sector_data.empty: continue
+
+            next_sector = fast_tel[fast_tel['MiniSector'] == ms + 1]
+            if not next_sector.empty: sector_data = pd.concat([sector_data, next_sector.iloc[[0]]])
+
+            winner = winner_list[ms]
+            color = c1 if winner == driver1 else c2
+
+            fig_3d_dom.add_trace(go.Scatter3d(
+                x=sector_data['X'], y=sector_data['Y'], z=sector_data['Z'],
+                mode='lines', line=dict(color=color, width=8),  # Thicker 3D lines
+                showlegend=False, hoverinfo='skip'
+            ))
+
+        fig_3d_dom.update_layout(
+            title="3D Track Elevation & Dominance Map", template='plotly_dark',
+            scene=dict(
+                xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
+                aspectmode='manual', aspectratio=dict(x=x_range / max_range, y=y_range / max_range, z=0.15)
+            ),
+            margin=dict(l=0, r=0, t=40, b=0), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        )
+
+        # ==========================================
+        # GRAPH 3: RACE PACE & WEATHER STRATEGY
+        # ==========================================
+        # 1. Get ALL laps for both drivers.
+        # pick_quicklaps() automatically filters out 3-minute pit stops so the graph isn't ruined!
+        all_laps1 = session.laps.pick_drivers(driver1).pick_quicklaps().reset_index(drop=True)
+        all_laps2 = session.laps.pick_drivers(driver2).pick_quicklaps().reset_index(drop=True)
+
+        # Convert Timedelta to Seconds for the Y-Axis
+        all_laps1['LapTime_Sec'] = all_laps1['LapTime'].dt.total_seconds()
+        all_laps2['LapTime_Sec'] = all_laps2['LapTime'].dt.total_seconds()
+
+        # Create dual-axis chart
+        fig_strat = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # Driver 1 Pace
+        fig_strat.add_trace(go.Scatter(
+            x=all_laps1['LapNumber'], y=all_laps1['LapTime_Sec'],
+            mode='lines+markers', name=f'{driver1} Pace', line=dict(color=c1)
+        ), secondary_y=False)
+
+        # Driver 2 Pace
+        fig_strat.add_trace(go.Scatter(
+            x=all_laps2['LapNumber'], y=all_laps2['LapTime_Sec'],
+            mode='lines+markers', name=f'{driver2} Pace', line=dict(color=c2)
+        ), secondary_y=False)
+
+        # Overlay Track Temperature (Mapped to Driver 1's Lap Numbers for clean plotting)
+        weather_data = session.weather_data
+        if not weather_data.empty and not all_laps1.empty:
+            track_temps = []
+            lap_nums = []
+            for _, lap in all_laps1.iterrows():
+                # Find the weather reading closest to the time this lap was completed
+                idx = (weather_data['Time'] - lap['Time']).abs().idxmin()
+                track_temps.append(weather_data.loc[idx, 'TrackTemp'])
+                lap_nums.append(lap['LapNumber'])
+
+            # Plot the weather line on the Secondary Y-Axis
+            fig_strat.add_trace(go.Scatter(
+                x=lap_nums, y=track_temps,
+                mode='lines', name='Track Temp (°C)',
+                line=dict(color='white', dash='dot', width=2)
+            ), secondary_y=True)
+
+        fig_strat.update_layout(
+            title="Long Run Pace vs. Track Temperature (Out-laps removed)",
+            template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=40, t=40, b=40)
+        )
+        fig_strat.update_xaxes(title_text="Lap Number")
+        fig_strat.update_yaxes(title_text="Lap Time (Seconds)", secondary_y=False)
+        fig_strat.update_yaxes(title_text="Track Temp (°C)", secondary_y=True, showgrid=False)
 
         title_text = f"{year} {race} | {session_type} | {fast_driver} vs {slow_driver}"
-        return fig_speed, fig_map, fig_3d, title_text
+        return fig_speed, fig_3d_dom, fig_strat, title_text
 
     except Exception as e:
         print(f"Graph Error: {e}")
