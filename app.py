@@ -4,6 +4,7 @@ import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 import fastf1
+import fastf1.plotting
 import os
 import pandas as pd
 
@@ -42,16 +43,34 @@ sidebar = html.Div([
 
     dbc.Label("Driver 2"),
     dcc.Dropdown(id='driver2-dropdown', options=driver_options, value='NOR', style={'color': 'black'}),
+    html.Br(),
+    html.Hr(),
+
+    # NEW: Telemetry Metric Selector
+    dbc.Label("Telemetry Metric"),
+    dcc.Dropdown(
+        id='metric-dropdown',
+        options=[
+            {'label': 'Speed (km/h)', 'value': 'Speed'},
+            {'label': 'Throttle (%)', 'value': 'Throttle'},
+            {'label': 'Brake (%)', 'value': 'Brake'},
+            {'label': 'Gear', 'value': 'nGear'},
+            {'label': 'Engine RPM', 'value': 'RPM'}
+        ],
+        value='Speed',  # Default value
+        style={'color': 'black'}
+    ),
+
 ], style={"padding": "2rem", "background-color": "#111111", "height": "100vh"})
 
-# --- 3. THE MAIN VIEWING AREA (NOW WITH TABS!) ---
+# --- 3. THE MAIN VIEWING AREA ---
 content = html.Div([
     html.H3("Qualifying Telemetry Analysis", className="text-center mt-3"),
     html.Hr(),
 
     dcc.Tabs([
-        # Tab 1: The Speed Traces
-        dcc.Tab(label='Speed Traces', children=[
+        # Tab 1: The Telemetry Traces
+        dcc.Tab(label='Telemetry Traces', children=[
             dcc.Loading(type="default", color="#ff0000", children=dcc.Graph(id='speed-graph'))
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
@@ -70,78 +89,117 @@ app.layout = dbc.Container([
 ], fluid=True, style={"padding": "0px"})
 
 
-# --- 4. THE CALLBACK (Generates BOTH graphs now) ---
+# --- 4. THE CALLBACK ---
 @app.callback([Output('speed-graph', 'figure'), Output('dominance-graph', 'figure')],
               [Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
-               Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value')]
+               Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
+               Input('metric-dropdown', 'value')]  # NEW INPUT ADDED HERE
               )
-def update_graphs(year, race, driver1, driver2):
-    if not year or not race or not driver1 or not driver2:
+def update_graphs(year, race, driver1, driver2, metric):
+    if not year or not race or not driver1 or not driver2 or not metric:
         return go.Figure(), go.Figure()
 
     try:
         session = fastf1.get_session(year, race, 'Q')
         session.load(telemetry=True, weather=False, messages=False)
 
-        # Updated to pick_drivers()
         lap1 = session.laps.pick_drivers(driver1).pick_fastest()
         lap2 = session.laps.pick_drivers(driver2).pick_fastest()
 
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
 
-        # ==========================================
-        # GRAPH 1: SPEED TRACE
-        # ==========================================
-        fig_speed = go.Figure()
-        fig_speed.add_trace(go.Scatter(x=tel1['Distance'], y=tel1['Speed'], mode='lines', name=f'{driver1}',
-                                       line=dict(color='#00ffff')))
-        fig_speed.add_trace(go.Scatter(x=tel2['Distance'], y=tel2['Speed'], mode='lines', name=f'{driver2}',
-                                       line=dict(color='#ff00ff')))
-        fig_speed.update_layout(title=f'Speed Trace', template='plotly_dark', hovermode='x unified',
-                                margin=dict(l=40, r=40, t=40, b=40))
+        # --- SMART COLOR ASSIGNMENT ---
+        try:
+            c1 = fastf1.plotting.get_driver_color(driver1, session)
+            c2 = fastf1.plotting.get_driver_color(driver2, session)
+        except:
+            c1, c2 = '#00ffff', '#ff00ff'  # Fallback if driver color isn't found
+
+        # Ensure hex starts with #
+        if not c1.startswith('#'): c1 = f"#{c1}"
+        if not c2.startswith('#'): c2 = f"#{c2}"
+
+        # If teammates (same color), give driver 2 a high-visibility fallback color
+        if c1.lower() == c2.lower():
+            c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
 
         # ==========================================
-        # GRAPH 2: TRACK DOMINANCE MAP
+        # GRAPH 1: DYNAMIC TELEMETRY TRACE
         # ==========================================
-        # 1. Divide the track into 25 mini-sectors
-        num_minisectors = 10
+        fig_speed = go.Figure()
+        fig_speed.add_trace(
+            go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f'{driver1}', line=dict(color=c1)))
+        fig_speed.add_trace(
+            go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f'{driver2}', line=dict(color=c2)))
+
+        # Dynamic Y-Axis Labels
+        y_labels = {'Speed': 'Speed (km/h)', 'Throttle': 'Throttle (%)', 'Brake': 'Brake Pressure (%)', 'nGear': 'Gear',
+                    'RPM': 'Engine RPM'}
+
+        fig_speed.update_layout(
+            title=f'{metric} Trace',
+            xaxis_title='Distance along track (meters)',
+            yaxis_title=y_labels.get(metric, metric),
+            template='plotly_dark',
+            hovermode='x unified',
+            margin=dict(l=40, r=40, t=40, b=40)
+        )
+
+        # ==========================================
+        # GRAPH 2: TRACK DOMINANCE MAP (CONTINUOUS LINES)
+        # ==========================================
+        num_minisectors = 15
         total_distance = max(tel1['Distance'].max(), tel2['Distance'].max())
         sector_length = total_distance / num_minisectors
 
-        # 2. Assign a sector number to each telemetry row
         tel1['MiniSector'] = (tel1['Distance'] // sector_length).astype(int)
         tel2['MiniSector'] = (tel2['Distance'] // sector_length).astype(int)
 
-        # 3. Calculate average speed per sector for both drivers
         v1_avg = tel1.groupby('MiniSector')['Speed'].mean()
         v2_avg = tel2.groupby('MiniSector')['Speed'].mean()
 
-        # 4. Determine the winner of each sector
         winner_list = []
         for i in range(num_minisectors + 1):
-            speed1 = v1_avg.get(i, 0)
-            speed2 = v2_avg.get(i, 0)
-            winner_list.append(driver1 if speed1 > speed2 else driver2)
+            winner_list.append(driver1 if v1_avg.get(i, 0) > v2_avg.get(i, 0) else driver2)
 
-        # 5. Map the winner back to Driver 1's X/Y coordinates
-        tel1['Winner'] = tel1['MiniSector'].apply(lambda x: winner_list[x] if x < len(winner_list) else driver1)
-
-        # 6. Plot the Track Map using Markers
         fig_map = go.Figure()
 
-        d1_data = tel1[tel1['Winner'] == driver1]
-        fig_map.add_trace(go.Scatter(x=d1_data['X'], y=d1_data['Y'], mode='markers', name=f'{driver1} Faster',
-                                     marker=dict(color='#00ffff', size=8)))
+        # Flags to ensure drivers only appear in the legend once
+        legend_added_d1 = False
+        legend_added_d2 = False
 
-        d2_data = tel1[tel1['Winner'] == driver2]
-        fig_map.add_trace(go.Scatter(x=d2_data['X'], y=d2_data['Y'], mode='markers', name=f'{driver2} Faster',
-                                     marker=dict(color='#ff00ff', size=8)))
+        # 2. Draw each sector as a solid, continuous line
+        for ms in range(num_minisectors):
+            sector_data = tel1[tel1['MiniSector'] == ms]
+            if sector_data.empty: continue
+
+            # CRITICAL: Append the first point of the NEXT sector to close the gap!
+            next_sector_data = tel1[tel1['MiniSector'] == ms + 1]
+            if not next_sector_data.empty:
+                sector_data = pd.concat([sector_data, next_sector_data.iloc[[0]]])
+
+            winner = winner_list[ms]
+            color = c1 if winner == driver1 else c2
+
+            show_legend = False
+            if winner == driver1 and not legend_added_d1:
+                show_legend, legend_added_d1 = True, True
+            elif winner == driver2 and not legend_added_d2:
+                show_legend, legend_added_d2 = True, True
+
+            fig_map.add_trace(go.Scatter(
+                x=sector_data['X'], y=sector_data['Y'],
+                mode='lines',
+                line=dict(color=color, width=10),  # Thick continuous line
+                name=f'{winner} Faster',
+                showlegend=show_legend,
+                hoverinfo='skip'
+            ))
 
         fig_map.update_layout(
-            title="Track Dominance (Mini-Sectors)",
+            title="Track Dominance (15 Mini-Sectors)",
             template='plotly_dark',
-            # THIS IS CRITICAL: scaleanchor ensures the track doesn't look stretched or squished
             yaxis=dict(scaleanchor="x", scaleratio=1, visible=False),
             xaxis=dict(visible=False),
             margin=dict(l=0, r=0, t=40, b=0)
@@ -156,4 +214,4 @@ def update_graphs(year, race, driver1, driver2):
 
 
 if __name__ == '__main__':
-    app.run(debug=False)
+    app.run(debug=True)
