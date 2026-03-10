@@ -10,11 +10,11 @@ fastf1.Cache.enable_cache(cache_dir)
 
 # 2. Load the Session (2026 Australia Qualifying)
 print("Downloading session data... (This might take a minute the first time)")
-session = fastf1.get_session(2026, 'Australia', 'Q')
+session = fastf1.get_session(2026, 'Australia', 'R')
 session.load()
 
 # 3. Extract the Fastest Laps for Verstappen (VER) and Norris (NOR)
-ver_lap = session.laps.pick_drivers('HAM').pick_fastest()
+ver_lap = session.laps.pick_drivers('VER').pick_fastest()
 nor_lap = session.laps.pick_drivers('NOR').pick_fastest()
 
 # 4. Extract Telemetry Data and add a 'Distance' metric
