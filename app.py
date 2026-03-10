@@ -18,36 +18,37 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
 
 driver_options = [{'label': d, 'value': d} for d in ['VER', 'NOR', 'LEC', 'SAI', 'HAM', 'RUS', 'PIA', 'ALO', 'PER']]
 
-# --- 2. THE CONTROL PANEL (SIDEBAR) ---
+# --- 2. THE CONTROL PANEL (SIDEBAR - SLIMMER) ---
 sidebar = html.Div([
-    html.H2("F1 AI Data", className="display-6"),
+    html.H2("F1 AI Data", className="display-6", style={"fontSize": "1.5rem"}),
     html.Hr(),
 
-    dbc.Label("Year"),
+    dbc.Label("Year", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(id='year-dropdown', options=[{'label': str(y), 'value': y} for y in range(2023, 2027)], value=2024,
-                 style={'color': 'black'}),
+                 style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
-    dbc.Label("Grand Prix"),
+    dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(
         id='race-dropdown',
         options=[{'label': 'Bahrain', 'value': 'Bahrain'}, {'label': 'Saudi Arabia', 'value': 'Saudi Arabia'},
                  {'label': 'Australia', 'value': 'Australia'}, {'label': 'Japan', 'value': 'Japan'}],
-        value='Australia', style={'color': 'black'}
+        value='Australia', style={'color': 'black', 'fontSize': '0.9rem'}
     ),
     html.Br(),
 
-    dbc.Label("Driver 1"),
-    dcc.Dropdown(id='driver1-dropdown', options=driver_options, value='VER', style={'color': 'black'}),
+    dbc.Label("Driver 1", style={"fontSize": "0.9rem"}),
+    dcc.Dropdown(id='driver1-dropdown', options=driver_options, value='VER',
+                 style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
-    dbc.Label("Driver 2"),
-    dcc.Dropdown(id='driver2-dropdown', options=driver_options, value='NOR', style={'color': 'black'}),
+    dbc.Label("Driver 2", style={"fontSize": "0.9rem"}),
+    dcc.Dropdown(id='driver2-dropdown', options=driver_options, value='NOR',
+                 style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
     html.Hr(),
 
-    # NEW: Telemetry Metric Selector
-    dbc.Label("Telemetry Metric"),
+    dbc.Label("Telemetry Metric", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(
         id='metric-dropdown',
         options=[
@@ -57,35 +58,35 @@ sidebar = html.Div([
             {'label': 'Gear', 'value': 'nGear'},
             {'label': 'Engine RPM', 'value': 'RPM'}
         ],
-        value='Speed',  # Default value
-        style={'color': 'black'}
+        value='Speed', style={'color': 'black', 'fontSize': '0.9rem'}
     ),
 
-], style={"padding": "2rem", "background-color": "#111111", "height": "100vh"})
+], style={"padding": "1rem", "background-color": "#111111", "height": "100vh"})
 
-# --- 3. THE MAIN VIEWING AREA ---
+# --- 3. THE MAIN VIEWING AREA (WIDER) ---
 content = html.Div([
-    html.H3("Qualifying Telemetry Analysis", className="text-center mt-3"),
+    html.H3("Qualifying Telemetry Analysis", className="text-center mt-2"),
     html.Hr(),
 
     dcc.Tabs([
-        # Tab 1: The Telemetry Traces
         dcc.Tab(label='Telemetry Traces', children=[
-            dcc.Loading(type="default", color="#ff0000", children=dcc.Graph(id='speed-graph'))
+            dcc.Loading(type="default", color="#ff0000", children=dcc.Graph(id='speed-graph', style={'height': '75vh'}))
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
-        # Tab 2: The Dominance Map
         dcc.Tab(label='Track Dominance Map', children=[
             dcc.Loading(type="default", color="#ff0000",
-                        children=dcc.Graph(id='dominance-graph', style={'height': '70vh'}))
+                        children=dcc.Graph(id='dominance-graph', style={'height': '75vh'}))
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'})
     ])
-], style={"padding": "2rem"})
+], style={"padding": "1rem"})
 
 app.layout = dbc.Container([
-    dbc.Row([dbc.Col(sidebar, width=3), dbc.Col(content, width=9)])
+    dbc.Row([
+        dbc.Col(sidebar, width=2),
+        dbc.Col(content, width=10)
+    ])
 ], fluid=True, style={"padding": "0px"})
 
 
@@ -93,7 +94,7 @@ app.layout = dbc.Container([
 @app.callback([Output('speed-graph', 'figure'), Output('dominance-graph', 'figure')],
               [Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
                Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-               Input('metric-dropdown', 'value')]  # NEW INPUT ADDED HERE
+               Input('metric-dropdown', 'value')]
               )
 def update_graphs(year, race, driver1, driver2, metric):
     if not year or not race or not driver1 or not driver2 or not metric:
@@ -109,41 +110,59 @@ def update_graphs(year, race, driver1, driver2, metric):
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
 
-        # --- SMART COLOR ASSIGNMENT ---
+        # Extract Lap Times in seconds for formatting
+        t1 = lap1['LapTime'].total_seconds()
+        t2 = lap2['LapTime'].total_seconds()
+
+        # Extract Colors dynamically based on the session!
         try:
             c1 = fastf1.plotting.get_driver_color(driver1, session)
             c2 = fastf1.plotting.get_driver_color(driver2, session)
         except:
-            c1, c2 = '#00ffff', '#ff00ff'  # Fallback if driver color isn't found
+            c1, c2 = '#00ffff', '#ff00ff'
 
-        # Ensure hex starts with #
         if not c1.startswith('#'): c1 = f"#{c1}"
         if not c2.startswith('#'): c2 = f"#{c2}"
 
-        # If teammates (same color), give driver 2 a high-visibility fallback color
+        # Teammate color collision fix
         if c1.lower() == c2.lower():
             c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
+
+        # Sort drivers so the fastest is ALWAYS drawn first (appears on top of legend)
+        if t1 <= t2:
+            fast_driver, fast_tel, fast_c, fast_t = driver1, tel1, c1, t1
+            slow_driver, slow_tel, slow_c, slow_t = driver2, tel2, c2, t2
+        else:
+            fast_driver, fast_tel, fast_c, fast_t = driver2, tel2, c2, t2
+            slow_driver, slow_tel, slow_c, slow_t = driver1, tel1, c1, t1
 
         # ==========================================
         # GRAPH 1: DYNAMIC TELEMETRY TRACE
         # ==========================================
         fig_speed = go.Figure()
-        fig_speed.add_trace(
-            go.Scatter(x=tel1['Distance'], y=tel1[metric], mode='lines', name=f'{driver1}', line=dict(color=c1)))
-        fig_speed.add_trace(
-            go.Scatter(x=tel2['Distance'], y=tel2[metric], mode='lines', name=f'{driver2}', line=dict(color=c2)))
 
-        # Dynamic Y-Axis Labels
+        # Add Faster Driver Trace
+        fig_speed.add_trace(go.Scatter(
+            x=fast_tel['Distance'], y=fast_tel[metric], mode='lines',
+            name=f'{fast_driver} ({fast_t:.3f}s)', line=dict(color=fast_c)
+        ))
+
+        # Add Slower Driver Trace
+        fig_speed.add_trace(go.Scatter(
+            x=slow_tel['Distance'], y=slow_tel[metric], mode='lines',
+            name=f'{slow_driver} ({slow_t:.3f}s)', line=dict(color=slow_c)
+        ))
+
         y_labels = {'Speed': 'Speed (km/h)', 'Throttle': 'Throttle (%)', 'Brake': 'Brake Pressure (%)', 'nGear': 'Gear',
                     'RPM': 'Engine RPM'}
-
         fig_speed.update_layout(
             title=f'{metric} Trace',
             xaxis_title='Distance along track (meters)',
             yaxis_title=y_labels.get(metric, metric),
             template='plotly_dark',
             hovermode='x unified',
-            margin=dict(l=40, r=40, t=40, b=40)
+            margin=dict(l=40, r=40, t=40, b=40),
+            legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
         )
 
         # ==========================================
@@ -165,16 +184,16 @@ def update_graphs(year, race, driver1, driver2, metric):
 
         fig_map = go.Figure()
 
-        # Flags to ensure drivers only appear in the legend once
-        legend_added_d1 = False
-        legend_added_d2 = False
+        # Add "Dummy" invisible traces just to build the perfect legend order
+        fig_map.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=fast_c, width=10),
+                                     name=f'{fast_driver} Faster ({fast_t:.3f}s)'))
+        fig_map.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=slow_c, width=10),
+                                     name=f'{slow_driver} Faster ({slow_t:.3f}s)'))
 
-        # 2. Draw each sector as a solid, continuous line
         for ms in range(num_minisectors):
             sector_data = tel1[tel1['MiniSector'] == ms]
             if sector_data.empty: continue
 
-            # CRITICAL: Append the first point of the NEXT sector to close the gap!
             next_sector_data = tel1[tel1['MiniSector'] == ms + 1]
             if not next_sector_data.empty:
                 sector_data = pd.concat([sector_data, next_sector_data.iloc[[0]]])
@@ -182,18 +201,12 @@ def update_graphs(year, race, driver1, driver2, metric):
             winner = winner_list[ms]
             color = c1 if winner == driver1 else c2
 
-            show_legend = False
-            if winner == driver1 and not legend_added_d1:
-                show_legend, legend_added_d1 = True, True
-            elif winner == driver2 and not legend_added_d2:
-                show_legend, legend_added_d2 = True, True
-
+            # Note: showlegend=False because we already added the dummy legend items above!
             fig_map.add_trace(go.Scatter(
                 x=sector_data['X'], y=sector_data['Y'],
                 mode='lines',
-                line=dict(color=color, width=10),  # Thick continuous line
-                name=f'{winner} Faster',
-                showlegend=show_legend,
+                line=dict(color=color, width=10),
+                showlegend=False,
                 hoverinfo='skip'
             ))
 
@@ -202,7 +215,8 @@ def update_graphs(year, race, driver1, driver2, metric):
             template='plotly_dark',
             yaxis=dict(scaleanchor="x", scaleratio=1, visible=False),
             xaxis=dict(visible=False),
-            margin=dict(l=0, r=0, t=40, b=0)
+            margin=dict(l=0, r=0, t=40, b=0),
+            legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99)
         )
 
         return fig_speed, fig_map
