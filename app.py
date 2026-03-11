@@ -55,6 +55,17 @@ sidebar = html.Div([
         ],
         value='Speed', style={'color': 'black', 'fontSize': '0.9rem'}
     ),
+    html.Br(),
+
+    dbc.Label("Strategy Chart Filter", style={"fontSize": "0.9rem"}),
+    dcc.Dropdown(
+        id='pace-filter',
+        options=[
+            {'label': 'Racing Laps', 'value': 'racing'},
+            {'label': 'All Laps', 'value': 'all'}
+        ],
+        value='racing', style={'color': 'black', 'fontSize': '0.9rem'}
+    ),
 
 ], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto"})
 
@@ -133,10 +144,11 @@ def update_drivers(session_name, race, year):
 @app.callback(
     [Output('speed-graph', 'figure'), Output('3d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
      Output('main-title', 'children')],
-    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'), Input('metric-dropdown', 'value')],
+    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'), Input('metric-dropdown', 'value'),
+     Input('pace-filter', 'value')],
     [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
     )
-def update_graphs(driver1, driver2, metric, session_type, race, year):
+def update_graphs(driver1, driver2, metric, pace_filter, session_type, race, year):
     empty_fig = go.Figure().update_layout(template='plotly_dark')
     if not all([year, race, session_type, driver1, driver2, metric]):
         return empty_fig, empty_fig, empty_fig, "Select parameters to load data..."
@@ -250,56 +262,28 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
         # GRAPH 3: RACE PACE, PITS & WEATHER STRATEGY
         # ==========================================
 
+        # TODO analyze graphs to see if they are representing the data well and what we can improve
+        
+        if session_type != 'Race':
+            fig_strat = go.Figure().update_layout(template='plotly_dark')
+            fig_strat.add_annotation(text="Strategy & Weather only available for Race sessions",
+                                     showarrow=False, font=dict(size=20), xref="paper", yref="paper", x=0.5, y=0.5)
+            title_text = f"{year} {race} | {session_type} | {fast_driver} vs {slow_driver}"
+            return fig_speed, fig_3d_dom, fig_strat, title_text
+
         # 1. Fetch unfiltered laps to preserve pit stop data
         unfiltered_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
         unfiltered_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
 
         weather_data = session.weather_data
 
-        # 2. Dynamic Wet Race Threshold
-        # TODO probably remove this if we aren't going to use quicklaps
-        is_wet_race = weather_data['Rainfall'].any() if not weather_data.empty else False
-        q_threshold = 1.30 if is_wet_race else 1.07  # Expands threshold to 120% if rain is detected
-
-        # Choosing which laps to show in the chart
-        # TODO maybe user is able to choose to show one of 'all laps' or 'competitive time laps'
-        #  even though all laps will skew the data heavily there should be an option,
-        #  or maybe there is a better way but i want to include something like this
-        #  also change the strategy & weather tab to only show race data since our method of
-        #  displaying only really looks good for complete races
-
-        # Option 1. takes quick laps but slow laps in wet races don't show
-        # all_laps1 = unfiltered_1.pick_quicklaps(threshold=q_threshold).reset_index(drop=True)
-        # all_laps2 = unfiltered_2.pick_quicklaps(threshold=q_threshold).reset_index(drop=True)
-
-        # Option 2. takes all non box laps but VSC laps skew the data heavily
-        # all_laps1 = [lap for lap in unfiltered_1 if lap not in unfiltered_1.pick_box_laps()]
-        # all_laps2 = [lap for lap in unfiltered_2 if lap not in unfiltered_2.pick_box_laps()]
-
-        # Option 3. takes all green non pit laps excluding lap 1 but in a race with lots of pits/vsc
-        #           this could make the dataset quite small
-        # all_laps1 = unfiltered_1.pick_wo_box().pick_track_status('1').loc[session.laps['LapNumber'] > 1]
-        # all_laps2 = unfiltered_2.pick_wo_box().pick_track_status('1').loc[session.laps['LapNumber'] > 1]
-
-        # Option 4. all laps
-        all_laps1 = unfiltered_1
-        all_laps2 = unfiltered_2
-
-
-        # ***Track status codes for pick_track_status***
-        # 1: track clear
-        # 2: yellow flag
-        # 3: not used
-        # 4: safety car
-        # 5: red flag
-        # 6: vsc
-        # 7: vsc ending
-
-
-        # 4. Find the laps BEFORE they pitted (so the triangle sits cleanly on the pace line before they drop time)
-        # TODO not using these for now, but ai might need to know the pit laps for analysis report
-        # pits_1 = unfiltered_1[unfiltered_1['PitOutTime'].notna()]['LapNumber'] - 1
-        # pits_2 = unfiltered_2[unfiltered_2['PitOutTime'].notna()]['LapNumber'] - 1
+        # Racing laps or all laps
+        if pace_filter == 'racing':
+            all_laps1 = unfiltered_1.pick_wo_box().pick_track_status('1').loc[unfiltered_1['LapNumber'] > 1].reset_index(drop=True)
+            all_laps2 = unfiltered_2.pick_wo_box().pick_track_status('1').loc[unfiltered_2['LapNumber'] > 1].reset_index(drop=True)
+        else:
+            all_laps1 = unfiltered_1
+            all_laps2 = unfiltered_2
 
         all_laps1['LapTime_Sec'] = all_laps1['LapTime'].dt.total_seconds()
         all_laps2['LapTime_Sec'] = all_laps2['LapTime'].dt.total_seconds()
@@ -308,86 +292,135 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
         comp_colors = {'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff', 'INTERMEDIATE': '#00ff00',
                        'WET': '#0099ff'}
 
-        for lap_data, drv, col in [(all_laps1, driver1, c1), (all_laps2, driver2, c2)]:
+        # Track which compounds are drawn for the general legend
+        comp_drawn = set()
+
+        # Plot pace line, tyre compounds, pit stops
+        for lap_data, drv, col, unfiltered in [(all_laps1, driver1, c1, unfiltered_1), (all_laps2, driver2, c2, unfiltered_2)]:
 
             # Plot Pace Line
             fig_strat.add_trace(go.Scatter(
                 x=lap_data['LapNumber'], y=lap_data['LapTime_Sec'],
-                mode='lines', name=f'{drv} Pace', line=dict(color=col)
+                mode='lines', name=f'{drv} Pace', line=dict(color=col),
+                legend='legend'
             ), secondary_y=False)
 
             # Plot Tyre Compounds
             if 'Compound' in lap_data.columns:
+                comp_drawn.update(lap_data['Compound'].dropna().unique())
                 for compound in lap_data['Compound'].dropna().unique():
                     comp_subset = lap_data[lap_data['Compound'] == compound]
                     fig_strat.add_trace(go.Scatter(
                         x=comp_subset['LapNumber'], y=comp_subset['LapTime_Sec'],
                         mode='markers', name=f'{drv} {compound}',
-                        marker=dict(color=comp_colors.get(compound, 'grey'), size=8)
+                        marker=dict(color=comp_colors.get(compound, 'grey'), size=8),
+                        showlegend=False
                     ), secondary_y=False)
 
-            # Plot Pit Stops
-            # valid_pits = lap_data[lap_data['LapNumber'].isin(pits)]
-            # fig_strat.add_trace(go.Scatter(
-            #     x=valid_pits['LapNumber'], y=valid_pits['LapTime_Sec'],
-            #     mode='markers',
-            #     marker=dict(symbol='triangle-up', size=14, color='white', line=dict(color='black', width=1)),
-            #     name=f'{drv} Pit'
-            # ), secondary_y=False)
+            if pace_filter == 'all':
+                # Plot Pit Stops
+                pits = unfiltered[unfiltered['PitOutTime'].notna()]['LapNumber']
+                valid_pits = lap_data[lap_data['LapNumber'].isin(pits)]
+                fig_strat.add_trace(go.Scatter(
+                    x=valid_pits['LapNumber'], y=valid_pits['LapTime_Sec'],
+                    mode='markers',
+                    marker=dict(symbol='triangle-up', size=14, color='white', line=dict(color='black', width=1)),
+                    name=f'{drv} Pit', showlegend=False
+                ), secondary_y=False)
 
-        # Track Temperature Overlay & Custom Sidebar Dashboard
+        # Plot general track statuses and general legend entries
+        if pace_filter == 'all':
+            sc_laps = set()
+            vsc_laps = set()
+            red_laps = set()
+            
+            for unfiltered in [unfiltered_1, unfiltered_2]:
+                sc_laps.update(unfiltered[unfiltered['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
+                vsc_laps.update(unfiltered[unfiltered['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
+                red_laps.update(unfiltered[unfiltered['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
+
+            for lap in sc_laps:
+                fig_strat.add_vline(x=lap, line_width=2, line_dash="dash", line_color="orange", opacity=0.5)
+            for lap in vsc_laps:
+                fig_strat.add_vline(x=lap, line_width=2, line_dash="dash", line_color="yellow", opacity=0.5)
+            for lap in red_laps:
+                fig_strat.add_vline(x=lap, line_width=2, line_dash="dash", line_color="red", opacity=0.5)
+
+            if sc_laps:
+                fig_strat.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='lines', line=dict(color='orange', dash='dash', width=2),
+                    name='SC / YF', legend='legend2'
+                ))
+            if vsc_laps:
+                fig_strat.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='lines', line=dict(color='yellow', dash='dash', width=2),
+                    name='VSC', legend='legend2'
+                ))
+            if red_laps:
+                fig_strat.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='lines', line=dict(color='red', dash='dash', width=2),
+                    name='Red Flag', legend='legend2'
+                ))
+            
+            fig_strat.add_trace(go.Scatter(
+                x=[None], y=[None], mode='markers', name='Pit Stop',
+                marker=dict(symbol='triangle-up', size=14, color='white', line=dict(color='black', width=1)),
+                legend='legend2'
+            ))
+
+        for comp in comp_drawn:
+            if comp in comp_colors:
+                fig_strat.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='markers', name=comp,
+                    marker=dict(color=comp_colors[comp], size=8),
+                    legend='legend2'
+                ))
+
+        # Track Temperature Overlay & Precipitation
         if not weather_data.empty and not all_laps1.empty:
             track_temps = []
             lap_nums = []
+            rain_laps = set()
             for _, lap in all_laps1.iterrows():
                 # Find the weather reading closest to the time this lap was completed
                 idx = (weather_data['Time'] - lap['Time']).abs().idxmin()
                 track_temps.append(weather_data.loc[idx, 'TrackTemp'])
                 lap_nums.append(lap['LapNumber'])
+                
+                # Check for rainfall during this lap
+                if weather_data.loc[idx, 'Rainfall']:
+                    rain_laps.add(lap['LapNumber'])
 
             # Plot the weather line on the Secondary Y-Axis
             fig_strat.add_trace(go.Scatter(
                 x=lap_nums, y=track_temps, mode='lines', name='Track Temp (°C)',
-                line=dict(color='white', dash='dot', width=2), opacity=0.4
+                line=dict(color='white', dash='dot', width=2), opacity=0.4,
+                legend='legend'
             ), secondary_y=True)
 
-            # --- WEATHER AGGREGATION SIDEBAR ---
-            max_lap = int(max(unfiltered_1['LapNumber'].max() if not unfiltered_1.empty else 0,
-                              unfiltered_2['LapNumber'].max() if not unfiltered_2.empty else 0))
+            # --- PRECIPITATION OVERLAY ---
+            for lap in rain_laps:
+                fig_strat.add_vline(x=lap, line_width=4, line_dash="dot", line_color="#00ffff", opacity=0.25)
 
-            if max_lap > 0:
-                quarter = max(1, max_lap // 4)
-                chunk_size = max(1, len(weather_data) // 4)
-
-                weather_text = "<span style='font-size:14px; color:#ff3333;'><b>WEATHER REPORT</b></span><br><br>"
-
-                for i in range(4):
-                    start_lap = i * quarter + 1
-                    end_lap = (i + 1) * quarter if i < 3 else max_lap
-
-                    sub_w = weather_data.iloc[i * chunk_size: (i + 1) * chunk_size]
-                    if not sub_w.empty:
-                        t_temp = sub_w['TrackTemp'].mean()
-                        a_temp = sub_w['AirTemp'].mean()
-
-                        rain = "Yes" if sub_w['Rainfall'].any() else "No"
-                        rain_col = "#00ffff" if rain == "Yes" else "#aaaaaa"
-
-                        weather_text += f"<b>Q{i + 1} (Laps {start_lap}-{end_lap})</b><br>"
-                        weather_text += f"Track: {t_temp:.1f}°C | Air: {a_temp:.1f}°C<br>"
-                        weather_text += f"Rain: <span style='color:{rain_col};'>{rain}</span><br><br>"
-
-                fig_strat.add_annotation(
-                    xref="paper", yref="paper", x=1.03, y=0.35,
-                    xanchor="left", yanchor="middle",
-                    text=weather_text, showarrow=False,
-                    font=dict(size=12, color="white"),
-                    bgcolor="#1a1a1a", bordercolor="#444", borderwidth=1, borderpad=10
-                )
+            if rain_laps:
+                fig_strat.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='lines', line=dict(color='#00ffff', dash='dot', width=4),
+                    name='Rain', legend='legend2'
+                ))
 
         fig_strat.update_layout(
-            title="Race Pace, Tyres & Strategy (Out-Laps Removed)",
-            template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=220, t=60, b=40)
+            title="Race Pace, Tyres & Strategy",
+            template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=240, t=60, b=40),
+            legend=dict(
+                title=dict(text="Pace"),
+                yanchor="top", y=0.99, xanchor="left", x=1.02,
+                bgcolor="rgba(0,0,0,0)"
+            ),
+            legend2=dict(
+                title=dict(text="Tyres & Status"),
+                yanchor="top", y=0.75, xanchor="left", x=1.02,
+                bgcolor="rgba(0,0,0,0)"
+            )
         )
         fig_strat.update_xaxes(title_text="Lap Number")
         fig_strat.update_yaxes(title_text="Lap Time (Seconds)", secondary_y=False)
