@@ -8,6 +8,7 @@ import fastf1
 import fastf1.plotting
 import os
 import pandas as pd
+import shutil
 
 # --- 1. SETUP F1 CACHE ---
 cache_dir = 'f1_cache'
@@ -23,7 +24,7 @@ sidebar = html.Div([
     html.Hr(),
 
     dbc.Label("Year", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='year-dropdown', options=[{'label': str(y), 'value': y} for y in range(2018, 2027)], value=2024,
+    dcc.Dropdown(id='year-dropdown', options=[{'label': str(y), 'value': y} for y in range(2018, 2027)], value=2026,
                  style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
@@ -75,7 +76,6 @@ content = html.Div([
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
-        # TAB 3: NEW! Race Pace & Weather Strategy
         dcc.Tab(label='Strategy & Weather', children=[
             dcc.Loading(type="default", color="#ff0000",
                         children=dcc.Graph(id='strategy-graph', style={'height': '75vh'}))
@@ -108,7 +108,7 @@ def update_sessions(race, year):
                pd.notna(event[f'Session{i}']) and event[f'Session{i}']]
     val = options[-1]['value'] if options else None
     for opt in options:
-        if opt['label'] == 'Qualifying': val = opt['value']
+        if opt['label'] == 'Race': val = opt['value']
     return options, val
 
 
@@ -130,7 +130,6 @@ def update_drivers(session_name, race, year):
         return [], None, [], None
 
 
-# --- CALLBACK 4: UPDATE ALL 3 GRAPHS ---
 @app.callback(
     [Output('speed-graph', 'figure'), Output('3d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
      Output('main-title', 'children')],
@@ -176,6 +175,8 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
             fast_driver, fast_tel, fast_c, fast_t = driver2, tel2, c2, t2
             slow_driver, slow_tel, slow_c, slow_t = driver1, tel1, c1, t1
 
+        # TODO maybe change this and the domination map so users can pick any single lap
+        #  might be too complex
         # ==========================================
         # GRAPH 1: TELEMETRY TRACE
         # ==========================================
@@ -233,7 +234,7 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
             fig_3d_dom.add_trace(go.Scatter3d(
                 x=sector_data['X'], y=sector_data['Y'], z=sector_data['Z'],
-                mode='lines', line=dict(color=color, width=8),  # Thicker 3D lines
+                mode='lines', line=dict(color=color, width=8),
                 showlegend=False, hoverinfo='skip'
             ))
 
@@ -242,39 +243,99 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
             scene=dict(
                 xaxis=dict(visible=False), yaxis=dict(visible=False), zaxis=dict(visible=False),
                 aspectmode='manual', aspectratio=dict(x=x_range / max_range, y=y_range / max_range, z=0.15)
-            ),
-            margin=dict(l=0, r=0, t=40, b=0), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+            ), margin=dict(l=0, r=0, t=40, b=0), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
         )
 
         # ==========================================
-        # GRAPH 3: RACE PACE & WEATHER STRATEGY
+        # GRAPH 3: RACE PACE, PITS & WEATHER STRATEGY
         # ==========================================
-        # 1. Get ALL laps for both drivers.
-        # pick_quicklaps() automatically filters out 3-minute pit stops so the graph isn't ruined!
-        all_laps1 = session.laps.pick_drivers(driver1).pick_quicklaps().reset_index(drop=True)
-        all_laps2 = session.laps.pick_drivers(driver2).pick_quicklaps().reset_index(drop=True)
 
-        # Convert Timedelta to Seconds for the Y-Axis
+        # 1. Fetch unfiltered laps to preserve pit stop data
+        unfiltered_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
+        unfiltered_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
+
+        weather_data = session.weather_data
+
+        # 2. Dynamic Wet Race Threshold
+        # TODO probably remove this if we aren't going to use quicklaps
+        is_wet_race = weather_data['Rainfall'].any() if not weather_data.empty else False
+        q_threshold = 1.30 if is_wet_race else 1.07  # Expands threshold to 120% if rain is detected
+
+        # Choosing which laps to show in the chart
+        # TODO maybe user is able to choose to show one of 'all laps' or 'competitive time laps'
+        #  even though all laps will skew the data heavily there should be an option,
+        #  or maybe there is a better way but i want to include something like this
+        #  also change the strategy & weather tab to only show race data since our method of
+        #  displaying only really looks good for complete races
+
+        # Option 1. takes quick laps but slow laps in wet races don't show
+        # all_laps1 = unfiltered_1.pick_quicklaps(threshold=q_threshold).reset_index(drop=True)
+        # all_laps2 = unfiltered_2.pick_quicklaps(threshold=q_threshold).reset_index(drop=True)
+
+        # Option 2. takes all non box laps but VSC laps skew the data heavily
+        # all_laps1 = [lap for lap in unfiltered_1 if lap not in unfiltered_1.pick_box_laps()]
+        # all_laps2 = [lap for lap in unfiltered_2 if lap not in unfiltered_2.pick_box_laps()]
+
+        # Option 3. takes all green non pit laps excluding lap 1 but in a race with lots of pits/vsc
+        #           this could make the dataset quite small
+        # all_laps1 = unfiltered_1.pick_wo_box().pick_track_status('1').loc[session.laps['LapNumber'] > 1]
+        # all_laps2 = unfiltered_2.pick_wo_box().pick_track_status('1').loc[session.laps['LapNumber'] > 1]
+
+        # Option 4. all laps
+        all_laps1 = unfiltered_1
+        all_laps2 = unfiltered_2
+
+
+        # ***Track status codes for pick_track_status***
+        # 1: track clear
+        # 2: yellow flag
+        # 3: not used
+        # 4: safety car
+        # 5: red flag
+        # 6: vsc
+        # 7: vsc ending
+
+
+        # 4. Find the laps BEFORE they pitted (so the triangle sits cleanly on the pace line before they drop time)
+        # TODO not using these for now, but ai might need to know the pit laps for analysis report
+        # pits_1 = unfiltered_1[unfiltered_1['PitOutTime'].notna()]['LapNumber'] - 1
+        # pits_2 = unfiltered_2[unfiltered_2['PitOutTime'].notna()]['LapNumber'] - 1
+
         all_laps1['LapTime_Sec'] = all_laps1['LapTime'].dt.total_seconds()
         all_laps2['LapTime_Sec'] = all_laps2['LapTime'].dt.total_seconds()
 
-        # Create dual-axis chart
         fig_strat = make_subplots(specs=[[{"secondary_y": True}]])
+        comp_colors = {'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff', 'INTERMEDIATE': '#00ff00',
+                       'WET': '#0099ff'}
 
-        # Driver 1 Pace
-        fig_strat.add_trace(go.Scatter(
-            x=all_laps1['LapNumber'], y=all_laps1['LapTime_Sec'],
-            mode='lines+markers', name=f'{driver1} Pace', line=dict(color=c1)
-        ), secondary_y=False)
+        for lap_data, drv, col in [(all_laps1, driver1, c1), (all_laps2, driver2, c2)]:
 
-        # Driver 2 Pace
-        fig_strat.add_trace(go.Scatter(
-            x=all_laps2['LapNumber'], y=all_laps2['LapTime_Sec'],
-            mode='lines+markers', name=f'{driver2} Pace', line=dict(color=c2)
-        ), secondary_y=False)
+            # Plot Pace Line
+            fig_strat.add_trace(go.Scatter(
+                x=lap_data['LapNumber'], y=lap_data['LapTime_Sec'],
+                mode='lines', name=f'{drv} Pace', line=dict(color=col)
+            ), secondary_y=False)
 
-        # Overlay Track Temperature (Mapped to Driver 1's Lap Numbers for clean plotting)
-        weather_data = session.weather_data
+            # Plot Tyre Compounds
+            if 'Compound' in lap_data.columns:
+                for compound in lap_data['Compound'].dropna().unique():
+                    comp_subset = lap_data[lap_data['Compound'] == compound]
+                    fig_strat.add_trace(go.Scatter(
+                        x=comp_subset['LapNumber'], y=comp_subset['LapTime_Sec'],
+                        mode='markers', name=f'{drv} {compound}',
+                        marker=dict(color=comp_colors.get(compound, 'grey'), size=8)
+                    ), secondary_y=False)
+
+            # Plot Pit Stops
+            # valid_pits = lap_data[lap_data['LapNumber'].isin(pits)]
+            # fig_strat.add_trace(go.Scatter(
+            #     x=valid_pits['LapNumber'], y=valid_pits['LapTime_Sec'],
+            #     mode='markers',
+            #     marker=dict(symbol='triangle-up', size=14, color='white', line=dict(color='black', width=1)),
+            #     name=f'{drv} Pit'
+            # ), secondary_y=False)
+
+        # Track Temperature Overlay & Custom Sidebar Dashboard
         if not weather_data.empty and not all_laps1.empty:
             track_temps = []
             lap_nums = []
@@ -286,14 +347,47 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
 
             # Plot the weather line on the Secondary Y-Axis
             fig_strat.add_trace(go.Scatter(
-                x=lap_nums, y=track_temps,
-                mode='lines', name='Track Temp (°C)',
-                line=dict(color='white', dash='dot', width=2)
+                x=lap_nums, y=track_temps, mode='lines', name='Track Temp (°C)',
+                line=dict(color='white', dash='dot', width=2), opacity=0.4
             ), secondary_y=True)
 
+            # --- WEATHER AGGREGATION SIDEBAR ---
+            max_lap = int(max(unfiltered_1['LapNumber'].max() if not unfiltered_1.empty else 0,
+                              unfiltered_2['LapNumber'].max() if not unfiltered_2.empty else 0))
+
+            if max_lap > 0:
+                quarter = max(1, max_lap // 4)
+                chunk_size = max(1, len(weather_data) // 4)
+
+                weather_text = "<span style='font-size:14px; color:#ff3333;'><b>WEATHER REPORT</b></span><br><br>"
+
+                for i in range(4):
+                    start_lap = i * quarter + 1
+                    end_lap = (i + 1) * quarter if i < 3 else max_lap
+
+                    sub_w = weather_data.iloc[i * chunk_size: (i + 1) * chunk_size]
+                    if not sub_w.empty:
+                        t_temp = sub_w['TrackTemp'].mean()
+                        a_temp = sub_w['AirTemp'].mean()
+
+                        rain = "Yes" if sub_w['Rainfall'].any() else "No"
+                        rain_col = "#00ffff" if rain == "Yes" else "#aaaaaa"
+
+                        weather_text += f"<b>Q{i + 1} (Laps {start_lap}-{end_lap})</b><br>"
+                        weather_text += f"Track: {t_temp:.1f}°C | Air: {a_temp:.1f}°C<br>"
+                        weather_text += f"Rain: <span style='color:{rain_col};'>{rain}</span><br><br>"
+
+                fig_strat.add_annotation(
+                    xref="paper", yref="paper", x=1.03, y=0.35,
+                    xanchor="left", yanchor="middle",
+                    text=weather_text, showarrow=False,
+                    font=dict(size=12, color="white"),
+                    bgcolor="#1a1a1a", bordercolor="#444", borderwidth=1, borderpad=10
+                )
+
         fig_strat.update_layout(
-            title="Long Run Pace vs. Track Temperature (Out-laps removed)",
-            template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=40, t=40, b=40)
+            title="Race Pace, Tyres & Strategy (Out-Laps Removed)",
+            template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=220, t=60, b=40)
         )
         fig_strat.update_xaxes(title_text="Lap Number")
         fig_strat.update_yaxes(title_text="Lap Time (Seconds)", secondary_y=False)
@@ -308,5 +402,27 @@ def update_graphs(driver1, driver2, metric, session_type, race, year):
         return err_fig, err_fig, err_fig, "Data Unavailable"
 
 
+def _clear_old_cache(max_size_gb=1.0):
+    cache_path = "f1_cache"
+
+    if not os.path.exists(cache_path):
+        os.makedirs(cache_path)
+        fastf1.Cache.enable_cache(cache_path)
+        return
+
+    total_size = 0
+    for root, _, files in os.walk(cache_path):
+        for f in files:
+            fp = os.path.join(root, f)
+            total_size += os.path.getsize(fp)
+
+    if total_size > max_size_gb * 1024**3:
+        print("***Cache limit reached! Clearing cache...")
+        shutil.rmtree(cache_path)
+        os.makedirs(cache_path)
+        fastf1.Cache.enable_cache(cache_path)
+
+
 if __name__ == '__main__':
+    _clear_old_cache()
     app.run(debug=True)
