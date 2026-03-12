@@ -192,9 +192,11 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         # Row 1: Time Delta
         fig_speed.add_trace(go.Scatter(
             x=ref_tel['Distance'], y=delta_time, mode='lines',
-            name=f"Delta (- means {fast_driver} faster)",
+            name=f"Time Delta",
             line=dict(color='white')
         ), row=1, col=1)
+        fig_speed.add_annotation(xref="paper", yref="y domain", x=0.94, y=1, text=f"{fast_driver} faster", showarrow=False, xanchor="left")
+        fig_speed.add_annotation(xref="paper", yref="y domain", x=0.94, y=0, text=f"{slow_driver} faster", showarrow=False, xanchor="left")
 
         # Row 2: Speed
         fig_speed.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_driver} Speed', line=dict(color=fast_c)), row=2, col=1)
@@ -273,7 +275,8 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         # ==========================================
         # GRAPH 3: RACE PACE, PITS & WEATHER STRATEGY (SUBPLOTS)
         # ==========================================
-        # TODO analyze race pace chart again to see if we can improve
+        # TODO change all laps chart dots to driver colours instead of compound
+        #  otherwise everything is great can move to ai analytics soon
         if session_type != 'Race':
             fig_strat = go.Figure().update_layout(template='plotly_dark')
             fig_strat.add_annotation(text="Strategy & Weather only available for Race sessions",
