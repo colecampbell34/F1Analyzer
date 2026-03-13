@@ -259,6 +259,20 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                         marker=dict(color=comp_colors.get(comp, 'grey'), size=10, symbol='circle', line=dict(width=0)),
                         showlegend=False
                     ), row=1, col=1)
+
+                    # 2. Draw the Vertical "Pit Window" Line
+                    # We check `stint < max_stint` so we don't draw a line at the very end of the race
+                    if stint < max_stint:
+                        last_lap = stint_subset['LapNumber'].max()
+                        fig.add_vline(
+                            x=last_lap,
+                            line_width=1.5,
+                            line_dash="dot",
+                            line_color=col,
+                            opacity=0.6,
+                            row='all',
+                            col='all'
+                        )
         else:
             fig.add_trace(go.Scatter(
                 x=lap_data['LapNumber'], y=lap_data['LapTime_Sec'], mode='markers',
