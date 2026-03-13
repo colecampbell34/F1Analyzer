@@ -254,9 +254,17 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                 for comp in lap_data['Compound'].dropna().unique():
                     comp_subset = lap_data[lap_data['Compound'] == comp].sort_values(by='LapNumber')
                     fig.add_trace(go.Scatter(
-                        x=comp_subset['LapNumber'], y=comp_subset['LapTime_Sec'], mode='lines+markers',
-                        name=f'{drv} {comp}', line=dict(color=col, width=2),
-                        marker=dict(color=comp_colors.get(comp, 'grey'), size=10, symbol='circle', line=dict(width=0)),
+                        x=stint_subset['LapNumber'],
+                        y=stint_subset['LapTime_Sec'],
+                        mode='lines+markers',
+                        name=f'{drv} {comp}',
+                        line=dict(color=col, width=2),
+                        marker=dict(
+                            color=comp_colors.get(comp, 'grey'),
+                            size=10,
+                            symbol='circle',
+                            line=dict(width=0)
+                        ),
                         showlegend=False
                     ), row=1, col=1)
 
