@@ -249,10 +249,19 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
     # 4. Plot Pace & Tyres
     for lap_data, drv, col, unf in [(all_laps1, driver1, c1, unf_1), (all_laps2, driver2, c2, unf_2)]:
         if pace_filter == 'racing':
-            if 'Compound' in lap_data.columns:
-                comp_drawn.update(lap_data['Compound'].dropna().unique())
-                for comp in lap_data['Compound'].dropna().unique():
-                    comp_subset = lap_data[lap_data['Compound'] == comp].sort_values(by='LapNumber')
+            if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
+
+                max_stint = lap_data['Stint'].max()
+
+                for stint in lap_data['Stint'].dropna().unique():
+                    stint_subset = lap_data[lap_data['Stint'] == stint].sort_values(by='LapNumber')
+
+                    if stint_subset.empty: continue
+
+                    comp = stint_subset['Compound'].iloc[0]
+                    comp_drawn.add(comp)
+
+                    # 1. Draw the Pace Line & Markers for this stint
                     fig.add_trace(go.Scatter(
                         x=stint_subset['LapNumber'],
                         y=stint_subset['LapTime_Sec'],
