@@ -25,23 +25,23 @@ sidebar = html.Div([
 
     dbc.Label("Year", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(id='year-dropdown', options=[{'label': str(y), 'value': y} for y in range(2018, 2027)], value=2026,
-                 style={'color': 'black', 'fontSize': '0.9rem'}),
+                 persistence=True, persistence_type='session', style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='race-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Dropdown(id='race-dropdown', persistence=True, style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Session", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='session-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Dropdown(id='session-dropdown', persistence=True, style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Driver 1", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='driver1-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Dropdown(id='driver1-dropdown', persistence=True, style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
 
     dbc.Label("Driver 2", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='driver2-dropdown', style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Dropdown(id='driver2-dropdown', persistence=True, style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
     dbc.Label("Strategy Chart Filter", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(
@@ -50,6 +50,7 @@ sidebar = html.Div([
             {'label': 'Racing Laps', 'value': 'racing'},
             {'label': 'All Laps', 'value': 'all'}
         ],
+        persistence=True,
         value='racing', style={'color': 'black', 'fontSize': '0.9rem'}
     ),
 
@@ -239,7 +240,7 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.75, 0.25], subplot_titles=("Race Pace", "Track Temperature (°C)")
+        row_heights=[0.75, 0.25], subplot_titles=("(SC/Pit Laps Removed from Racing Laps)", "Track Temperature (°C)")
     )
 
     comp_colors = {'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff', 'INTERMEDIATE': '#00ff00',
@@ -250,7 +251,6 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
     for lap_data, drv, col, unf in [(all_laps1, driver1, c1, unf_1), (all_laps2, driver2, c2, unf_2)]:
         if pace_filter == 'racing':
             if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
-
                 max_stint = lap_data['Stint'].max()
 
                 for stint in lap_data['Stint'].dropna().unique():
@@ -278,7 +278,6 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                     ), row=1, col=1)
 
                     # 2. Draw the Vertical "Pit Window" Line
-                    # We check `stint < max_stint` so we don't draw a line at the very end of the race
                     if stint < max_stint:
                         last_lap = stint_subset['LapNumber'].max()
                         fig.add_vline(
@@ -297,9 +296,9 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                 showlegend=False
             ), row=1, col=1)
 
-        # Plot Pit Stops
+        # Plot Pit Stops (Only if showing ALL laps)
         if pace_filter == 'all':
-            pits = unf[unf['PitOutTime'].notna()]['LapNumber']
+            pits = unf[unf['PitOutTime'].notna()]['LapNumber'] - 1
             valid_pits = lap_data[lap_data['LapNumber'].isin(pits)]
             fig.add_trace(go.Scatter(
                 x=valid_pits['LapNumber'], y=valid_pits['LapTime_Sec'], mode='markers',
@@ -307,24 +306,24 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                 name=f'{drv} Pit', showlegend=False
             ), row=1, col=1)
 
-    # 5. Overlay SC/VSC/Red Flag lines (If looking at 'all' laps)
+    # 5. Overlay SC/VSC/Red Flag lines
+    sc_laps, vsc_laps, red_laps = set(), set(), set()
+    for unf in [unf_1, unf_2]:
+        sc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
+        vsc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
+        red_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
+
+    lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
+    for laps, color, name in lines:
+        for lap in laps:
+            fig.add_vline(x=lap, line_width=2, line_dash="dash", line_color=color, opacity=0.5, row='all',
+                          col='all')
+        if laps:
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=color, dash='dash', width=2),
+                                     name=name, legend='legend'), row=1, col=1)
+
+    # General Legend additions based on the filter
     if pace_filter == 'all':
-        sc_laps, vsc_laps, red_laps = set(), set(), set()
-        for unf in [unf_1, unf_2]:
-            sc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
-            vsc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
-            red_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
-
-        lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
-        for laps, color, name in lines:
-            for lap in laps:
-                fig.add_vline(x=lap, line_width=2, line_dash="dash", line_color=color, opacity=0.5, row='all',
-                              col='all')
-            if laps:
-                fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=color, dash='dash', width=2),
-                                         name=name, legend='legend'), row=1, col=1)
-
-        # General Legend additions
         fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Pit Stop',
                                  marker=dict(symbol='triangle-up', size=14, color='white',
                                              line=dict(color='black', width=1)), legend='legend'), row=1, col=1)
@@ -344,22 +343,27 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
                                          marker=dict(color=comp_colors[comp], size=10),
                                          legend='legend'), row=1, col=1)
 
-    # 6. Weather & Rain Overlay
+    # 6. Weather & Rain Overlay (Now parses unf_1 to prevent gaps in weather data)
     weather_data = session.weather_data
-    if not weather_data.empty and not all_laps1.empty:
+    if not weather_data.empty and not unf_1.empty:
         track_temps, lap_nums, rain_laps = [], [], set()
-        for _, lap in all_laps1.iterrows():
+
+        # Iterate over unfiltered laps to guarantee a continuous timeline
+        for _, lap in unf_1.iterrows():
             idx = (weather_data['Time'] - lap['Time']).abs().idxmin()
             track_temps.append(weather_data.loc[idx, 'TrackTemp'])
             lap_nums.append(lap['LapNumber'])
+
             if weather_data.loc[idx, 'Rainfall']:
                 rain_laps.add(lap['LapNumber'])
 
+        # Plot the Track Temp line on Row 2
         fig.add_trace(go.Scatter(
             x=lap_nums, y=track_temps, mode='lines+markers', name='Track Temp (°C)',
             line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
         ), row=2, col=1)
 
+        # Draw Rain highlighting
         for lap in rain_laps:
             fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below", line_width=0,
                           row='all', col='all')
@@ -380,52 +384,79 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
     return fig
 
 
-@app.callback([Output('race-dropdown', 'options'), Output('race-dropdown', 'value')], [Input('year-dropdown', 'value')])
-def update_races(year):
+@app.callback([Output('race-dropdown', 'options'), Output('race-dropdown', 'value')], [Input('year-dropdown', 'value')],
+              [State('race-dropdown', 'value')])
+def update_races(year, current_race):
     if not year: return dash.no_update, dash.no_update
     schedule = fastf1.get_event_schedule(year)
     schedule = schedule[schedule['EventFormat'] != 'testing']
     races = schedule['EventName'].tolist()
-    return [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races], races[0] if races else None
+    options = [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races]
 
-
-@app.callback([Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
-              [Input('race-dropdown', 'value')], [State('year-dropdown', 'value')])
-def update_sessions(race, year):
-    if not race or not year: return dash.no_update, dash.no_update
-    event = fastf1.get_event(year, race)
-    options = [{'label': event[f'Session{i}'], 'value': event[f'Session{i}']} for i in range(1, 6) if
-               pd.notna(event[f'Session{i}']) and event[f'Session{i}']]
-    val = options[-1]['value'] if options else None
-    for opt in options:
-        if opt['label'] == 'Race': val = opt['value']
+    # If the persisted race is still valid for this year, keep it! Otherwise, use the 1st race.
+    val = current_race if current_race in races else (races[0] if races else None)
     return options, val
 
 
-@app.callback(
-    [Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'), Output('driver2-dropdown', 'options'),
-     Output('driver2-dropdown', 'value')], [Input('session-dropdown', 'value')],
-    [State('race-dropdown', 'value'), State('year-dropdown', 'value')])
-def update_drivers(session_name, race, year):
-    if not session_name or not race or not year: return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+@app.callback([Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
+              [Input('race-dropdown', 'value')], [State('year-dropdown', 'value'), State('session-dropdown', 'value')])
+def update_sessions(race, year, current_session):
+    if not race or not year: return dash.no_update, dash.no_update
+    event = fastf1.get_event(year, race)
+
+    # Generate the available sessions for this specific weekend
+    options = [{'label': event[f'Session{i}'], 'value': event[f'Session{i}']} for i in range(1, 6) if
+               pd.notna(event[f'Session{i}']) and event[f'Session{i}']]
+    valid_sessions = [opt['value'] for opt in options]
+
+    if current_session in valid_sessions:
+        val = current_session
+    else:
+        val = options[-1]['value'] if options else None
+        for opt in options:
+            if opt['label'] == 'Race': val = opt['value']
+
+    return options, val
+
+
+@app.callback([Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'),
+     Output('driver2-dropdown', 'options'), Output('driver2-dropdown', 'value')],
+    [Input('session-dropdown', 'value'), Input('race-dropdown', 'value')],
+    [State('year-dropdown', 'value'), State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value')])
+def update_drivers(session_name, race, year, current_d1, current_d2):
+    if not session_name or not race or not year:
+        return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+
+    # Identify which dropdown caused this callback to fire
+    triggered_id = dash.ctx.triggered_id
+
     try:
         session = fastf1.get_session(year, race, session_name)
         session.load(telemetry=False, laps=False, weather=False, messages=False)
         valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if
                          isinstance(d, str) and len(d) == 3]
         options = [{'label': d, 'value': d} for d in sorted(valid_drivers)]
-        return options, (valid_drivers[0] if len(valid_drivers) > 0 else None), options, (
-            valid_drivers[1] if len(valid_drivers) > 1 else None)
+
+        # Default choices (1st and 2nd fastest in the session)
+        default_d1 = valid_drivers[0] if len(valid_drivers) > 0 else None
+        default_d2 = valid_drivers[1] if len(valid_drivers) > 1 else None
+
+        if triggered_id == 'race-dropdown':
+            # User switched to a new Grand Prix -> Reset to the session defaults
+            return options, default_d1, options, default_d2
+        else:
+            # User switched Sessions in the same GP -> Keep current driver if they drove in this session
+            new_d1 = current_d1 if current_d1 in valid_drivers else default_d1
+            new_d2 = current_d2 if current_d2 in valid_drivers else default_d2
+            return options, new_d1, options, new_d2
+
     except:
         return [], None, [], None
 
 
-@app.callback(
-    [Output('speed-graph', 'figure'), Output('2d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
-     Output('main-title', 'children')],
-    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-     Input('pace-filter', 'value')],
-    [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
+@app.callback([Output('speed-graph', 'figure'), Output('2d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
+     Output('main-title', 'children')],[Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
+     Input('pace-filter', 'value')],[State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
 def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
     empty_fig = go.Figure().update_layout(template='plotly_dark')
     if not all([year, race, session_type, driver1, driver2]):
@@ -454,10 +485,11 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         fig_speed = _build_telemetry_fig(fast_data, slow_data)
         fig_2d_dom = _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data)
 
-        if session_type != 'Race':
+        # Fixed Sprint Chart Bug here!
+        if session_type not in ['Race', 'Sprint']:
             fig_strat = go.Figure().update_layout(template='plotly_dark')
-            fig_strat.add_annotation(text="Strategy & Weather only available for Race sessions", showarrow=False,
-                                     font=dict(size=20), xref="paper", yref="paper", x=0.5, y=0.5)
+            fig_strat.add_annotation(text="Strategy & Weather only available for Race or Sprint sessions",
+                                     showarrow=False, font=dict(size=20), xref="paper", yref="paper", x=0.5, y=0.5)
         else:
             fig_strat = _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2)
 
@@ -469,11 +501,8 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         err_fig = go.Figure().update_layout(title=f"Error Loading Telemetry Data", template='plotly_dark')
         return err_fig, err_fig, err_fig, "Data Unavailable"
 
-# TODO if feasible have app allow for switching between sessions without changing drivers
-#  also  save selected session, drivers and tab when reloading the app and move to ai analytics soon
 
-
-def _clear_old_cache(max_size_gb=1.0):
+def _clear_old_cache(max_size_gb=2.0):
     cache_path = "f1_cache"
 
     if not os.path.exists(cache_path):
@@ -497,3 +526,6 @@ def _clear_old_cache(max_size_gb=1.0):
 if __name__ == '__main__':
     _clear_old_cache()
     app.run(debug=True, port=8050)
+    # TODO disable screen when app is loading data
+    #  see if we can optimize backend data retrieval
+    # TODO add ai analytics next
