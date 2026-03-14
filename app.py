@@ -9,6 +9,12 @@ import fastf1.plotting
 import os
 import pandas as pd
 import shutil
+import numpy as np
+from functools import lru_cache
+from google import genai
+
+# --- GEMINI API SETUP ---
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 # --- 1. SETUP F1 CACHE ---
 cache_dir = 'f1_cache'
@@ -17,6 +23,15 @@ if not os.path.exists(cache_dir):
 fastf1.Cache.enable_cache(cache_dir)
 
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
+
+
+# --- SESSION CACHE ---
+@lru_cache(maxsize=4)
+def _load_session_cached(year, race, session_name, load_telemetry=True):
+    """LRU-cached session loader to avoid redundant parsing."""
+    session = fastf1.get_session(year, race, session_name)
+    session.load(telemetry=load_telemetry, weather=load_telemetry, messages=False)
+    return session
 
 # --- 2. THE CONTROL PANEL (SIDEBAR) ---
 sidebar = html.Div([
@@ -63,27 +78,58 @@ content = html.Div([
 
     dcc.Tabs([
         dcc.Tab(label='Telemetry Traces', children=[
-            dcc.Loading(type="default", color="#ff0000", children=dcc.Graph(id='speed-graph', style={'height': '75vh'}))
+            dcc.Graph(id='speed-graph', style={'height': '75vh'})
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
-        # TAB 2: The Merged 2D Dominance Map
         dcc.Tab(label='2D Track Dominance', children=[
-            dcc.Loading(type="default", color="#ff0000",
-                        children=dcc.Graph(id='2d-dominance-graph', style={'height': '75vh'}))
+            dcc.Graph(id='2d-dominance-graph', style={'height': '75vh'})
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
 
         dcc.Tab(label='Strategy & Weather', children=[
-            dcc.Loading(type="default", color="#ff0000",
-                        children=dcc.Graph(id='strategy-graph', style={'height': '75vh'}))
+            dcc.Graph(id='strategy-graph', style={'height': '75vh'})
+        ], style={'backgroundColor': '#222', 'color': 'white'},
+                selected_style={'backgroundColor': '#ff0000', 'color': 'white'}),
+
+        dcc.Tab(label='AI Analysis', children=[
+            html.Div([
+                html.Div([
+                    dbc.InputGroup([
+                        dbc.Input(id='ai-question-input', type='text',
+                                  placeholder='Ask about this session... (e.g. "Why was NOR faster in sector 2?")',
+                                  style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444',
+                                         'fontSize': '0.95rem'}),
+                        dbc.Button('Ask AI', id='ai-ask-button', color='danger', n_clicks=0,
+                                   style={'fontWeight': 'bold'})
+                    ], style={'marginBottom': '1rem'}),
+                ], style={'padding': '1rem 0'}),
+                dcc.Loading(
+                    type='default', color='#ff0000',
+                    children=html.Div(id='ai-response-output',
+                                      style={'padding': '1rem', 'minHeight': '200px',
+                                             'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
+                                             'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
+                                             'lineHeight': '1.6', 'fontSize': '0.95rem'})
+                ),
+                dcc.Store(id='session-context-store', data='')
+            ], style={'padding': '1.5rem', 'height': '75vh', 'overflowY': 'auto'})
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'})
     ])
 ], style={"padding": "1rem"})
 
 app.layout = dbc.Container([
-    dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(content, width=10)])
+    dcc.Loading(
+        id="fullscreen-loader",
+        type="default",
+        color="#ff0000",
+        fullscreen=True,
+        overlay_style={"visibility": "visible", "opacity": 0.5, "backgroundColor": "black"},
+        children=[
+            dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(content, width=10)])
+        ]
+    )
 ], fluid=True, style={"padding": "0px"})
 
 
@@ -384,6 +430,127 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
     return fig
 
 
+def _gather_session_context(session, session_type, driver1, driver2):
+    """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
+    lines = [f"Session Type: {session_type}", f"Drivers being compared: {driver1} vs {driver2}", ""]
+
+    # Fastest lap comparison
+    try:
+        lap1 = session.laps.pick_drivers(driver1).pick_fastest()
+        lap2 = session.laps.pick_drivers(driver2).pick_fastest()
+        t1 = lap1['LapTime'].total_seconds()
+        t2 = lap2['LapTime'].total_seconds()
+        lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1-t2):.3f}s)")
+
+        # Sector times
+        for s in [1, 2, 3]:
+            s1 = lap1.get(f'Sector{s}Time')
+            s2 = lap2.get(f'Sector{s}Time')
+            if pd.notna(s1) and pd.notna(s2):
+                lines.append(f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+    except Exception:
+        lines.append("Fastest lap data: unavailable")
+
+    # Race/Sprint specific data
+    if session_type in ['Race', 'Sprint']:
+        for drv in [driver1, driver2]:
+            try:
+                all_laps = session.laps.pick_drivers(drv).reset_index(drop=True)
+                total_laps = int(all_laps['LapNumber'].max()) if not all_laps.empty else 0
+
+                rl = all_laps.pick_wo_box().pick_track_status('1').loc[all_laps['LapNumber'] > 1].reset_index(drop=True)
+                rl['LapTime_Sec'] = rl['LapTime'].dt.total_seconds()
+                rl = rl.dropna(subset=['LapTime_Sec'])
+
+                lines.append(f"\n=== {drv} ===")
+                lines.append(f"Total laps completed: {total_laps}")
+
+                if not rl.empty:
+                    lines.append(f"Racing laps (excl. pit/SC/lap 1): {len(rl)}")
+                    lines.append(f"  Average pace: {rl['LapTime_Sec'].mean():.3f}s")
+                    lines.append(f"  Median pace: {rl['LapTime_Sec'].median():.3f}s")
+                    lines.append(f"  Best lap: {rl['LapTime_Sec'].min():.3f}s")
+                    lines.append(f"  Worst lap: {rl['LapTime_Sec'].max():.3f}s")
+
+                # Pit stops (explicit lap numbers)
+                pit_laps = all_laps[all_laps['PitOutTime'].notna()]['LapNumber'].tolist()
+                if pit_laps:
+                    lines.append(f"  Pit stop(s) on lap(s): {', '.join(str(int(l)) for l in pit_laps)}")
+                else:
+                    lines.append("  Pit stops: None")
+
+                # Stint & tyre data with lap ranges
+                if 'Stint' in all_laps.columns:
+                    stints = sorted(all_laps['Stint'].dropna().unique())
+                    lines.append(f"  Number of stints: {len(stints)}")
+                    for stint in stints:
+                        stint_all = all_laps[all_laps['Stint'] == stint].sort_values('LapNumber')
+                        if stint_all.empty:
+                            continue
+                        lap_start = int(stint_all['LapNumber'].min())
+                        lap_end = int(stint_all['LapNumber'].max())
+                        comp = stint_all['Compound'].iloc[0] if 'Compound' in stint_all.columns else '?'
+                        total_stint_laps = len(stint_all)
+
+                        stint_racing = rl[rl['Stint'] == stint].sort_values('LapNumber').reset_index(drop=True)
+                        if len(stint_racing) >= 3:
+                            stint_racing['StintLap'] = range(1, len(stint_racing) + 1)
+                            slope = np.polyfit(stint_racing['StintLap'].values.astype(float),
+                                             stint_racing['LapTime_Sec'].values, 1)[0]
+                            lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
+                                       f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap")
+                        else:
+                            lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
+                                       f"({total_stint_laps} laps)")
+
+                # Position changes
+                if 'Position' in all_laps.columns and not all_laps.empty:
+                    start_p = all_laps['Position'].iloc[0]
+                    end_p = all_laps['Position'].iloc[-1]
+                    if pd.notna(start_p) and pd.notna(end_p):
+                        lines.append(f"  Grid position: P{int(start_p)} → Finish: P{int(end_p)}")
+
+            except Exception:
+                lines.append(f"\n{drv}: lap data unavailable")
+
+        # Track status events (SC, VSC, Red Flag)
+        lines.append("\n=== Track Status Events ===")
+        sc_laps, vsc_laps, red_laps = set(), set(), set()
+        for drv in [driver1, driver2]:
+            try:
+                unf = session.laps.pick_drivers(drv).reset_index(drop=True)
+                sc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
+                vsc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
+                red_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
+            except Exception:
+                pass
+
+        if sc_laps:
+            lines.append(f"Safety Car on lap(s): {', '.join(str(int(l)) for l in sorted(sc_laps))}")
+        if vsc_laps:
+            lines.append(f"Virtual Safety Car on lap(s): {', '.join(str(int(l)) for l in sorted(vsc_laps))}")
+        if red_laps:
+            lines.append(f"Red Flag on lap(s): {', '.join(str(int(l)) for l in sorted(red_laps))}")
+        if not sc_laps and not vsc_laps and not red_laps:
+            lines.append("No Safety Car, VSC, or Red Flag incidents during the session.")
+
+        # Weather
+        try:
+            weather = session.weather_data
+            if not weather.empty:
+                lines.append(f"\n=== Weather ===")
+                lines.append(f"Track Temp: {weather['TrackTemp'].min():.1f}°C - {weather['TrackTemp'].max():.1f}°C")
+                lines.append(f"Air Temp: {weather['AirTemp'].min():.1f}°C - {weather['AirTemp'].max():.1f}°C")
+                if weather['Rainfall'].any():
+                    lines.append("Rain: Yes (rain detected during session)")
+                else:
+                    lines.append("Rain: No")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
+
 @app.callback([Output('race-dropdown', 'options'), Output('race-dropdown', 'value')], [Input('year-dropdown', 'value')],
               [State('race-dropdown', 'value')])
 def update_races(year, current_race):
@@ -431,8 +598,7 @@ def update_drivers(session_name, race, year, current_d1, current_d2):
     triggered_id = dash.ctx.triggered_id
 
     try:
-        session = fastf1.get_session(year, race, session_name)
-        session.load(telemetry=False, laps=False, weather=False, messages=False)
+        session = _load_session_cached(year, race, session_name, load_telemetry=False)
         valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if
                          isinstance(d, str) and len(d) == 3]
         options = [{'label': d, 'value': d} for d in sorted(valid_drivers)]
@@ -455,17 +621,18 @@ def update_drivers(session_name, race, year, current_d1, current_d2):
 
 
 @app.callback([Output('speed-graph', 'figure'), Output('2d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
-     Output('main-title', 'children')],[Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-     Input('pace-filter', 'value')],[State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
+     Output('session-context-store', 'data'), Output('main-title', 'children')],
+    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
+     Input('pace-filter', 'value')],
+    [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
 def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
     empty_fig = go.Figure().update_layout(template='plotly_dark')
     if not all([year, race, session_type, driver1, driver2]):
-        return empty_fig, empty_fig, empty_fig, "Select parameters to load data..."
+        return empty_fig, empty_fig, empty_fig, '', "Select parameters to load data..."
 
     try:
-        # 1. Load Session Data
-        session = fastf1.get_session(year, race, session_type)
-        session.load(telemetry=True, weather=True, messages=False)
+        # 1. Load Session Data (cached)
+        session = _load_session_cached(year, race, session_type, load_telemetry=True)
 
         # 2. Extract Laps & Telemetry
         lap1 = session.laps.pick_drivers(driver1).pick_fastest()
@@ -485,7 +652,7 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         fig_speed = _build_telemetry_fig(fast_data, slow_data)
         fig_2d_dom = _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data)
 
-        # Fixed Sprint Chart Bug here!
+        # Strategy (Race/Sprint only)
         if session_type not in ['Race', 'Sprint']:
             fig_strat = go.Figure().update_layout(template='plotly_dark')
             fig_strat.add_annotation(text="Strategy & Weather only available for Race or Sprint sessions",
@@ -493,13 +660,101 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
         else:
             fig_strat = _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2)
 
+        # Build session context for AI Q&A
+        context = _gather_session_context(session, session_type, driver1, driver2)
+        context_header = f"{year} {race} | {session_type} | {driver1} vs {driver2}"
+        full_context = f"{context_header}\n\n{context}"
+
         title_text = f"{year} {race} | {session_type} | {fast_data[0]} vs {slow_data[0]}"
-        return fig_speed, fig_2d_dom, fig_strat, title_text
+        return fig_speed, fig_2d_dom, fig_strat, full_context, title_text
 
     except Exception as e:
         print(f"Graph Error: {e}")
         err_fig = go.Figure().update_layout(title=f"Error Loading Telemetry Data", template='plotly_dark')
-        return err_fig, err_fig, err_fig, "Data Unavailable"
+        return err_fig, err_fig, err_fig, '', "Data Unavailable"
+
+
+@app.callback(
+    Output('ai-response-output', 'children'),
+    [Input('ai-ask-button', 'n_clicks')],
+    [State('ai-question-input', 'value'), State('session-context-store', 'data')],
+    prevent_initial_call=True
+)
+def ask_ai(n_clicks, question, session_context):
+    """Sends the user's question + session context to Gemini and returns the response."""
+    if not n_clicks or not question or not question.strip():
+        return html.P("Type a question and click 'Ask AI' to get started.", style={'color': '#888'})
+
+    if not GEMINI_API_KEY:
+        return html.Div([
+            html.P("⚠️ Gemini API key not configured.", style={'color': '#ff4444', 'fontWeight': 'bold'}),
+            html.P("Set the GEMINI_API_KEY environment variable before running the app:",
+                   style={'color': '#aaa'}),
+            html.Code("export GEMINI_API_KEY='your-api-key-here'",
+                      style={'color': '#00ff88', 'backgroundColor': '#111', 'padding': '0.5rem',
+                             'display': 'block', 'borderRadius': '4px', 'marginTop': '0.5rem'})
+        ])
+
+    if not session_context:
+        return html.P("⚠️ No session data loaded. Select a session and drivers first.", style={'color': '#ff4444'})
+
+    try:
+        import time
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        prompt = (
+            "You are an expert Formula 1 data analyst. You have access to the following telemetry "
+            "and race data for a specific F1 session. Answer the user's question with detailed, "
+            "data-driven analysis. Reference specific numbers from the data. Be thorough and conclusive.\n\n"
+            "=== SESSION DATA ===\n"
+            f"{session_context}\n\n"
+            "=== USER QUESTION ===\n"
+            f"{question}"
+        )
+
+        # Try primary model, retry once on rate limit, then fallback
+        models_to_try = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        last_error = None
+
+        for model_name in models_to_try:
+            try:
+                response = client.models.generate_content(model=model_name, contents=prompt)
+                answer = response.text
+
+                return html.Div([
+                    html.Div([
+                        html.Strong("Q: ", style={'color': '#ff4444'}),
+                        html.Span(question, style={'color': '#ddd'})
+                    ], style={'marginBottom': '1rem', 'paddingBottom': '0.75rem', 'borderBottom': '1px solid #333'}),
+                    html.Div([
+                        dcc.Markdown(answer, style={'color': '#e0e0e0', 'lineHeight': '1.7'})
+                    ])
+                ])
+            except Exception as e:
+                last_error = e
+                if '429' not in str(e):
+                    break  # Non-rate-limit error, don't retry
+
+        # If all retries failed
+        error_str = str(last_error)
+        if '429' in error_str:
+            return html.Div([
+                html.P("⏳ Rate limit reached on Gemini free tier.", style={'color': '#ffaa00', 'fontWeight': 'bold'}),
+                html.P("The free API has per-minute request limits. Please wait about 60 seconds and try again.",
+                       style={'color': '#aaa'}),
+                html.P("Tip: Shorter, more focused questions use fewer tokens and are less likely to hit limits.",
+                       style={'color': '#666', 'fontStyle': 'italic'})
+            ])
+        else:
+            return html.Div([
+                html.P(f"❌ AI Error: {error_str}", style={'color': '#ff4444'}),
+                html.P("Please check your API key and try again.", style={'color': '#888'})
+            ])
+
+    except Exception as e:
+        return html.Div([
+            html.P(f"❌ AI Error: {str(e)}", style={'color': '#ff4444'}),
+            html.P("Please check your API key and try again.", style={'color': '#888'})
+        ])
 
 
 def _clear_old_cache(max_size_gb=2.0):
@@ -526,6 +781,3 @@ def _clear_old_cache(max_size_gb=2.0):
 if __name__ == '__main__':
     _clear_old_cache()
     app.run(debug=True, port=8050)
-    # TODO disable screen when app is loading data
-    #  see if we can optimize backend data retrieval
-    # TODO add ai analytics next
