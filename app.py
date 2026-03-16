@@ -12,9 +12,11 @@ import shutil
 import numpy as np
 from functools import lru_cache
 from google import genai
+from dotenv import load_dotenv
 
 # --- GEMINI API SETUP ---
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+load_dotenv()
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # --- 1. SETUP F1 CACHE ---
 cache_dir = 'f1_cache'
@@ -58,16 +60,6 @@ sidebar = html.Div([
     dbc.Label("Driver 2", style={"fontSize": "0.9rem"}),
     dcc.Dropdown(id='driver2-dropdown', persistence=True, style={'color': 'black', 'fontSize': '0.9rem'}),
     html.Br(),
-    dbc.Label("Strategy Chart Filter", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(
-        id='pace-filter',
-        options=[
-            {'label': 'Racing Laps', 'value': 'racing'},
-            {'label': 'All Laps', 'value': 'all'}
-        ],
-        persistence=True,
-        value='racing', style={'color': 'black', 'fontSize': '0.9rem'}
-    ),
 
 ], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto"})
 
@@ -112,7 +104,8 @@ content = html.Div([
                                              'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
                                              'lineHeight': '1.6', 'fontSize': '0.95rem'})
                 ),
-                dcc.Store(id='session-context-store', data='')
+                dcc.Store(id='session-context-store', data=''),
+                dcc.Store(id='ai-response-store', storage_type='session', data={})
             ], style={'padding': '1.5rem', 'height': '75vh', 'overflowY': 'auto'})
         ], style={'backgroundColor': '#222', 'color': 'white'},
                 selected_style={'backgroundColor': '#ff0000', 'color': 'white'})
@@ -125,7 +118,7 @@ app.layout = dbc.Container([
         type="default",
         color="#ff0000",
         fullscreen=True,
-        overlay_style={"visibility": "visible", "opacity": 0.5, "backgroundColor": "black"},
+        overlay_style={"visibility": "visible", "opacity": 1, "backgroundColor": "#000000"},
         children=[
             dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(content, width=10)])
         ]
@@ -149,21 +142,21 @@ def _get_driver_colors(driver1, driver2, session):
     return c1, c2
 
 
-def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2):
+def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
     """Compares lap times and returns (fast_data, slow_data) tuples to standardize plotting."""
     t1 = lap1['LapTime'].total_seconds()
     t2 = lap2['LapTime'].total_seconds()
 
-    data1 = (d1, tel1, c1, t1, lap1)
-    data2 = (d2, tel2, c2, t2, lap2)
+    data1 = (d1, tel1, c1, t1, lap1, lbl1)
+    data2 = (d2, tel2, c2, t2, lap2, lbl2)
 
     return (data1, data2) if t1 <= t2 else (data2, data1)
 
 
 def _build_telemetry_fig(fast_data, slow_data):
     """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
-    fast_driver, fast_tel, fast_c, fast_t, fast_lap = fast_data
-    slow_driver, slow_tel, slow_c, slow_t, slow_lap = slow_data
+    fast_driver, fast_tel, fast_c, fast_t, fast_lap, fast_lbl = fast_data
+    slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
 
     delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(fast_lap, slow_lap)
 
@@ -207,7 +200,7 @@ def _build_telemetry_fig(fast_data, slow_data):
                              line=dict(color=slow_c)), row=4, col=1)
 
     fig.update_layout(
-        title=f'Telemetry Traces: {fast_driver} ({fast_t:.3f}s) vs {slow_driver} ({slow_t:.3f}s)',
+        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)',
         template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5)
     )
@@ -215,7 +208,8 @@ def _build_telemetry_fig(fast_data, slow_data):
     fig.update_yaxes(title_text="Delta (s)", row=1, col=1)
     fig.update_yaxes(title_text="Speed (km/h)", row=2, col=1)
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="Brake (%)", row=3, col=1, secondary_y=True, showgrid=False)
+    fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False,
+                     categoryorder='array', categoryarray=[False, True])
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
     fig.update_xaxes(title_text="Distance along track (meters)", row=4, col=1)
 
@@ -224,8 +218,8 @@ def _build_telemetry_fig(fast_data, slow_data):
 
 def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data):
     """Builds the 2D Track Dominance Map colored by mini-sectors."""
-    fast_driver, fast_tel, fast_c, fast_t, _ = fast_data
-    slow_driver, _, slow_c, slow_t, _ = slow_data
+    fast_driver, fast_tel, fast_c, fast_t, _, fast_lbl = fast_data
+    slow_driver, _, slow_c, slow_t, _, slow_lbl = slow_data
 
     num_minisectors = 20
     sector_length = max(tel1['Distance'].max(), tel2['Distance'].max()) / num_minisectors
@@ -238,9 +232,9 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=fast_c, width=6),
-                             name=f'{fast_driver} Faster ({fast_t:.3f}s)'))
+                             name=f'{fast_lbl} Faster ({fast_t:.3f}s)'))
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=slow_c, width=6),
-                             name=f'{slow_driver} Faster ({slow_t:.3f}s)'))
+                             name=f'{slow_lbl} Faster ({slow_t:.3f}s)'))
 
     for ms in range(num_minisectors):
         sector_data = fast_tel[fast_tel['MiniSector'] == ms]
@@ -265,18 +259,15 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     return fig
 
 
-def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
+def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the Race Pace, Pits, Tyres & Weather dual-axis strategy plot."""
     # 1. Fetch unfiltered laps
     unf_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
     unf_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
 
-    # 2. Apply Filters
-    if pace_filter == 'racing':
-        all_laps1 = unf_1.pick_wo_box().pick_track_status('1').loc[unf_1['LapNumber'] > 1].reset_index(drop=True)
-        all_laps2 = unf_2.pick_wo_box().pick_track_status('1').loc[unf_2['LapNumber'] > 1].reset_index(drop=True)
-    else:
-        all_laps1, all_laps2 = unf_1, unf_2
+    # 2. Apply Filters (Racing laps only)
+    all_laps1 = unf_1.pick_wo_box().pick_track_status('1').loc[unf_1['LapNumber'] > 1].reset_index(drop=True)
+    all_laps2 = unf_2.pick_wo_box().pick_track_status('1').loc[unf_2['LapNumber'] > 1].reset_index(drop=True)
 
     # 3. Calculate seconds, fallback for red flags (NaT)
     for laps_df in [all_laps1, all_laps2]:
@@ -294,70 +285,53 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
     comp_drawn = set()
 
     # 4. Plot Pace & Tyres
-    for lap_data, drv, col, unf in [(all_laps1, driver1, c1, unf_1), (all_laps2, driver2, c2, unf_2)]:
-        if pace_filter == 'racing':
-            if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
-                max_stint = lap_data['Stint'].max()
+    for lap_data, drv, lbl, col, unf in [(all_laps1, driver1, lbl1, c1, unf_1), (all_laps2, driver2, lbl2, c2, unf_2)]:
+        if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
+            max_stint = lap_data['Stint'].max()
 
-                for stint in lap_data['Stint'].dropna().unique():
-                    stint_subset = lap_data[lap_data['Stint'] == stint].sort_values(by='LapNumber')
+            for stint in lap_data['Stint'].dropna().unique():
+                stint_subset = lap_data[lap_data['Stint'] == stint].sort_values(by='LapNumber')
 
-                    if stint_subset.empty: continue
+                if stint_subset.empty: continue
 
-                    comp = stint_subset['Compound'].iloc[0]
-                    comp_drawn.add(comp)
+                comp = stint_subset['Compound'].iloc[0]
+                comp_drawn.add(comp)
 
-                    # 1. Draw the Pace Line & Markers for this stint
-                    fig.add_trace(go.Scatter(
-                        x=stint_subset['LapNumber'],
-                        y=stint_subset['LapTime_Sec'],
-                        mode='lines+markers',
-                        name=f'{drv} {comp}',
-                        line=dict(color=col, width=2),
-                        marker=dict(
-                            color=comp_colors.get(comp, 'grey'),
-                            size=10,
-                            symbol='circle',
-                            line=dict(width=0)
-                        ),
-                        showlegend=False
-                    ), row=1, col=1)
+                # 1. Draw the Pace Line & Markers for this stint
+                fig.add_trace(go.Scatter(
+                    x=stint_subset['LapNumber'],
+                    y=stint_subset['LapTime_Sec'],
+                    mode='lines+markers',
+                    name=f'{drv} {comp}',
+                    line=dict(color=col, width=2),
+                    marker=dict(
+                        color=comp_colors.get(comp, 'grey'),
+                        size=10,
+                        symbol='circle',
+                        line=dict(width=0)
+                    ),
+                    showlegend=False
+                ), row=1, col=1)
 
-                    # 2. Draw the Vertical "Pit Window" Line
-                    if stint < max_stint:
-                        last_lap = stint_subset['LapNumber'].max()
-                        fig.add_vline(
-                            x=last_lap,
-                            line_width=1.5,
-                            line_dash="dot",
-                            line_color=col,
-                            opacity=0.6,
-                            row='all',
-                            col='all'
-                        )
-        else:
-            fig.add_trace(go.Scatter(
-                x=lap_data['LapNumber'], y=lap_data['LapTime_Sec'], mode='markers',
-                name=drv, marker=dict(color=col, size=10, symbol='circle', line=dict(width=0)),
-                showlegend=False
-            ), row=1, col=1)
-
-        # Plot Pit Stops (Only if showing ALL laps)
-        if pace_filter == 'all':
-            pits = unf[unf['PitOutTime'].notna()]['LapNumber'] - 1
-            valid_pits = lap_data[lap_data['LapNumber'].isin(pits)]
-            fig.add_trace(go.Scatter(
-                x=valid_pits['LapNumber'], y=valid_pits['LapTime_Sec'], mode='markers',
-                marker=dict(symbol='triangle-up', size=16, color='white', line=dict(color=col, width=2)),
-                name=f'{drv} Pit', showlegend=False
-            ), row=1, col=1)
+                # 2. Draw the Vertical "Pit Window" Line
+                if stint < max_stint:
+                    last_lap = stint_subset['LapNumber'].max()
+                    fig.add_vline(
+                        x=last_lap,
+                        line_width=1.5,
+                        line_dash="dot",
+                        line_color=col,
+                        opacity=0.6,
+                        row='all',
+                        col='all'
+                    )
 
     # 5. Overlay SC/VSC/Red Flag lines
     sc_laps, vsc_laps, red_laps = set(), set(), set()
-    for unf in [unf_1, unf_2]:
-        sc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
-        vsc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
-        red_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
+    all_laps = session.laps
+    sc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].dropna().tolist())
+    vsc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].dropna().tolist())
+    red_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].dropna().tolist())
 
     lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
     for laps, color, name in lines:
@@ -368,40 +342,32 @@ def _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2):
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=color, dash='dash', width=2),
                                      name=name, legend='legend'), row=1, col=1)
 
-    # General Legend additions based on the filter
-    if pace_filter == 'all':
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name='Pit Stop',
-                                 marker=dict(symbol='triangle-up', size=14, color='white',
-                                             line=dict(color='black', width=1)), legend='legend'), row=1, col=1)
-        for drv, col in [(driver1, c1), (driver2, c2)]:
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=drv,
-                                     marker=dict(color=col, size=10),
+    # General Legend additions
+    for drv, lbl, col in [(driver1, lbl1, c1), (driver2, lbl2, c2)]:
+        fig.add_trace(
+            go.Scatter(x=[None], y=[None], mode='lines', name=lbl,
+                       line=dict(color=col, width=2),
+                       legend='legend'), row=1, col=1)
+    for comp in comp_drawn:
+        if comp in comp_colors:
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
+                                     marker=dict(color=comp_colors[comp], size=10),
                                      legend='legend'), row=1, col=1)
-    else:
-        for drv, col in [(driver1, c1), (driver2, c2)]:
-            fig.add_trace(
-                go.Scatter(x=[None], y=[None], mode='lines', name=drv,
-                           line=dict(color=col, width=2),
-                           legend='legend'), row=1, col=1)
-        for comp in comp_drawn:
-            if comp in comp_colors:
-                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
-                                         marker=dict(color=comp_colors[comp], size=10),
-                                         legend='legend'), row=1, col=1)
 
-    # 6. Weather & Rain Overlay (Now parses unf_1 to prevent gaps in weather data)
+    # 6. Weather & Rain Overlay (Parses all session laps to span the entire race)
     weather_data = session.weather_data
-    if not weather_data.empty and not unf_1.empty:
+    if not weather_data.empty and not session.laps.empty:
         track_temps, lap_nums, rain_laps = [], [], set()
 
-        # Iterate over unfiltered laps to guarantee a continuous timeline
-        for _, lap in unf_1.iterrows():
-            idx = (weather_data['Time'] - lap['Time']).abs().idxmin()
+        lap_times = session.laps.dropna(subset=['Time']).groupby('LapNumber')['Time'].median()
+
+        for lap_num, lap_time in lap_times.items():
+            idx = (weather_data['Time'] - lap_time).abs().idxmin()
             track_temps.append(weather_data.loc[idx, 'TrackTemp'])
-            lap_nums.append(lap['LapNumber'])
+            lap_nums.append(lap_num)
 
             if weather_data.loc[idx, 'Rainfall']:
-                rain_laps.add(lap['LapNumber'])
+                rain_laps.add(lap_num)
 
         # Plot the Track Temp line on Row 2
         fig.add_trace(go.Scatter(
@@ -516,14 +482,13 @@ def _gather_session_context(session, session_type, driver1, driver2):
         # Track status events (SC, VSC, Red Flag)
         lines.append("\n=== Track Status Events ===")
         sc_laps, vsc_laps, red_laps = set(), set(), set()
-        for drv in [driver1, driver2]:
-            try:
-                unf = session.laps.pick_drivers(drv).reset_index(drop=True)
-                sc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].tolist())
-                vsc_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].tolist())
-                red_laps.update(unf[unf['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].tolist())
-            except Exception:
-                pass
+        try:
+            all_laps = session.laps
+            sc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].dropna().tolist())
+            vsc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].dropna().tolist())
+            red_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].dropna().tolist())
+        except Exception:
+            pass
 
         if sc_laps:
             lines.append(f"Safety Car on lap(s): {', '.join(str(int(l)) for l in sorted(sc_laps))}")
@@ -534,7 +499,6 @@ def _gather_session_context(session, session_type, driver1, driver2):
         if not sc_laps and not vsc_laps and not red_laps:
             lines.append("No Safety Car, VSC, or Red Flag incidents during the session.")
 
-        # Weather
         try:
             weather = session.weather_data
             if not weather.empty:
@@ -545,6 +509,23 @@ def _gather_session_context(session, session_type, driver1, driver2):
                     lines.append("Rain: Yes (rain detected during session)")
                 else:
                     lines.append("Rain: No")
+        except Exception:
+            pass
+
+        try:
+            lines.append("\n=== Lap Data (All Laps) ===")
+            lines.append("Driver, Lap, LapTime(s), S1(s), S2(s), S3(s), Tyres, Status")
+            valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if isinstance(d, str) and len(d) == 3]
+            for drv in valid_drivers:
+                all_laps = session.laps.pick_drivers(drv)
+                for _, lap in all_laps.iterrows():
+                    lt = f"{lap['LapTime'].total_seconds():.3f}" if pd.notna(lap['LapTime']) else "N/A"
+                    s1 = f"{lap['Sector1Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector1Time')) else "N/A"
+                    s2 = f"{lap['Sector2Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector2Time')) else "N/A"
+                    s3 = f"{lap['Sector3Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector3Time')) else "N/A"
+                    comp = lap.get('Compound', 'N/A')
+                    stat = lap.get('TrackStatus', 'N/A')
+                    lines.append(f"{drv}, {lap['LapNumber']}, {lt}, {s1}, {s2}, {s3}, {comp}, {stat}")
         except Exception:
             pass
 
@@ -594,9 +575,6 @@ def update_drivers(session_name, race, year, current_d1, current_d2):
     if not session_name or not race or not year:
         return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
-    # Identify which dropdown caused this callback to fire
-    triggered_id = dash.ctx.triggered_id
-
     try:
         session = _load_session_cached(year, race, session_name, load_telemetry=False)
         valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if
@@ -607,14 +585,11 @@ def update_drivers(session_name, race, year, current_d1, current_d2):
         default_d1 = valid_drivers[0] if len(valid_drivers) > 0 else None
         default_d2 = valid_drivers[1] if len(valid_drivers) > 1 else None
 
-        if triggered_id == 'race-dropdown':
-            # User switched to a new Grand Prix -> Reset to the session defaults
-            return options, default_d1, options, default_d2
-        else:
-            # User switched Sessions in the same GP -> Keep current driver if they drove in this session
-            new_d1 = current_d1 if current_d1 in valid_drivers else default_d1
-            new_d2 = current_d2 if current_d2 in valid_drivers else default_d2
-            return options, new_d1, options, new_d2
+        # Keep current driver if they drove in this session, otherwise use default
+        new_d1 = current_d1 if current_d1 in valid_drivers else default_d1
+        new_d2 = current_d2 if current_d2 in valid_drivers else default_d2
+
+        return options, new_d1, options, new_d2
 
     except:
         return [], None, [], None
@@ -622,10 +597,9 @@ def update_drivers(session_name, race, year, current_d1, current_d2):
 
 @app.callback([Output('speed-graph', 'figure'), Output('2d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
      Output('session-context-store', 'data'), Output('main-title', 'children')],
-    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-     Input('pace-filter', 'value')],
+    [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value')],
     [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
-def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
+def update_graphs(driver1, driver2, session_type, race, year):
     empty_fig = go.Figure().update_layout(template='plotly_dark')
     if not all([year, race, session_type, driver1, driver2]):
         return empty_fig, empty_fig, empty_fig, '', "Select parameters to load data..."
@@ -643,10 +617,26 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
 
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
+        
+        # Zero out distances to perfectly align telemetry (fixes missing start-line gaps)
+        if not tel1.empty: tel1['Distance'] -= tel1['Distance'].min()
+        if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
+        
+        try:
+            p1 = session.results.loc[session.results['Abbreviation'] == driver1, 'Position'].values[0]
+            lbl1 = f"{driver1} (P{int(p1)})" if pd.notna(p1) else driver1
+        except:
+            lbl1 = driver1
+            
+        try:
+            p2 = session.results.loc[session.results['Abbreviation'] == driver2, 'Position'].values[0]
+            lbl2 = f"{driver2} (P{int(p2)})" if pd.notna(p2) else driver2
+        except:
+            lbl2 = driver2
 
         # 3. Setup Colors & Sort Drivers (Fastest vs Slowest)
         c1, c2 = _get_driver_colors(driver1, driver2, session)
-        fast_data, slow_data = _sort_fastest_driver(driver1, tel1, c1, lap1, driver2, tel2, c2, lap2)
+        fast_data, slow_data = _sort_fastest_driver(driver1, tel1, c1, lap1, driver2, tel2, c2, lap2, lbl1, lbl2)
 
         # 4. Generate Graphs using Helpers
         fig_speed = _build_telemetry_fig(fast_data, slow_data)
@@ -658,7 +648,7 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
             fig_strat.add_annotation(text="Strategy & Weather only available for Race or Sprint sessions",
                                      showarrow=False, font=dict(size=20), xref="paper", yref="paper", x=0.5, y=0.5)
         else:
-            fig_strat = _build_strategy_fig(session, pace_filter, driver1, driver2, c1, c2)
+            fig_strat = _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2)
 
         # Build session context for AI Q&A
         context = _gather_session_context(session, session_type, driver1, driver2)
@@ -675,18 +665,31 @@ def update_graphs(driver1, driver2, pace_filter, session_type, race, year):
 
 
 @app.callback(
-    Output('ai-response-output', 'children'),
+    [Output('ai-response-output', 'children'), Output('ai-response-store', 'data')],
     [Input('ai-ask-button', 'n_clicks')],
-    [State('ai-question-input', 'value'), State('session-context-store', 'data')],
-    prevent_initial_call=True
+    [State('ai-question-input', 'value'), State('session-context-store', 'data'), State('ai-response-store', 'data')],
+    prevent_initial_call=False
 )
-def ask_ai(n_clicks, question, session_context):
+def ask_ai(n_clicks, question, session_context, store_data):
     """Sends the user's question + session context to Gemini and returns the response."""
+    if not dash.ctx.triggered_id:
+        if store_data and store_data.get('answer'):
+            return html.Div([
+                html.Div([
+                    html.Strong("Q: ", style={'color': '#ff4444'}),
+                    html.Span(store_data.get('question', ''), style={'color': '#ddd'})
+                ], style={'marginBottom': '1rem', 'paddingBottom': '0.75rem', 'borderBottom': '1px solid #333'}),
+                html.Div([
+                    dcc.Markdown(store_data.get('answer', ''), style={'color': '#e0e0e0', 'lineHeight': '1.7'})
+                ])
+            ]), dash.no_update
+        return html.P("Type a question and click 'Ask AI' to get started.", style={'color': '#888'}), dash.no_update
+        
     if not n_clicks or not question or not question.strip():
-        return html.P("Type a question and click 'Ask AI' to get started.", style={'color': '#888'})
+        return dash.no_update, dash.no_update
 
     if not GEMINI_API_KEY:
-        return html.Div([
+        error_html = html.Div([
             html.P("⚠️ Gemini API key not configured.", style={'color': '#ff4444', 'fontWeight': 'bold'}),
             html.P("Set the GEMINI_API_KEY environment variable before running the app:",
                    style={'color': '#aaa'}),
@@ -694,9 +697,10 @@ def ask_ai(n_clicks, question, session_context):
                       style={'color': '#00ff88', 'backgroundColor': '#111', 'padding': '0.5rem',
                              'display': 'block', 'borderRadius': '4px', 'marginTop': '0.5rem'})
         ])
+        return error_html, dash.no_update
 
     if not session_context:
-        return html.P("⚠️ No session data loaded. Select a session and drivers first.", style={'color': '#ff4444'})
+        return html.P("⚠️ No session data loaded. Select a session and drivers first.", style={'color': '#ff4444'}), dash.no_update
 
     try:
         import time
@@ -728,7 +732,7 @@ def ask_ai(n_clicks, question, session_context):
                     html.Div([
                         dcc.Markdown(answer, style={'color': '#e0e0e0', 'lineHeight': '1.7'})
                     ])
-                ])
+                ]), {'question': question, 'answer': answer}
             except Exception as e:
                 last_error = e
                 if '429' not in str(e):
@@ -743,18 +747,18 @@ def ask_ai(n_clicks, question, session_context):
                        style={'color': '#aaa'}),
                 html.P("Tip: Shorter, more focused questions use fewer tokens and are less likely to hit limits.",
                        style={'color': '#666', 'fontStyle': 'italic'})
-            ])
+            ]), dash.no_update
         else:
             return html.Div([
                 html.P(f"❌ AI Error: {error_str}", style={'color': '#ff4444'}),
                 html.P("Please check your API key and try again.", style={'color': '#888'})
-            ])
+            ]), dash.no_update
 
     except Exception as e:
         return html.Div([
             html.P(f"❌ AI Error: {str(e)}", style={'color': '#ff4444'}),
             html.P("Please check your API key and try again.", style={'color': '#888'})
-        ])
+        ]), dash.no_update
 
 
 def _clear_old_cache(max_size_gb=2.0):
