@@ -716,7 +716,7 @@ def ask_ai(n_clicks, question, session_context, store_data):
         )
 
         # Try primary model, retry once on rate limit, then fallback
-        models_to_try = ['gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-flash', 'gemini-2.5-flash-lite']
+        models_to_try = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash-lite']
         last_error = None
 
         for model_name in models_to_try:
