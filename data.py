@@ -15,7 +15,7 @@ def setup_cache():
 def _load_session_cached(year, race, session_name, load_telemetry=True):
     """LRU-cached session loader to avoid redundant parsing."""
     session = fastf1.get_session(year, race, session_name)
-    session.load(telemetry=load_telemetry, weather=load_telemetry, messages=False)
+    session.load(telemetry=load_telemetry, weather=load_telemetry, messages=True)
     return session
 
 

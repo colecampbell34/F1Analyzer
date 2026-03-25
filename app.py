@@ -12,4 +12,4 @@ register_callbacks(app)
 
 if __name__ == '__main__':
     data.clear_old_cache()
-    app.run(debug=True, port=8050)
+    app.run(port=8050)

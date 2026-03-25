@@ -133,13 +133,14 @@ def register_callbacks(app):
 
 
     @app.callback([Output('speed-graph', 'figure'), Output('2d-dominance-graph', 'figure'), Output('strategy-graph', 'figure'),
-         Output('session-context-store', 'data'), Output('main-title', 'children')],
+         Output('session-context-store', 'data'), Output('main-title', 'children'),
+         Output('error-dialog', 'displayed'), Output('error-dialog', 'message')],
         [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value')],
         [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')])
     def update_graphs(driver1, driver2, session_type, race, year):
         empty_fig = go.Figure().update_layout(template='plotly_dark')
         if not all([year, race, session_type, driver1, driver2]):
-            return empty_fig, empty_fig, empty_fig, '', "Select parameters to load data..."
+            return empty_fig, empty_fig, empty_fig, '', "Select parameters to load data...", False, ""
 
         try:
             # 1. Load Session Data (cached)
@@ -149,8 +150,11 @@ def register_callbacks(app):
             lap1 = session.laps.pick_drivers(driver1).pick_fastest()
             lap2 = session.laps.pick_drivers(driver2).pick_fastest()
 
-            if pd.isna(lap1['LapTime']) or pd.isna(lap2['LapTime']):
-                raise ValueError("One or both drivers did not set a valid lap.")
+            if getattr(lap1, "empty", True) or pd.isna(lap1.get("LapTime")) if lap1 is not None else True:
+                raise ValueError(f"{driver1} did not set a valid lap.")
+                
+            if getattr(lap2, "empty", True) or pd.isna(lap2.get("LapTime")) if lap2 is not None else True:
+                raise ValueError(f"{driver2} did not set a valid lap.")
 
             tel1 = lap1.get_telemetry().add_distance()
             tel2 = lap2.get_telemetry().add_distance()
@@ -193,12 +197,12 @@ def register_callbacks(app):
             full_context = f"{context_header}\n\n{context}"
 
             title_text = f"{year} {race} | {session_type} | {fast_data[0]} vs {slow_data[0]}"
-            return fig_speed, fig_2d_dom, fig_strat, full_context, title_text
+            return fig_speed, fig_2d_dom, fig_strat, full_context, title_text, False, ""
 
         except Exception as e:
             print(f"Graph Error: {e}")
             err_fig = go.Figure().update_layout(title=f"Error Loading Telemetry Data", template='plotly_dark')
-            return err_fig, err_fig, err_fig, '', "Data Unavailable"
+            return err_fig, err_fig, err_fig, '', "Data Unavailable", True, f"Error: {e}"
 
 
     @app.callback(

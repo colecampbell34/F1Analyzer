@@ -93,5 +93,6 @@ app_layout = dbc.Container([
         children=[
             dbc.Row([dbc.Col(sidebar, width=2), dbc.Col(content, width=10)])
         ]
-    )
+    ),
+    dcc.ConfirmDialog(id='error-dialog', message='')
 ], fluid=True, style={"padding": "0px"})
