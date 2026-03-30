@@ -1,0 +1,24 @@
+/* Fullscreen loader override for Dark Mode */
+
+/* Target the parent overlay div that Dash creates inline which has no class */
+div:has(> .dash-spinner),
+div:has(> ._dash-loading-callback),
+div[style*="rgba(255, 255, 255"] {
+    background-color: rgba(17, 17, 17, 0.8) !important;
+}
+
+.dash-spinner {
+    background-color: transparent !important;
+}
+
+.dash-spinner.dash-spinner--fullscreen {
+    background-color: rgba(17, 17, 17, 0.8) !important;
+}
+
+._dash-loading-callback {
+    background-color: transparent !important;
+}
+
+[data-dash-is-loading="true"] > ._dash-loading-callback {
+    background-color: transparent !important;
+}
