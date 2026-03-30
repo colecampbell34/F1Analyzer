@@ -86,44 +86,125 @@ def register_callbacks(app):
         try:
             session = _load_session_cached(year, race, session_name, load_telemetry=False)
             leaderboard_children = []
-            if getattr(session, 'results', None) is not None and not session.results.empty:
-                for _, row in session.results.iterrows():
-                    abbr = row.get('Abbreviation', '')
-                    if not isinstance(abbr, str) or len(abbr) != 3:
+
+            is_practice = any(p in session_name for p in ['Practice', 'FP'])
+
+            if is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
+                # --- PRACTICE SESSION LOGIC ---
+                # Dynamically calculate positions based on the fastest lap
+                drivers_data = []
+
+                if getattr(session, 'results', None) is not None and not session.results.empty:
+                    drivers = session.results['Abbreviation'].dropna().unique()
+                else:
+                    drivers = session.laps['Driver'].unique()
+
+                for drv in drivers:
+                    if not isinstance(drv, str) or len(drv) != 3:
                         continue
 
-                    pos = row.get('Position', '?')
-                    pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
+                    # Get this driver's fastest lap
+                    drv_laps = session.laps.pick_drivers(drv)
+                    fastest_lap = drv_laps.pick_fastest() if not drv_laps.empty else None
+                    lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
+                        fastest_lap['LapTime']) else pd.NaT
 
-                    color = row.get('TeamColor', '')
-                    if pd.isna(color) or not color:
-                        try:
-                            color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
-                        except Exception:
-                            color = "ffffff"
+                    # Resolve Team Color
+                    color = "ffffff"
+                    if getattr(session, 'results', None) is not None and not session.results.empty:
+                        res_row = session.results[session.results['Abbreviation'] == drv]
+                        if not res_row.empty:
+                            color = res_row.iloc[0].get('TeamColor', '')
+                            if pd.isna(color) or not color:
+                                try:
+                                    color = fastf1.plotting.get_team_color(res_row.iloc[0].get('TeamName', ''),
+                                                                           session=session)
+                                except Exception:
+                                    pass
                     if not str(color).startswith('#'):
                         color = f"#{color}"
 
-                    time_str = ""
-                    for col in ['Time', 'Q3', 'Q2', 'Q1']:
-                        if col in row and pd.notna(row[col]):
-                            delta = row[col]
-                            mins = int(delta.total_seconds() // 60)
-                            secs = delta.total_seconds() % 60
-                            time_str = f"{mins}:{secs:06.3f}"
-                            break
-                    
-                    if not time_str:
-                        status = row.get('Status', '')
-                        time_str = status if isinstance(status, str) else ""
+                    drivers_data.append({
+                        'Abbreviation': drv,
+                        'LapTime': lap_time,
+                        'TeamColor': color
+                    })
+
+                # Sort drivers: valid times first (fastest to slowest), then no times
+                valid_times = [d for d in drivers_data if pd.notna(d['LapTime'])]
+                no_times = [d for d in drivers_data if pd.isna(d['LapTime'])]
+
+                valid_times.sort(key=lambda x: x['LapTime'])
+                sorted_drivers = valid_times + no_times
+
+                for idx, r in enumerate(sorted_drivers):
+                    pos_str = f"P{idx + 1}" if pd.notna(r['LapTime']) else "N/A"
+
+                    if pd.notna(r['LapTime']):
+                        delta = r['LapTime']
+                        mins = int(delta.total_seconds() // 60)
+                        secs = delta.total_seconds() % 60
+                        time_str = f"{mins}:{secs:06.3f}"
+                    else:
+                        time_str = "NO TIME"
 
                     row_div = html.Div([
                         html.Span(f"{pos_str} ", style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
-                        html.Strong(f"{abbr}", style={'color': color, 'width': '50px', 'display': 'inline-block'}),
+                        html.Strong(f"{r['Abbreviation']}",
+                                    style={'color': r['TeamColor'], 'width': '50px', 'display': 'inline-block'}),
                         html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
                     ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
-                    
+
                     leaderboard_children.append(row_div)
+
+            else:
+                # --- RACE, QUALIFYING & SPRINT LOGIC ---
+                # Uses official classification in session.results
+                if getattr(session, 'results', None) is not None and not session.results.empty:
+                    results_df = session.results.copy()
+
+                    # Safely sort by Position to ensure chronological order
+                    results_df['Position_Num'] = pd.to_numeric(results_df['Position'], errors='coerce')
+                    results_df = results_df.sort_values(by='Position_Num')
+
+                    for _, row in results_df.iterrows():
+                        abbr = row.get('Abbreviation', '')
+                        if not isinstance(abbr, str) or len(abbr) != 3:
+                            continue
+
+                        pos = row.get('Position', '?')
+                        pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
+
+                        color = row.get('TeamColor', '')
+                        if pd.isna(color) or not color:
+                            try:
+                                color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
+                            except Exception:
+                                color = "ffffff"
+                        if not str(color).startswith('#'):
+                            color = f"#{color}"
+
+                        time_str = ""
+                        for col in ['Time', 'Q3', 'Q2', 'Q1']:
+                            if col in row and pd.notna(row[col]):
+                                delta = row[col]
+                                mins = int(delta.total_seconds() // 60)
+                                secs = delta.total_seconds() % 60
+                                time_str = f"{mins}:{secs:06.3f}"
+                                break
+
+                        if not time_str:
+                            status = row.get('Status', '')
+                            time_str = status if isinstance(status, str) else ""
+
+                        row_div = html.Div([
+                            html.Span(f"{pos_str} ",
+                                      style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
+                            html.Strong(f"{abbr}", style={'color': color, 'width': '50px', 'display': 'inline-block'}),
+                            html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
+                        ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
+
+                        leaderboard_children.append(row_div)
 
             return leaderboard_children
 
