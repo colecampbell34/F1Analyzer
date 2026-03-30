@@ -156,7 +156,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.75, 0.25], subplot_titles=("(SC/Pit Laps Removed from Racing Laps)", "Track Temperature (°C)")
+        row_heights=[0.75, 0.25], subplot_titles=("", "Track Temperature (°C)")
     )
 
     comp_colors = {'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff', 'INTERMEDIATE': '#00ff00',

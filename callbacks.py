@@ -264,10 +264,10 @@ def register_callbacks(app):
             fig_speed = _build_telemetry_fig(fast_data, slow_data)
             fig_2d_dom = _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data)
 
-            # Strategy (Race/Sprint only)
-            if session_type not in ['Race', 'Sprint']:
+            # Strategy (Not available for Qualifying)
+            if 'Qualifying' in session_type or 'Shootout' in session_type:
                 fig_strat = go.Figure().update_layout(template='plotly_dark')
-                fig_strat.add_annotation(text="Strategy & Weather only available for Race or Sprint sessions",
+                fig_strat.add_annotation(text="Strategy & Weather not available for Qualifying sessions",
                                          showarrow=False, font=dict(size=20), xref="paper", yref="paper", x=0.5, y=0.5)
             else:
                 fig_strat = _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2)
