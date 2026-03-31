@@ -1,0 +1,9 @@
+dash==4.0.0
+dash-bootstrap-components==2.0.4
+plotly==6.6.0
+fastf1==3.8.1
+pandas
+numpy
+google-genai==1.67.0
+python-dotenv
+gunicorn

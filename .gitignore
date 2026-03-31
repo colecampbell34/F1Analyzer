@@ -1,3 +1,10 @@
 .env
 *.pyc
 *.class
+__pycache__/
+f1_cache/
+.idea/
+.DS_Store
+*.egg-info/
+dist/
+build/

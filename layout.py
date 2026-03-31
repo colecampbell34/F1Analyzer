@@ -2,6 +2,68 @@ import dash
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 
+# --- AFFILIATE LINKS CONFIG ---
+# Replace these URLs with your actual affiliate links (e.g., Amazon Associates, F1 Store, etc.)
+# To sign up: https://affiliate-program.amazon.com/ or https://f1store.formula1.com/affiliate
+AFFILIATE_LINKS = [
+    {
+        'icon': '🏎️',
+        'label': 'Official F1 Store',
+        'sub': 'Team gear & merch',
+        'url': 'https://f1store.formula1.com/',
+    },
+    {
+        'icon': '🎮',
+        'label': 'F1 25 Video Game',
+        'sub': 'Available on all platforms',
+        'url': 'https://www.amazon.com/dp/B0DT14NXP6?tag=YOUR_AMAZON_TAG',
+    },
+    {
+        'icon': '📚',
+        'label': 'F1 Books & Docs',
+        'sub': 'Biographies & history',
+        'url': 'https://www.amazon.com/s?k=formula+1+books&tag=YOUR_AMAZON_TAG',
+    },
+]
+
+BANNER_LINKS = [
+    {'text': '🏁 Official F1 Store', 'url': 'https://f1store.formula1.com/'},
+    {'text': '🎮 F1 25 Game', 'url': 'https://www.amazon.com/dp/B0DT14NXP6?tag=YOUR_AMAZON_TAG'},
+]
+
+
+def _build_affiliate_sidebar():
+    """Builds the affiliate links section for the sidebar."""
+    links = []
+    for item in AFFILIATE_LINKS:
+        links.append(
+            html.A([
+                html.Span(item['icon'], className='link-icon'),
+                html.Span([
+                    html.Span(item['label'], className='link-label'),
+                    html.Span(item['sub'], className='link-sub'),
+                ], className='link-text')
+            ], href=item['url'], target='_blank', rel='noopener noreferrer sponsored',
+               className='affiliate-link')
+        )
+
+    return html.Div([
+        html.H5("F1 Gear"),
+        *links
+    ], className='affiliate-section')
+
+
+def _build_affiliate_banner():
+    """Builds the slim top banner with affiliate links."""
+    parts = []
+    for i, link in enumerate(BANNER_LINKS):
+        if i > 0:
+            parts.append(html.Span('|', className='banner-sep'))
+        parts.append(html.A(link['text'], href=link['url'], target='_blank', rel='noopener noreferrer sponsored'))
+
+    return html.Div(parts, className='affiliate-banner')
+
+
 # --- 2. THE CONTROL PANEL (SIDEBAR) ---
 sidebar = html.Div([
     html.H2("F1 AI Data", className="display-6", style={"fontSize": "1.5rem"}),
@@ -29,7 +91,10 @@ sidebar = html.Div([
     html.Br(),
     html.Hr(),
     html.H4("Session Leaderboard", style={"fontSize": "1.2rem", "marginTop": "1rem"}),
-    html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'maxHeight': '30vh'})
+    html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'maxHeight': '30vh'}),
+
+    # Affiliate links below leaderboard
+    _build_affiliate_sidebar()
 
 ], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto"})
 
@@ -37,6 +102,9 @@ sidebar = html.Div([
 content = html.Div([
     html.H3("Session Telemetry Analysis", className="text-center mt-2", id='main-title'),
     html.Hr(),
+
+    # Affiliate banner between header and tabs
+    _build_affiliate_banner(),
 
     dcc.Tabs([
         dcc.Tab(label='Telemetry Traces', children=[
