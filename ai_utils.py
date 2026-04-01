@@ -3,6 +3,7 @@ import numpy as np
 import os
 from google import genai
 from dotenv import load_dotenv
+from data import get_track_status_events
 
 # --- GEMINI API SETUP ---
 load_dotenv()
@@ -93,14 +94,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
 
         # Track status events (SC, VSC, Red Flag)
         lines.append("\n=== Track Status Events ===")
-        sc_laps, vsc_laps, red_laps = set(), set(), set()
-        try:
-            all_laps = session.laps
-            sc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].dropna().tolist())
-            vsc_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].dropna().tolist())
-            red_laps.update(all_laps[all_laps['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].dropna().tolist())
-        except Exception:
-            pass
+        sc_laps, vsc_laps, red_laps = get_track_status_events(session)
 
         if sc_laps:
             lines.append(f"Safety Car on lap(s): {', '.join(str(int(l)) for l in sorted(sc_laps))}")
@@ -125,10 +119,15 @@ def _gather_session_context(session, session_type, driver1, driver2):
             pass
 
         try:
-            lines.append("\n=== Lap Data (All Laps) ===")
+            lines.append("\n=== Lap Data (Selected + Top 5 Drivers) ===")
             lines.append("Driver, Lap, LapTime(s), S1(s), S2(s), S3(s), Tyres, Status")
             valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if isinstance(d, str) and len(d) == 3]
-            for drv in valid_drivers:
+            # Limit to selected drivers + top 5 to reduce token waste
+            priority_drivers = [driver1, driver2]
+            for d in valid_drivers:
+                if d not in priority_drivers and len(priority_drivers) < 7:
+                    priority_drivers.append(d)
+            for drv in priority_drivers:
                 all_laps = session.laps.pick_drivers(drv)
                 for _, lap in all_laps.iterrows():
                     lt = f"{lap['LapTime'].total_seconds():.3f}" if pd.notna(lap['LapTime']) else "N/A"

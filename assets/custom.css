@@ -1,10 +1,9 @@
 /* Fullscreen loader override for Dark Mode */
 
-/* Target the parent overlay div that Dash creates inline which has no class */
 div:has(> .dash-spinner),
 div:has(> ._dash-loading-callback),
 div[style*="rgba(255, 255, 255"] {
-    background-color: rgba(17, 17, 17, 0.8) !important;
+    background-color: rgba(17, 17, 17, 0.7) !important;
 }
 
 .dash-spinner {
@@ -12,7 +11,7 @@ div[style*="rgba(255, 255, 255"] {
 }
 
 .dash-spinner.dash-spinner--fullscreen {
-    background-color: rgba(17, 17, 17, 0.8) !important;
+    background-color: rgba(17, 17, 17, 0.7) !important;
 }
 
 ._dash-loading-callback {
@@ -21,4 +20,67 @@ div[style*="rgba(255, 255, 255"] {
 
 [data-dash-is-loading="true"] > ._dash-loading-callback {
     background-color: transparent !important;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .display-6 {
+        font-size: 1.2rem !important;
+    }
+
+    .tab-content .graph-container {
+        height: 60vh !important;
+    }
+}
+
+/* Smooth transitions for interactive elements */
+.btn {
+    transition: all 0.2s ease-in-out;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(255, 0, 0, 0.3);
+}
+
+/* Tab hover effects */
+.tab {
+    transition: background-color 0.2s ease;
+}
+
+/* Leaderboard row hover */
+#leaderboard-container > div:hover {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Dropdown styling for better contrast */
+.Select-control {
+    transition: border-color 0.2s ease;
+}
+
+/* AI input focus glow */
+#ai-question-input:focus {
+    border-color: #ff0000 !important;
+    box-shadow: 0 0 0 2px rgba(255, 0, 0, 0.2) !important;
+}
+
+/* Notes textarea focus */
+#session-notes:focus {
+    border-color: #ff0000 !important;
+    box-shadow: 0 0 0 2px rgba(255, 0, 0, 0.2) !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: #111;
+}
+::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #666;
 }
