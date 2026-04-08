@@ -2,8 +2,33 @@ import os
 import shutil
 import fastf1
 import fastf1.plotting
+import fastf1.req
 import pandas as pd
+import gzip
+import builtins
 from functools import lru_cache
+
+def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+    """Monkey-patched open() to compress/decompress FastF1 cache files on the fly."""
+    file_str = str(file)
+    if file_str.endswith('.ff1pkl'):
+        if 'w' in mode:
+            return gzip.open(file_str, mode, compresslevel=1)
+        elif 'r' in mode:
+            try:
+                # Check for gzip magic number
+                with builtins.open(file_str, 'rb') as f:
+                    magic = f.read(2)
+                if magic == b'\x1f\x8b':
+                    return gzip.open(file_str, mode)
+                else:
+                    return builtins.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+            except FileNotFoundError:
+                pass
+    return builtins.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
+
+# Inject the compressed open into FastF1's caching module
+fastf1.req.open = _compressed_cache_open
 
 
 # --- 1. SETUP F1 CACHE ---
