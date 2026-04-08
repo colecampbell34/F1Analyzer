@@ -6,3 +6,13 @@ pandas>=2.0
 numpy>=1.24
 google-genai>=1.0
 python-dotenv>=1.0
+dash
+dash-bootstrap-components
+fastf1
+google-genai
+numpy
+pandas
+plotly
+python-dotenv
+sift-stack-py
+gunicorn
