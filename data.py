@@ -116,7 +116,7 @@ def get_teammate(driver_abbr, session):
 
 
 # --- 6. CACHE MANAGEMENT ---
-def clear_old_cache(max_size_gb=2.0):
+def clear_old_cache(max_size_gb=1.0):
     cache_path = "f1_cache"
 
     if not os.path.exists(cache_path):
