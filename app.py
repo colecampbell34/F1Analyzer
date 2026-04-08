@@ -16,6 +16,8 @@ data.setup_cache()
 app.layout = app_layout
 register_callbacks(app)
 
+server = app.server
+
 if __name__ == '__main__':
     data.clear_old_cache()
-    app.run(port=8051)
+    app.run(host='0.0.0.0', port=5000)
