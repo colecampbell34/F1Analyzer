@@ -40,7 +40,7 @@ def setup_cache():
 
 
 # --- 2. SESSION CACHE (always loads full data) ---
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=8)
 def _load_session_cached(year, race, session_name):
     """LRU-cached session loader. Always loads full telemetry/weather/messages."""
     session = fastf1.get_session(year, race, session_name)

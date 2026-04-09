@@ -16,6 +16,22 @@ from graphs import (
 from ai_utils import _gather_session_context, GEMINI_API_KEY
 
 
+def _friendly_error(e):
+    """Translate cryptic FastF1/network errors to user-friendly messages."""
+    msg = str(e)
+    if '404' in msg:
+        return "This session's data is not yet available. It may not have taken place yet, or the data hasn't been published."
+    if '503' in msg or '502' in msg or 'Connection' in msg.lower():
+        return "The F1 data server is temporarily unavailable. Please try again in a few minutes."
+    if 'Timeout' in msg or 'timeout' in msg:
+        return "The data request timed out. This can happen on the first load — please try again."
+    if 'No lap data' in msg or 'no laps' in msg.lower():
+        return "No lap data is available for this session yet."
+    if 'did not set a valid lap' in msg:
+        return msg  # Already user-friendly
+    return f"Something went wrong loading the data: {msg}"
+
+
 def register_callbacks(app):
     # =============================================
     # 1. YEAR → RACE DROPDOWN
@@ -419,7 +435,7 @@ def register_callbacks(app):
         except Exception as e:
             print(f"Graph Error: {e}")
             err_fig = go.Figure().update_layout(title="Error Loading Telemetry Data", template='plotly_dark')
-            return (err_fig,) * 6 + ('', "Data Unavailable", True, f"Error: {e}")
+            return (err_fig,) * 6 + ('', "Data Unavailable", True, _friendly_error(e))
 
     # =============================================
     # 7. GRID PACE (independent of driver selection)
@@ -458,7 +474,8 @@ def register_callbacks(app):
     # 9. AI ANALYSIS (with conversation history + Enter-to-submit)
     # =============================================
     @app.callback(
-        [Output('ai-response-output', 'children'), Output('ai-history-store', 'data')],
+        [Output('ai-response-output', 'children'), Output('ai-history-store', 'data'),
+         Output('ai-question-input', 'value')],
         [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
         [State('ai-question-input', 'value'), State('session-context-store', 'data'),
          State('ai-history-store', 'data')],
@@ -472,13 +489,13 @@ def register_callbacks(app):
         # On initial load: show existing history or default message
         if not dash.ctx.triggered_id:
             if history:
-                return _render_history(history), dash.no_update
+                return _render_history(history), dash.no_update, dash.no_update
             return html.P("Type a question and click 'Ask AI' or press Enter to get started.",
-                          style={'color': '#888'}), dash.no_update
+                          style={'color': '#888'}), dash.no_update, dash.no_update
 
         total_clicks = (n_clicks or 0) + (n_submit or 0)
         if total_clicks == 0 or not question or not question.strip():
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
 
         if not GEMINI_API_KEY:
             error_html = html.Div([
@@ -488,11 +505,11 @@ def register_callbacks(app):
                           style={'color': '#00ff88', 'backgroundColor': '#111', 'padding': '0.5rem',
                                  'display': 'block', 'borderRadius': '4px', 'marginTop': '0.5rem'})
             ])
-            return error_html, dash.no_update
+            return error_html, dash.no_update, dash.no_update
 
         if not session_context:
             return html.P("⚠️ No session data loaded. Select a session and drivers first.",
-                          style={'color': '#ff4444'}), dash.no_update
+                          style={'color': '#ff4444'}), dash.no_update, dash.no_update
 
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
@@ -526,7 +543,7 @@ def register_callbacks(app):
 
                     new_history = history + [{'question': question, 'answer': answer}]
 
-                    return _render_history(new_history), new_history
+                    return _render_history(new_history), new_history, ''
                 except Exception as e:
                     last_error = e
                     if '429' not in str(e):
@@ -538,18 +555,18 @@ def register_callbacks(app):
                     html.P("⏳ Rate limit reached on Gemini free tier.",
                            style={'color': '#ffaa00', 'fontWeight': 'bold'}),
                     html.P("Please wait about 60 seconds and try again.", style={'color': '#aaa'}),
-                ]), dash.no_update
+                ]), dash.no_update, dash.no_update
             else:
                 return html.Div([
                     html.P(f"❌ AI Error: {error_str}", style={'color': '#ff4444'}),
                     html.P("Please check your API key and try again.", style={'color': '#888'})
-                ]), dash.no_update
+                ]), dash.no_update, dash.no_update
 
         except Exception as e:
             return html.Div([
                 html.P(f"❌ AI Error: {str(e)}", style={'color': '#ff4444'}),
                 html.P("Please check your API key and try again.", style={'color': '#888'})
-            ]), dash.no_update
+            ]), dash.no_update, dash.no_update
 
 
 def _render_history(history):

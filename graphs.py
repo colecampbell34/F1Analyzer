@@ -8,6 +8,14 @@ import numpy as np
 
 from data import get_track_status_events
 
+
+def _downsample(df, max_points=2000):
+    """Downsample a DataFrame to max_points rows via even spacing. Visually identical at chart resolution."""
+    if len(df) <= max_points:
+        return df
+    step = max(1, len(df) // max_points)
+    return df.iloc[::step].reset_index(drop=True)
+
 # Shared tyre compound color map
 COMPOUND_COLORS = {
     'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff',
@@ -55,6 +63,10 @@ def _build_telemetry_fig(fast_data, slow_data):
 
     delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(fast_lap, slow_lap)
 
+    # Downsample for faster transfer over Replit bandwidth
+    fast_tel = _downsample(fast_tel)
+    slow_tel = _downsample(slow_tel)
+
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
         specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": True}], [{"secondary_y": False}]],
@@ -97,7 +109,8 @@ def _build_telemetry_fig(fast_data, slow_data):
     fig.update_layout(
         title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)',
         template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=40, t=80, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5)
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5),
+        uirevision='telemetry'
     )
 
     fig.update_yaxes(title_text="Delta (s)", row=1, col=1)
@@ -168,7 +181,8 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     fig.update_layout(
         title="High-Resolution Track Dominance Map (50 Sectors)", template='plotly_dark',
         xaxis=dict(visible=False, scaleanchor="y", scaleratio=1), yaxis=dict(visible=False),
-        margin=dict(l=40, r=40, t=60, b=40), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+        margin=dict(l=40, r=40, t=60, b=40), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        uirevision='dominance'
     )
     return fig
 
@@ -272,7 +286,8 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     fig.update_layout(
         title="Strategy & Weather", template='plotly_dark', hovermode='x unified',
         margin=dict(l=40, r=40, t=60, b=40),
-        legend=dict(title=dict(text="Legend"), yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(0,0,0,0)")
+        legend=dict(title=dict(text="Legend"), yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(0,0,0,0)"),
+        uirevision='strategy'
     )
     fig.update_xaxes(title_text="Lap Number", row=2, col=1)
     fig.update_yaxes(title_text="Pace (s)", row=1, col=1, autorange="reversed")
@@ -345,7 +360,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     fig.update_layout(
         title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)',
         template='plotly_dark', margin=dict(l=40, r=40, t=80, b=40),
-        hovermode='x unified'
+        hovermode='x unified', uirevision='degradation'
     )
     fig.update_yaxes(title_text='Fuel-Corrected Lap Time (s)', row=1, col=1, autorange='reversed')
     fig.update_xaxes(title_text='Stint Lap', row=1, col=1)
@@ -485,7 +500,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     fig.update_layout(
         title='Race Gap & Position Analysis', template='plotly_dark', hovermode='x unified',
-        margin=dict(l=40, r=40, t=80, b=40)
+        margin=dict(l=40, r=40, t=80, b=40), uirevision='gaps'
     )
     fig.update_yaxes(title_text='Gap (seconds)', row=1, col=1)
     fig.update_yaxes(title_text='Position', row=2, col=1, autorange='reversed',
@@ -557,7 +572,8 @@ def _build_grid_pace_fig(session, session_type):
         template='plotly_dark', showlegend=False,
         yaxis_title='Lap Time (s)',
         yaxis=dict(autorange='reversed'),
-        margin=dict(l=40, r=40, t=60, b=40)
+        margin=dict(l=40, r=40, t=60, b=40),
+        uirevision='gridpace'
     )
 
     return fig
@@ -635,7 +651,8 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         yaxis_title='Duration (s)',
         xaxis_title='Driver & Lap',
         margin=dict(l=40, r=40, t=60, b=80),
-        xaxis_tickangle=-45
+        xaxis_tickangle=-45,
+        uirevision='pitstops'
     )
 
     return fig

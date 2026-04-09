@@ -31,6 +31,34 @@ div[style*="rgba(255, 255, 255"] {
     .tab-content .graph-container {
         height: 60vh !important;
     }
+
+    /* Show teammate labels on mobile (no hover available) */
+    .teammate-label {
+        display: inline !important;
+    }
+}
+
+/* Tabs: horizontal scroll on narrow screens instead of truncation */
+.tab-container,
+div[class*="tab-container"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+}
+
+.tab-container::-webkit-scrollbar {
+    height: 3px;
+}
+
+.tab-container::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 3px;
+}
+
+/* Prevent tabs from wrapping — keep them in a single row */
+.tab-parent {
+    flex-wrap: nowrap !important;
+    white-space: nowrap;
 }
 
 /* Smooth transitions for interactive elements */
@@ -83,4 +111,10 @@ div[style*="rgba(255, 255, 255"] {
 }
 ::-webkit-scrollbar-thumb:hover {
     background: #666;
+}
+
+/* Inline loading spinners for dropdowns — keep them small and unobtrusive */
+.dash-spinner:not(.dash-spinner--fullscreen) {
+    min-height: 0 !important;
+    padding: 0 !important;
 }

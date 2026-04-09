@@ -13,7 +13,7 @@ Allows users to visualize and analyze F1 session data including telemetry, track
 - **UI Components**: Dash Bootstrap Components (CYBORG theme)
 - **Data**: FastF1 (F1 telemetry), Pandas, NumPy
 - **AI**: Google Gemini (via `google-genai`)
-- **Production Server**: Gunicorn
+- **Production Server**: Gunicorn (gthread worker class)
 
 ## Project Structure
 
@@ -43,11 +43,11 @@ Runs on `http://0.0.0.0:5000`
 - Track dominance map (2D visualization)
 - Strategy & tyre analysis with race pace
 - AI data assistant for natural language queries
-- Auto-caching of F1 session data (pruned at 2GB)
+- Auto-caching of F1 session data (pruned at 1GB)
 
 ## Deployment
 
-Configured for autoscale deployment using gunicorn:
+Configured for Replit autoscale deployment using gunicorn:
 ```
-gunicorn --bind=0.0.0.0:5000 --reuse-port app:server
+gunicorn app:server --bind 0.0.0.0:5000 --timeout 300 --workers 2 --threads 4 --worker-class gthread
 ```

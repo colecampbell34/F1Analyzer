@@ -4,6 +4,30 @@ import dash_bootstrap_components as dbc
 from datetime import datetime
 from graphs import GRAPH_CONFIG
 
+# --- Reusable empty-state placeholder ---
+def _empty_state(graph_id, height='68vh'):
+    """Returns a graph with a friendly empty-state message instead of a blank chart."""
+    return dcc.Graph(
+        id=graph_id,
+        style={'height': height},
+        config=GRAPH_CONFIG,
+        figure={
+            'data': [],
+            'layout': {
+                'template': 'plotly_dark',
+                'xaxis': {'visible': False},
+                'yaxis': {'visible': False},
+                'annotations': [{
+                    'text': 'Select a session and two drivers, then click "Update Dashboard"',
+                    'showarrow': False,
+                    'font': {'size': 15, 'color': '#666'},
+                    'xref': 'paper', 'yref': 'paper', 'x': 0.5, 'y': 0.5
+                }]
+            }
+        }
+    )
+
+
 # --- CONTROL PANEL (SIDEBAR) ---
 sidebar = html.Div([
     html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
@@ -19,13 +43,17 @@ sidebar = html.Div([
     html.Br(),
 
     dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
-                 style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Loading(type='dot', color='#ff0000', children=[
+        dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
+                     style={'color': 'black', 'fontSize': '0.9rem'}),
+    ]),
     html.Br(),
 
     dbc.Label("Session", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
-                 style={'color': 'black', 'fontSize': '0.9rem'}),
+    dcc.Loading(type='dot', color='#ff0000', children=[
+        dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
+                     style={'color': 'black', 'fontSize': '0.9rem'}),
+    ]),
     html.Br(),
 
     # Driver 1 + Teammate Button
@@ -37,6 +65,9 @@ sidebar = html.Div([
         dbc.Button("⇄", id='teammate1-btn', color='secondary', size='sm', n_clicks=0,
                    title='Select Teammate',
                    style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
+        html.Span("Teammate", className='teammate-label',
+                  style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
+                         'display': 'none'}),
     ], style={'display': 'flex', 'alignItems': 'center'}),
     html.Br(),
 
@@ -49,6 +80,9 @@ sidebar = html.Div([
         dbc.Button("⇄", id='teammate2-btn', color='secondary', size='sm', n_clicks=0,
                    title='Select Teammate',
                    style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
+        html.Span("Teammate", className='teammate-label',
+                  style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
+                         'display': 'none'}),
     ], style={'display': 'flex', 'alignItems': 'center'}),
     html.Br(),
     dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
@@ -56,9 +90,10 @@ sidebar = html.Div([
     html.Br(),
     html.Hr(),
     html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
-    html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'maxHeight': '30vh'})
+    html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'flex': '1', 'minHeight': '0'})
 
-], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto"})
+], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto",
+          "display": "flex", "flexDirection": "column"})
 
 
 # --- MAIN VIEWING AREA ---
@@ -110,36 +145,36 @@ content = html.Div([
     html.Hr(),
 
     dcc.Tabs([
-        dcc.Tab(label='Telemetry Traces', children=[
+        dcc.Tab(label='Telemetry', children=[
             telemetry_controls,
             dcc.Loading(type='circle', color='#ff0000', children=[
-                dcc.Graph(id='speed-graph', style={'height': '68vh'}, config=GRAPH_CONFIG)
+                _empty_state('speed-graph', '68vh')
             ])
         ], style=tab_style, selected_style=tab_selected_style),
 
-        dcc.Tab(label='Track Dominance', children=[
+        dcc.Tab(label='Track Map', children=[
             dcc.Loading(type='circle', color='#ff0000', children=[
-                dcc.Graph(id='2d-dominance-graph', style={'height': '75vh'}, config=GRAPH_CONFIG)
+                _empty_state('2d-dominance-graph', '75vh')
             ])
         ], style=tab_style, selected_style=tab_selected_style),
 
-        dcc.Tab(label='Strategy & Tyres', children=[
+        dcc.Tab(label='Strategy', children=[
             dcc.Loading(type='circle', color='#ff0000', children=[
-                dcc.Graph(id='strategy-graph', style={'height': '40vh'}, config=GRAPH_CONFIG),
-                dcc.Graph(id='deg-graph', style={'height': '35vh'}, config=GRAPH_CONFIG)
+                _empty_state('strategy-graph', '40vh'),
+                _empty_state('deg-graph', '35vh')
             ])
         ], style=tab_style, selected_style=tab_selected_style),
 
-        dcc.Tab(label='Race Analysis', children=[
+        dcc.Tab(label='Race', children=[
             dcc.Loading(type='circle', color='#ff0000', children=[
-                dcc.Graph(id='race-gaps-graph', style={'height': '42vh'}, config=GRAPH_CONFIG),
-                dcc.Graph(id='pit-stops-graph', style={'height': '33vh'}, config=GRAPH_CONFIG)
+                _empty_state('race-gaps-graph', '42vh'),
+                _empty_state('pit-stops-graph', '33vh')
             ])
         ], style=tab_style, selected_style=tab_selected_style),
 
-        dcc.Tab(label='Grid Overview', children=[
+        dcc.Tab(label='Grid Pace', children=[
             dcc.Loading(type='circle', color='#ff0000', children=[
-                dcc.Graph(id='grid-pace-graph', style={'height': '75vh'}, config=GRAPH_CONFIG)
+                _empty_state('grid-pace-graph', '75vh')
             ])
         ], style=tab_style, selected_style=tab_selected_style),
 
@@ -185,18 +220,9 @@ content = html.Div([
 
 
 app_layout = dbc.Container([
-    dcc.Loading(
-        id="fullscreen-loader",
-        type="default",
-        color="#ff0000",
-        fullscreen=True,
-        overlay_style={"visibility": "visible", "opacity": 0.7, "backgroundColor": "#111111"},
-        children=[
-            dbc.Row([
-                dbc.Col(sidebar, md=2, xs=12),
-                dbc.Col(content, md=10, xs=12)
-            ])
-        ]
-    ),
+    dbc.Row([
+        dbc.Col(sidebar, md=2, xs=12),
+        dbc.Col(content, md=10, xs=12)
+    ]),
     dcc.ConfirmDialog(id='error-dialog', message='')
 ], fluid=True, style={"padding": "0px"})

@@ -119,15 +119,9 @@ def _gather_session_context(session, session_type, driver1, driver2):
             pass
 
         try:
-            lines.append("\n=== Lap Data (Selected + Top 5 Drivers) ===")
+            lines.append("\n=== Detailed Lap Data (Selected Drivers) ===")
             lines.append("Driver, Lap, LapTime(s), S1(s), S2(s), S3(s), Tyres, Status")
-            valid_drivers = [d for d in session.results['Abbreviation'].dropna().tolist() if isinstance(d, str) and len(d) == 3]
-            # Limit to selected drivers + top 5 to reduce token waste
-            priority_drivers = [driver1, driver2]
-            for d in valid_drivers:
-                if d not in priority_drivers and len(priority_drivers) < 7:
-                    priority_drivers.append(d)
-            for drv in priority_drivers:
+            for drv in [driver1, driver2]:
                 all_laps = session.laps.pick_drivers(drv)
                 for _, lap in all_laps.iterrows():
                     lt = f"{lap['LapTime'].total_seconds():.3f}" if pd.notna(lap['LapTime']) else "N/A"
