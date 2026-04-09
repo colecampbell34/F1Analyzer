@@ -51,6 +51,9 @@ sidebar = html.Div([
                    style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
     ], style={'display': 'flex', 'alignItems': 'center'}),
     html.Br(),
+    dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
+               style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
+    html.Br(),
     html.Hr(),
     html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
     html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'maxHeight': '30vh'})

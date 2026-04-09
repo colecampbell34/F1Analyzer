@@ -7,7 +7,7 @@ import pandas as pd
 import fastf1
 from google import genai
 
-from data import _load_session_cached, get_driver_info, get_teammate
+from data import _load_session_cached, _load_drivers_fast, get_driver_info, get_teammate
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
     _build_strategy_fig, _build_deg_fig, _build_qualifying_fig, _build_race_gaps_fig,
@@ -32,7 +32,12 @@ def register_callbacks(app):
         schedule = schedule[schedule['EventFormat'] != 'testing']
         races = schedule['EventName'].tolist()
         options = [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races]
-        val = current_race if current_race in races else (races[0] if races else None)
+        
+        if dash.ctx.triggered_id == 'year-dropdown':
+            val = None
+        else:
+            val = current_race if current_race in races else None
+            
         return options, val
 
     # =============================================
@@ -52,13 +57,17 @@ def register_callbacks(app):
                    if pd.notna(event[f'Session{i}']) and event[f'Session{i}']]
         valid_sessions = [opt['value'] for opt in options]
 
-        if current_session in valid_sessions:
-            val = current_session
+        if dash.ctx.triggered_id == 'race-dropdown':
+            val = None
         else:
-            val = options[-1]['value'] if options else None
-            for opt in options:
-                if opt['label'] == 'Race':
-                    val = opt['value']
+            if current_session in valid_sessions:
+                val = current_session
+            else:
+                val = options[-1]['value'] if options else None
+                for opt in options:
+                    if opt['label'] == 'Race':
+                        val = opt['value']
+                        break
         return options, val
 
     # =============================================
@@ -75,8 +84,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
         try:
-            session = _load_session_cached(year, race, session_name)
-            driver_info = get_driver_info(session)
+            driver_info = _load_drivers_fast(year, race, session_name)
 
             # Build rich labels: "VER - Verstappen (Red Bull)"
             options = []
@@ -142,10 +150,10 @@ def register_callbacks(app):
     # =============================================
     @app.callback(
         Output('leaderboard-container', 'children'),
-        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value')],
-        [State('year-dropdown', 'value')]
+        [Input('update-dashboard-btn', 'n_clicks')],
+        [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
     )
-    def update_leaderboard(session_name, race, year):
+    def update_leaderboard(n_clicks, session_name, race, year):
         if not session_name or not race or not year:
             return dash.no_update
 
@@ -295,13 +303,13 @@ def register_callbacks(app):
          Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure'),
          Output('session-context-store', 'data'), Output('main-title', 'children'),
          Output('error-dialog', 'displayed'), Output('error-dialog', 'message')],
-        [Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
+        [Input('update-dashboard-btn', 'n_clicks'), Input('update-laps-btn', 'n_clicks')],
+        [State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
+         State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
          State('d1-lap-number', 'value'), State('d2-lap-number', 'value'),
          State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
     )
-    def update_graphs(driver1, driver2, n_clicks_update_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
+    def update_graphs(n_clicks_dashboard, n_clicks_update_laps, driver1, driver2, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
                       session_type, race, year):
         empty_fig = go.Figure().update_layout(template='plotly_dark')
         no_update_set = (empty_fig,) * 6 + ('', "Select parameters to load data...", False, "")
@@ -418,10 +426,10 @@ def register_callbacks(app):
     # =============================================
     @app.callback(
         Output('grid-pace-graph', 'figure'),
-        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value')],
-        [State('year-dropdown', 'value')]
+        [Input('update-dashboard-btn', 'n_clicks')],
+        [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
     )
-    def update_grid_pace(session_name, race, year):
+    def update_grid_pace(n_clicks, session_name, race, year):
         if not session_name or not race or not year:
             return go.Figure().update_layout(template='plotly_dark')
         try:

@@ -47,6 +47,17 @@ def _load_session_cached(year, race, session_name):
     session.load(telemetry=True, weather=True, messages=True)
     return session
 
+@lru_cache(maxsize=16)
+def _load_drivers_fast(year, race, session_name):
+    """Fast cache to get driver info without loading laps/telemetry."""
+    session = fastf1.get_session(year, race, session_name)
+    try:
+        session.load(telemetry=False, laps=False, weather=False, messages=False)
+        return get_driver_info(session)
+    except Exception:
+        # Fallback if fastf1 complains
+        return []
+
 
 # --- 3. TRACK STATUS UTILITY ---
 def get_track_status_events(session):
