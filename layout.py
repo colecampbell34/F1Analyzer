@@ -93,12 +93,9 @@ sidebar = html.Div([
     html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
     html.Div([
         dcc.Loading(type='dot', color='#ff0000', children=[
-            html.Div(
-                id='leaderboard-container',
-                style={'height': '100%', 'overflowY': 'scroll', 'overflowX': 'hidden', 'scrollbarGutter': 'stable'}
-            )
+            html.Div(id='leaderboard-container')
         ])
-    ], style={'flex': '1', 'minHeight': '0', 'overflow': 'hidden'})
+    ], style={'overflowY': 'auto', 'overflowX': 'hidden', 'scrollbarGutter': 'stable', 'flex': '1', 'minHeight': '0'})
 
 ], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "hidden",
           "display": "flex", "flexDirection": "column"})
