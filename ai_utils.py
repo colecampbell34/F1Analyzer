@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 import os
+import time
+import hashlib
+from datetime import datetime, timezone
+from collections import defaultdict
 from google import genai
 from dotenv import load_dotenv
 from data import get_track_status_events
@@ -8,6 +12,89 @@ from data import get_track_status_events
 # --- GEMINI API SETUP ---
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+# --- Model Configuration ---
+GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
+
+# --- Rate Limiting (per IP) ---
+_AI_RATE_LIMIT = defaultdict(list)  # IP → list of timestamps
+MAX_REQUESTS_PER_MINUTE = 2
+MAX_REQUESTS_PER_HOUR = 10
+
+# --- Daily Budget (global, across all users) ---
+_daily_request_count = 0
+_daily_reset_date = None
+DAILY_REQUEST_LIMIT = 400  # Hard cap (API limit is 500 rpd for flash-lite)
+
+# --- Response Cache (exact normalized match) ---
+_AI_RESPONSE_CACHE = {}  # cache_key → response_text
+MAX_CACHE_SIZE = 100
+
+
+def check_rate_limit(ip):
+    """Check if the given IP is within rate limits. Returns (allowed, wait_message)."""
+    now = time.time()
+
+    # Clean entries older than 1 hour
+    _AI_RATE_LIMIT[ip] = [t for t in _AI_RATE_LIMIT[ip] if now - t < 3600]
+
+    recent_minute = sum(1 for t in _AI_RATE_LIMIT[ip] if now - t < 60)
+    recent_hour = len(_AI_RATE_LIMIT[ip])
+
+    if recent_minute >= MAX_REQUESTS_PER_MINUTE:
+        return False, "You've reached the limit of 2 questions per minute. Please wait a moment before asking again."
+    if recent_hour >= MAX_REQUESTS_PER_HOUR:
+        return False, "You've reached the limit of 10 questions per hour. Please take a break and come back shortly."
+
+    _AI_RATE_LIMIT[ip].append(now)
+    return True, None
+
+
+def check_daily_budget():
+    """Check if the global daily request budget allows another call. Returns True if allowed."""
+    global _daily_request_count, _daily_reset_date
+    today = datetime.now(timezone.utc).date()
+
+    if _daily_reset_date != today:
+        _daily_request_count = 0
+        _daily_reset_date = today
+
+    if _daily_request_count >= DAILY_REQUEST_LIMIT:
+        return False
+
+    _daily_request_count += 1
+    return True
+
+
+def _cache_key(session_context, question):
+    """Generate a cache key from session context + normalized question.
+
+    Only matches EXACT same questions (after lowering + stripping) for the same session.
+    Similar-but-different questions will miss the cache intentionally — we don't want
+    to return a wrong answer for a different question.
+    """
+    q_normalized = question.lower().strip()
+    # Use first 200 chars of context to identify the session uniquely
+    ctx_prefix = session_context[:200] if session_context else ''
+    raw = ctx_prefix + '||' + q_normalized
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def get_cached_response(session_context, question):
+    """Returns cached response if an exact normalized match exists, else None."""
+    key = _cache_key(session_context, question)
+    return _AI_RESPONSE_CACHE.get(key)
+
+
+def store_cached_response(session_context, question, response):
+    """Store a response in the cache. Evicts oldest entries if cache is full."""
+    if len(_AI_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
+        # Evict the oldest entry (first inserted key)
+        oldest_key = next(iter(_AI_RESPONSE_CACHE))
+        del _AI_RESPONSE_CACHE[oldest_key]
+    key = _cache_key(session_context, question)
+    _AI_RESPONSE_CACHE[key] = response
+
 
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
@@ -135,4 +222,3 @@ def _gather_session_context(session, session_type, driver1, driver2):
             pass
 
     return "\n".join(lines)
-

@@ -550,13 +550,16 @@ def _build_grid_pace_fig(session, session_type):
                 'driver': drv,
                 'times': lap_times.tolist(),
                 'median': lap_times.median(),
+                'mean': lap_times.mean(),
                 'color': color
             })
         except Exception:
             continue
 
-    # Sort by median pace (fastest first)
-    drivers_data.sort(key=lambda x: x['median'])
+    # Sort by mean for qualifying, median for races/practice
+    is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
+    sort_key = 'mean' if is_quali else 'median'
+    drivers_data.sort(key=lambda x: x[sort_key])
 
     for d in drivers_data:
         fig.add_trace(go.Box(
@@ -567,8 +570,9 @@ def _build_grid_pace_fig(session, session_type):
         ))
 
     session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "All Laps"
+    sort_label = "Mean" if is_quali else "Median"
     fig.update_layout(
-        title=f'Grid Pace Distribution ({session_label}, Sorted by Median)',
+        title=f'Grid Pace Distribution ({session_label}, Sorted by {sort_label})',
         template='plotly_dark', showlegend=False,
         yaxis_title='Lap Time (s)',
         yaxis=dict(autorange='reversed'),

@@ -39,6 +39,13 @@ def setup_cache():
     fastf1.Cache.enable_cache(cache_dir)
 
 
+# --- 1b. EVENT SCHEDULE CACHE ---
+@lru_cache(maxsize=20)
+def get_event_schedule_cached(year):
+    """LRU-cached event schedule. Historical years never change, current year rarely."""
+    return fastf1.get_event_schedule(year)
+
+
 # --- 2. SESSION CACHE (always loads full data) ---
 @lru_cache(maxsize=8)
 def _load_session_cached(year, race, session_name):
