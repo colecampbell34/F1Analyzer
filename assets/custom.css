@@ -1,3 +1,9 @@
+html, body, #react-entry-point {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+}
+
 /* Fullscreen loader override for Dark Mode */
 
 div:has(> .dash-spinner),

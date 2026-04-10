@@ -1,12 +1,19 @@
 import os
 import shutil
+import threading
 import fastf1
 import fastf1.plotting
 import fastf1.req
 import pandas as pd
 import gzip
 import builtins
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+from fastf1.ergast import Ergast
+
+_SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_SESSION_PRELOAD_FUTURES = {}
+_SESSION_PRELOAD_LOCK = threading.Lock()
 
 def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
     """Monkey-patched open() to compress/decompress FastF1 cache files on the fly."""
@@ -53,6 +60,53 @@ def _load_session_cached(year, race, session_name):
     session = fastf1.get_session(year, race, session_name)
     session.load(telemetry=True, weather=True, messages=True)
     return session
+
+
+def _session_cache_key(year, race, session_name):
+    return int(year), str(race), str(session_name)
+
+
+def preload_session(year, race, session_name):
+    """Start loading a full session in the background and deduplicate requests."""
+    if not all([year, race, session_name]):
+        return None
+
+    key = _session_cache_key(year, race, session_name)
+    with _SESSION_PRELOAD_LOCK:
+        future = _SESSION_PRELOAD_FUTURES.get(key)
+        if future is None or (future.done() and future.exception() is not None):
+            future = _SESSION_PRELOAD_EXECUTOR.submit(_load_session_cached, *key)
+            _SESSION_PRELOAD_FUTURES[key] = future
+        return future
+
+
+def get_session_preload_status(year, race, session_name):
+    """Return a simple state dict for the requested session preload."""
+    if not all([year, race, session_name]):
+        return {'state': 'idle', 'message': ''}
+
+    key = _session_cache_key(year, race, session_name)
+    with _SESSION_PRELOAD_LOCK:
+        future = _SESSION_PRELOAD_FUTURES.get(key)
+
+    if future is None:
+        return {'state': 'idle', 'message': ''}
+    if not future.done():
+        return {'state': 'loading', 'message': ''}
+
+    error = future.exception()
+    if error is not None:
+        return {'state': 'error', 'message': str(error)}
+
+    return {'state': 'ready', 'message': ''}
+
+
+def load_session_with_preload(year, race, session_name):
+    """Return a session, reusing any in-flight background preload when possible."""
+    future = preload_session(year, race, session_name)
+    if future is not None:
+        return future.result()
+    return _load_session_cached(year, race, session_name)
 
 @lru_cache(maxsize=16)
 def _load_drivers_fast(year, race, session_name):
@@ -117,20 +171,34 @@ def get_driver_info(session):
 
 
 # --- 5. TEAMMATE LOOKUP ---
-def get_teammate(driver_abbr, session):
-    """Given a driver abbreviation, returns the abbreviation of their teammate (or None)."""
-    info = get_driver_info(session)
+def get_teammate_from_info(driver_abbr, driver_info):
+    """Return the teammate abbreviation from preloaded driver info."""
     driver_team = None
-    for d in info:
+    for d in driver_info:
         if d['abbr'] == driver_abbr:
             driver_team = d['team']
             break
     if not driver_team:
         return None
-    for d in info:
+    for d in driver_info:
         if d['team'] == driver_team and d['abbr'] != driver_abbr:
             return d['abbr']
     return None
+
+
+def get_teammate(driver_abbr, session):
+    """Given a driver abbreviation, returns the abbreviation of their teammate (or None)."""
+    return get_teammate_from_info(driver_abbr, get_driver_info(session))
+
+
+@lru_cache(maxsize=32)
+def get_pit_stop_data(year, round_number):
+    """Load official Ergast pit-stop durations for a race weekend."""
+    ergast = Ergast(result_type='pandas', auto_cast=True)
+    result = ergast.get_pit_stops(season=int(year), round=int(round_number))
+    if not result.content:
+        return pd.DataFrame()
+    return result.content[0].copy()
 
 
 # --- 6. CACHE MANAGEMENT ---

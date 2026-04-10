@@ -91,9 +91,16 @@ sidebar = html.Div([
     html.Br(),
     html.Hr(),
     html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
-    html.Div(id='leaderboard-container', style={'overflowY': 'auto', 'flex': '1', 'minHeight': '0'})
+    html.Div([
+        dcc.Loading(type='dot', color='#ff0000', children=[
+            html.Div(
+                id='leaderboard-container',
+                style={'height': '100%', 'overflowY': 'scroll', 'overflowX': 'hidden', 'scrollbarGutter': 'stable'}
+            )
+        ])
+    ], style={'flex': '1', 'minHeight': '0', 'overflow': 'hidden'})
 
-], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "auto",
+], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "hidden",
           "display": "flex", "flexDirection": "column"})
 
 
@@ -224,9 +231,11 @@ content = html.Div([
 
 app_layout = dbc.Container([
     dbc.Row([
-        dbc.Col(sidebar, md=2, xs=12),
-        dbc.Col(content, md=10, xs=12)
-    ]),
+        dbc.Col(sidebar, md=2, xs=12, style={'height': '100vh', 'overflow': 'hidden'}),
+        dbc.Col(content, md=10, xs=12, style={'height': '100vh', 'overflow': 'hidden'})
+    ], className='g-0', style={'height': '100vh', 'margin': '0'}),
     dcc.Store(id='dashboard-params-store', storage_type='session'),
+    dcc.Store(id='session-preload-store', storage_type='session'),
+    dcc.Interval(id='session-preload-poll', interval=1500, n_intervals=0, disabled=True),
     dcc.ConfirmDialog(id='error-dialog', message='')
-], fluid=True, style={"padding": "0px"})
+], fluid=True, style={"padding": "0px", "height": "100vh", "overflow": "hidden"})

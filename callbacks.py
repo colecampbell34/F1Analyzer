@@ -7,7 +7,10 @@ import pandas as pd
 import fastf1
 from google import genai
 
-from data import _load_session_cached, _load_drivers_fast, get_driver_info, get_teammate, get_event_schedule_cached
+from data import (
+    _load_drivers_fast, get_session_preload_status, get_teammate_from_info,
+    get_event_schedule_cached, load_session_with_preload, preload_session
+)
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
     _build_strategy_fig, _build_deg_fig, _build_race_gaps_fig,
@@ -34,6 +37,144 @@ def _friendly_error(e):
     if 'did not set a valid lap' in msg:
         return msg  # Already user-friendly
     return f"Something went wrong loading the data: {msg}"
+
+
+def _preload_payload(year, race, session_name, status):
+    return {
+        'year': year,
+        'race': race,
+        'session_type': session_name,
+        **status
+    }
+
+
+def _build_leaderboard_children(session, session_name):
+    leaderboard_children = []
+
+    is_practice = any(p in session_name for p in ['Practice', 'FP'])
+
+    if is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
+        drivers_data = []
+        all_drivers = (session.results['Abbreviation'].dropna().unique()
+                       if getattr(session, 'results', None) is not None and not session.results.empty
+                       else session.laps['Driver'].unique())
+
+        for drv in all_drivers:
+            if not isinstance(drv, str) or len(drv) != 3:
+                continue
+            drv_laps = session.laps.pick_drivers(drv)
+            fastest_lap = drv_laps.pick_fastest() if not drv_laps.empty else None
+            lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
+                fastest_lap['LapTime']) else pd.NaT
+
+            color = "ffffff"
+            if getattr(session, 'results', None) is not None and not session.results.empty:
+                res_row = session.results[session.results['Abbreviation'] == drv]
+                if not res_row.empty:
+                    color = res_row.iloc[0].get('TeamColor', '')
+                    if pd.isna(color) or not color:
+                        try:
+                            color = fastf1.plotting.get_team_color(
+                                res_row.iloc[0].get('TeamName', ''), session=session)
+                        except Exception:
+                            pass
+            if not str(color).startswith('#'):
+                color = f"#{color}"
+
+            drivers_data.append({'Abbreviation': drv, 'LapTime': lap_time, 'TeamColor': color})
+
+        valid_times = sorted([d for d in drivers_data if pd.notna(d['LapTime'])],
+                             key=lambda x: x['LapTime'])
+        no_times = [d for d in drivers_data if pd.isna(d['LapTime'])]
+        sorted_drivers = valid_times + no_times
+
+        leader_time = sorted_drivers[0]['LapTime'] if sorted_drivers and pd.notna(
+            sorted_drivers[0]['LapTime']) else None
+
+        for idx, r in enumerate(sorted_drivers):
+            pos_str = f"P{idx + 1}" if pd.notna(r['LapTime']) else "N/A"
+
+            if pd.notna(r['LapTime']):
+                if idx == 0 or leader_time is None:
+                    delta = r['LapTime']
+                    mins = int(delta.total_seconds() // 60)
+                    secs = delta.total_seconds() % 60
+                    time_str = f"{mins}:{secs:06.3f}"
+                else:
+                    gap = (r['LapTime'] - leader_time).total_seconds()
+                    time_str = f"+{gap:.3f}s"
+            else:
+                time_str = "NO TIME"
+
+            row_div = html.Div([
+                html.Span(f"{pos_str} ",
+                          style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
+                html.Strong(f"{r['Abbreviation']}",
+                            style={'color': r['TeamColor'], 'width': '50px', 'display': 'inline-block'}),
+                html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
+            ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
+
+            leaderboard_children.append(row_div)
+    else:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            results_df = session.results.copy()
+            results_df['Position_Num'] = pd.to_numeric(results_df['Position'], errors='coerce')
+            results_df = results_df.sort_values(by='Position_Num')
+
+            leader_time = None
+            is_race = session_name in ['Race', 'Sprint']
+
+            for _, row in results_df.iterrows():
+                abbr = row.get('Abbreviation', '')
+                if not isinstance(abbr, str) or len(abbr) != 3:
+                    continue
+
+                pos = row.get('Position', '?')
+                pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
+
+                color = row.get('TeamColor', '')
+                if pd.isna(color) or not color:
+                    try:
+                        color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
+                    except Exception:
+                        color = "ffffff"
+                if not str(color).startswith('#'):
+                    color = f"#{color}"
+
+                raw_time = None
+                for col in ['Time', 'Q3', 'Q2', 'Q1']:
+                    if col in row and pd.notna(row[col]):
+                        raw_time = row[col]
+                        break
+
+                if raw_time is not None:
+                    if leader_time is None:
+                        leader_time = raw_time
+                        mins = int(raw_time.total_seconds() // 60)
+                        secs = raw_time.total_seconds() % 60
+                        time_str = f"{mins}:{secs:06.3f}"
+                    else:
+                        if is_race:
+                            gap = raw_time.total_seconds()
+                            time_str = f"+{gap:.3f}s"
+                        else:
+                            gap = (raw_time - leader_time).total_seconds()
+                            time_str = f"+{gap:.3f}s"
+                else:
+                    status = row.get('Status', '')
+                    time_str = status if isinstance(status, str) else ""
+
+                row_div = html.Div([
+                    html.Span(f"{pos_str} ",
+                              style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
+                    html.Strong(f"{abbr}",
+                                style={'color': color, 'width': '50px', 'display': 'inline-block'}),
+                    html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
+                ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
+
+                leaderboard_children.append(row_div)
+
+    return leaderboard_children
 
 
 def register_callbacks(app):
@@ -128,6 +269,35 @@ def register_callbacks(app):
             print(f"Drivers Error: {e}")
             return [], None, [], None
 
+    @app.callback(
+        [Output('session-preload-store', 'data'), Output('session-preload-poll', 'disabled')],
+        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value'), Input('year-dropdown', 'value')]
+    )
+    def start_session_preload(session_name, race, year):
+        if not session_name or not race or not year:
+            return None, True
+
+        preload_session(year, race, session_name)
+        status = get_session_preload_status(year, race, session_name)
+        return _preload_payload(year, race, session_name, status), status['state'] != 'loading'
+
+    @app.callback(
+        [Output('session-preload-store', 'data', allow_duplicate=True),
+         Output('session-preload-poll', 'disabled', allow_duplicate=True)],
+        Input('session-preload-poll', 'n_intervals'),
+        State('session-preload-store', 'data'),
+        prevent_initial_call=True
+    )
+    def monitor_session_preload(_, preload_data):
+        if not preload_data:
+            return dash.no_update, True
+
+        year = preload_data.get('year')
+        race = preload_data.get('race')
+        session_name = preload_data.get('session_type')
+        status = get_session_preload_status(year, race, session_name)
+        return _preload_payload(year, race, session_name, status), status['state'] != 'loading'
+
     # =============================================
     # 4. TEAMMATE AUTO-SELECT BUTTONS
     # =============================================
@@ -142,8 +312,8 @@ def register_callbacks(app):
         if not n_clicks or not driver1 or not session_name or not race or not year:
             return dash.no_update
         try:
-            session = _load_session_cached(year, race, session_name)
-            teammate = get_teammate(driver1, session)
+            driver_info = _load_drivers_fast(year, race, session_name)
+            teammate = get_teammate_from_info(driver1, driver_info)
             return teammate if teammate else dash.no_update
         except Exception:
             return dash.no_update
@@ -159,8 +329,8 @@ def register_callbacks(app):
         if not n_clicks or not driver2 or not session_name or not race or not year:
             return dash.no_update
         try:
-            session = _load_session_cached(year, race, session_name)
-            teammate = get_teammate(driver2, session)
+            driver_info = _load_drivers_fast(year, race, session_name)
+            teammate = get_teammate_from_info(driver2, driver_info)
             return teammate if teammate else dash.no_update
         except Exception:
             return dash.no_update
@@ -170,149 +340,19 @@ def register_callbacks(app):
     # =============================================
     @app.callback(
         Output('leaderboard-container', 'children'),
-        [Input('update-dashboard-btn', 'n_clicks')],
-        [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
+        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value'), Input('year-dropdown', 'value')]
     )
-    def update_leaderboard(n_clicks, session_name, race, year):
+    def update_leaderboard(session_name, race, year):
         if not session_name or not race or not year:
-            return dash.no_update
+            return html.Div("Select a session to load the leaderboard.", style={'color': '#888', 'fontSize': '0.9rem'})
 
         try:
-            session = _load_session_cached(year, race, session_name)
-            leaderboard_children = []
-
-            is_practice = any(p in session_name for p in ['Practice', 'FP'])
-
-            if is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
-                # --- PRACTICE ---
-                drivers_data = []
-                all_drivers = (session.results['Abbreviation'].dropna().unique()
-                               if getattr(session, 'results', None) is not None and not session.results.empty
-                               else session.laps['Driver'].unique())
-
-                for drv in all_drivers:
-                    if not isinstance(drv, str) or len(drv) != 3:
-                        continue
-                    drv_laps = session.laps.pick_drivers(drv)
-                    fastest_lap = drv_laps.pick_fastest() if not drv_laps.empty else None
-                    lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
-                        fastest_lap['LapTime']) else pd.NaT
-
-                    color = "ffffff"
-                    if getattr(session, 'results', None) is not None and not session.results.empty:
-                        res_row = session.results[session.results['Abbreviation'] == drv]
-                        if not res_row.empty:
-                            color = res_row.iloc[0].get('TeamColor', '')
-                            if pd.isna(color) or not color:
-                                try:
-                                    color = fastf1.plotting.get_team_color(
-                                        res_row.iloc[0].get('TeamName', ''), session=session)
-                                except Exception:
-                                    pass
-                    if not str(color).startswith('#'):
-                        color = f"#{color}"
-
-                    drivers_data.append({'Abbreviation': drv, 'LapTime': lap_time, 'TeamColor': color})
-
-                valid_times = sorted([d for d in drivers_data if pd.notna(d['LapTime'])],
-                                     key=lambda x: x['LapTime'])
-                no_times = [d for d in drivers_data if pd.isna(d['LapTime'])]
-                sorted_drivers = valid_times + no_times
-
-                leader_time = sorted_drivers[0]['LapTime'] if sorted_drivers and pd.notna(
-                    sorted_drivers[0]['LapTime']) else None
-
-                for idx, r in enumerate(sorted_drivers):
-                    pos_str = f"P{idx + 1}" if pd.notna(r['LapTime']) else "N/A"
-
-                    if pd.notna(r['LapTime']):
-                        if idx == 0 or leader_time is None:
-                            delta = r['LapTime']
-                            mins = int(delta.total_seconds() // 60)
-                            secs = delta.total_seconds() % 60
-                            time_str = f"{mins}:{secs:06.3f}"
-                        else:
-                            gap = (r['LapTime'] - leader_time).total_seconds()
-                            time_str = f"+{gap:.3f}s"
-                    else:
-                        time_str = "NO TIME"
-
-                    row_div = html.Div([
-                        html.Span(f"{pos_str} ",
-                                  style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
-                        html.Strong(f"{r['Abbreviation']}",
-                                    style={'color': r['TeamColor'], 'width': '50px', 'display': 'inline-block'}),
-                        html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
-                    ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
-
-                    leaderboard_children.append(row_div)
-
-            else:
-                # --- RACE / QUALI / SPRINT ---
-                if getattr(session, 'results', None) is not None and not session.results.empty:
-                    results_df = session.results.copy()
-                    results_df['Position_Num'] = pd.to_numeric(results_df['Position'], errors='coerce')
-                    results_df = results_df.sort_values(by='Position_Num')
-
-                    leader_time = None
-                    is_race = session_name in ['Race', 'Sprint']
-
-                    for row_idx, (_, row) in enumerate(results_df.iterrows()):
-                        abbr = row.get('Abbreviation', '')
-                        if not isinstance(abbr, str) or len(abbr) != 3:
-                            continue
-
-                        pos = row.get('Position', '?')
-                        pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
-
-                        color = row.get('TeamColor', '')
-                        if pd.isna(color) or not color:
-                            try:
-                                color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
-                            except Exception:
-                                color = "ffffff"
-                        if not str(color).startswith('#'):
-                            color = f"#{color}"
-
-                        # Get the relevant time
-                        raw_time = None
-                        for col in ['Time', 'Q3', 'Q2', 'Q1']:
-                            if col in row and pd.notna(row[col]):
-                                raw_time = row[col]
-                                break
-
-                        if raw_time is not None:
-                            if leader_time is None:
-                                leader_time = raw_time
-                                mins = int(raw_time.total_seconds() // 60)
-                                secs = raw_time.total_seconds() % 60
-                                time_str = f"{mins}:{secs:06.3f}"
-                            else:
-                                if is_race:
-                                    gap = raw_time.total_seconds()
-                                    time_str = f"+{gap:.3f}s"
-                                else:
-                                    gap = (raw_time - leader_time).total_seconds()
-                                    time_str = f"+{gap:.3f}s"
-                        else:
-                            status = row.get('Status', '')
-                            time_str = status if isinstance(status, str) else ""
-
-                        row_div = html.Div([
-                            html.Span(f"{pos_str} ",
-                                      style={'width': '30px', 'display': 'inline-block', 'color': '#888'}),
-                            html.Strong(f"{abbr}",
-                                        style={'color': color, 'width': '50px', 'display': 'inline-block'}),
-                            html.Span(f"{time_str}", style={'color': '#ccc', 'float': 'right'})
-                        ], style={'padding': '0.2rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.85rem'})
-
-                        leaderboard_children.append(row_div)
-
-            return leaderboard_children
+            session = load_session_with_preload(year, race, session_name)
+            return _build_leaderboard_children(session, session_name)
 
         except Exception as e:
             print(f"Leaderboard Error: {e}")
-            return html.Div("Error loading leaderboard", style={'color': 'red'})
+            return html.Div(_friendly_error(e), style={'color': 'red', 'fontSize': '0.9rem'})
 
     # =============================================
     # 6. MASTER: Update Dashboard → Store params + Title + Context
@@ -346,7 +386,7 @@ def register_callbacks(app):
         driver1, driver2 = params['driver1'], params['driver2']
         
         try:
-            session = _load_session_cached(year, race, session_type)
+            session = load_session_with_preload(year, race, session_type)
 
             # Build labels for the title
             try:
@@ -375,7 +415,7 @@ def register_callbacks(app):
     # --- Shared helper for per-tab callbacks ---
     def _get_shared_data(params):
         """Loads session and computes shared labels/colors from stored params."""
-        session = _load_session_cached(params['year'], params['race'], params['session_type'])
+        session = load_session_with_preload(params['year'], params['race'], params['session_type'])
         d1, d2 = params['driver1'], params['driver2']
 
         try:
@@ -561,7 +601,7 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-gridpace':
             return dash.no_update
         try:
-            session = _load_session_cached(params['year'], params['race'], params['session_type'])
+            session = load_session_with_preload(params['year'], params['race'], params['session_type'])
             return _build_grid_pace_fig(session, params['session_type'])
         except Exception as e:
             print(f"Grid Pace Error: {e}")

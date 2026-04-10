@@ -6,7 +6,7 @@ import fastf1.utils
 import pandas as pd
 import numpy as np
 
-from data import get_track_status_events
+from data import get_pit_stop_data, get_track_status_events
 
 
 def _downsample(df, max_points=2000):
@@ -586,44 +586,85 @@ def _build_grid_pace_fig(session, session_type):
 def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds a pit stop duration comparison chart for all drivers."""
     fig = go.Figure()
-
-    all_drivers = []
-    if getattr(session, 'results', None) is not None and not session.results.empty:
-        all_drivers = [d for d in session.results['Abbreviation'].dropna().tolist()
-                       if isinstance(d, str) and len(d) == 3]
-
     pit_data = []
-    for drv in all_drivers:
-        try:
-            drv_laps = session.laps.pick_drivers(drv).sort_values('LapNumber')
-            pit_in = drv_laps[drv_laps['PitInTime'].notna()]
+    title = 'Pit Stop Durations (Stationary Time, All Drivers)'
+    hover_label = 'Stop Time'
 
-            for _, pit_lap in pit_in.iterrows():
-                pit_in_time = pit_lap['PitInTime']
-                next_lap_num = pit_lap['LapNumber'] + 1
-                next_lap = drv_laps[drv_laps['LapNumber'] == next_lap_num]
+    try:
+        pit_stops = get_pit_stop_data(session.event.year, session.event.RoundNumber)
+    except Exception:
+        pit_stops = pd.DataFrame()
 
-                if not next_lap.empty and pd.notna(next_lap.iloc[0].get('PitOutTime')):
-                    pit_out_time = next_lap.iloc[0]['PitOutTime']
-                    duration = (pit_out_time - pit_in_time).total_seconds()
-                    if 10 < duration < 120:  # filter out anomalies
-                        color = '#ffffff'
-                        try:
-                            color = fastf1.plotting.get_driver_color(drv, session)
-                            if not color.startswith('#'):
-                                color = f'#{color}'
-                        except (KeyError, ValueError):
-                            pass
+    if pit_stops is not None and not pit_stops.empty:
+        for _, stop in pit_stops.iterrows():
+            duration = stop.get('duration')
+            if pd.isna(duration):
+                continue
 
-                        pit_data.append({
-                            'driver': drv,
-                            'lap': int(pit_lap['LapNumber']),
-                            'duration': duration,
-                            'color': color,
-                            'highlight': drv in [driver1, driver2]
-                        })
-        except Exception:
-            continue
+            duration_seconds = duration.total_seconds()
+            if not 0 < duration_seconds < 120:
+                continue
+
+            drv = stop.get('driverCode') or str(stop.get('driverId', '')).upper()[:3]
+            if not isinstance(drv, str) or len(drv) != 3:
+                continue
+
+            color = '#ffffff'
+            try:
+                color = fastf1.plotting.get_driver_color(drv, session)
+                if not color.startswith('#'):
+                    color = f'#{color}'
+            except (KeyError, ValueError):
+                pass
+
+            pit_data.append({
+                'driver': drv,
+                'lap': int(stop['lap']),
+                'duration': duration_seconds,
+                'color': color,
+                'highlight': drv in [driver1, driver2]
+            })
+
+    if not pit_data:
+        title = 'Pit Stop Durations (Pit Lane Time Fallback)'
+        hover_label = 'Pit Lane Time'
+
+        all_drivers = []
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            all_drivers = [d for d in session.results['Abbreviation'].dropna().tolist()
+                           if isinstance(d, str) and len(d) == 3]
+
+        for drv in all_drivers:
+            try:
+                drv_laps = session.laps.pick_drivers(drv).sort_values('LapNumber')
+                pit_in = drv_laps[drv_laps['PitInTime'].notna()]
+
+                for _, pit_lap in pit_in.iterrows():
+                    pit_in_time = pit_lap['PitInTime']
+                    next_lap_num = pit_lap['LapNumber'] + 1
+                    next_lap = drv_laps[drv_laps['LapNumber'] == next_lap_num]
+
+                    if not next_lap.empty and pd.notna(next_lap.iloc[0].get('PitOutTime')):
+                        pit_out_time = next_lap.iloc[0]['PitOutTime']
+                        duration = (pit_out_time - pit_in_time).total_seconds()
+                        if 10 < duration < 120:
+                            color = '#ffffff'
+                            try:
+                                color = fastf1.plotting.get_driver_color(drv, session)
+                                if not color.startswith('#'):
+                                    color = f'#{color}'
+                            except (KeyError, ValueError):
+                                pass
+
+                            pit_data.append({
+                                'driver': drv,
+                                'lap': int(pit_lap['LapNumber']),
+                                'duration': duration,
+                                'color': color,
+                                'highlight': drv in [driver1, driver2]
+                            })
+            except Exception:
+                continue
 
     if not pit_data:
         fig.add_annotation(text="No pit stop data available", showarrow=False,
@@ -646,11 +687,11 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             text=f"{p['duration']:.1f}s",
             textposition='auto',
             showlegend=False,
-            hovertemplate=f"{p['driver']} - Lap {p['lap']}<br>Pit Lane Time: {p['duration']:.1f}s<extra></extra>"
+            hovertemplate=f"{p['driver']} - Lap {p['lap']}<br>{hover_label}: {p['duration']:.1f}s<extra></extra>"
         ))
 
     fig.update_layout(
-        title='Pit Stop Durations (Pit Lane Time, All Drivers)',
+        title=title,
         template='plotly_dark',
         yaxis_title='Duration (s)',
         xaxis_title='Driver & Lap',
