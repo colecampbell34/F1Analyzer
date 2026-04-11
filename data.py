@@ -62,6 +62,14 @@ def _load_session_cached(year, race, session_name):
     return session
 
 
+@lru_cache(maxsize=16)
+def _load_session_summary_cached(year, race, session_name, include_laps):
+    """LRU-cached lightweight session loader for sidebar data and labels."""
+    session = fastf1.get_session(year, race, session_name)
+    session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=False)
+    return session
+
+
 def _session_cache_key(year, race, session_name):
     return int(year), str(race), str(session_name)
 
@@ -108,12 +116,17 @@ def load_session_with_preload(year, race, session_name):
         return future.result()
     return _load_session_cached(year, race, session_name)
 
+
+def load_session_summary(year, race, session_name, include_laps=False):
+    """Return a lightweight session object without telemetry/weather/messages."""
+    return _load_session_summary_cached(int(year), str(race), str(session_name), bool(include_laps))
+
+
 @lru_cache(maxsize=16)
 def _load_drivers_fast(year, race, session_name):
     """Fast cache to get driver info without loading laps/telemetry."""
-    session = fastf1.get_session(year, race, session_name)
     try:
-        session.load(telemetry=False, laps=False, weather=False, messages=False)
+        session = load_session_summary(year, race, session_name, include_laps=False)
         return get_driver_info(session)
     except Exception:
         # Fallback if fastf1 complains

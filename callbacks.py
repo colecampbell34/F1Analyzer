@@ -9,7 +9,7 @@ from google import genai
 
 from data import (
     _load_drivers_fast, get_session_preload_status, get_teammate_from_info,
-    get_event_schedule_cached, load_session_with_preload, preload_session
+    get_event_schedule_cached, load_session_summary, load_session_with_preload, preload_session
 )
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
@@ -347,7 +347,8 @@ def register_callbacks(app):
             return html.Div("Select a session to load the leaderboard.", style={'color': '#888', 'fontSize': '0.9rem'})
 
         try:
-            session = load_session_with_preload(year, race, session_name)
+            include_laps = any(p in session_name for p in ['Practice', 'FP'])
+            session = load_session_summary(year, race, session_name, include_laps=include_laps)
             return _build_leaderboard_children(session, session_name)
 
         except Exception as e:
