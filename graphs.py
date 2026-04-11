@@ -452,7 +452,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             x=merged['LapNumber'], y=merged['Gap'], mode='lines',
             fill='tozeroy', line=dict(color='white', width=2),
             fillcolor='rgba(255,255,255,0.1)',
-            name='Gap (s)',
+            name='Gap',
             hovertemplate='Lap %{x}<br>Gap: %{y:.3f}s<extra></extra>'
         ), row=1, col=1)
 
@@ -549,16 +549,16 @@ def _build_grid_pace_fig(session, session_type):
             drivers_data.append({
                 'driver': drv,
                 'times': lap_times.tolist(),
+                'fastest': lap_times.min(),
                 'median': lap_times.median(),
-                'mean': lap_times.mean(),
                 'color': color
             })
         except Exception:
             continue
 
-    # Sort by mean for qualifying, median for races/practice
+    # Sort by fastest lap for qualifying, median for races/practice
     is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
-    sort_key = 'mean' if is_quali else 'median'
+    sort_key = 'fastest' if is_quali else 'median'
     drivers_data.sort(key=lambda x: x[sort_key])
 
     for d in drivers_data:
@@ -570,7 +570,7 @@ def _build_grid_pace_fig(session, session_type):
         ))
 
     session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "All Laps"
-    sort_label = "Mean" if is_quali else "Median"
+    sort_label = "Fastest Lap" if is_quali else "Median"
     fig.update_layout(
         title=f'Grid Pace Distribution ({session_label}, Sorted by {sort_label})',
         template='plotly_dark', showlegend=False,
