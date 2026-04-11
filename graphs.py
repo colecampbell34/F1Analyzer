@@ -358,7 +358,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             continue
 
     fig.update_layout(
-        title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)',
+        title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)<br><sup>+ = more degradation, - = pace improving</sup>',
         template='plotly_dark', margin=dict(l=40, r=40, t=80, b=40),
         hovermode='x unified', uirevision='degradation'
     )
