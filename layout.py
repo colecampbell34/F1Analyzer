@@ -232,7 +232,5 @@ app_layout = dbc.Container([
         dbc.Col(content, md=10, xs=12, style={'height': '100vh', 'overflow': 'hidden'})
     ], className='g-0', style={'height': '100vh', 'margin': '0'}),
     dcc.Store(id='dashboard-params-store', storage_type='session'),
-    dcc.Store(id='session-preload-store', storage_type='session'),
-    dcc.Interval(id='session-preload-poll', interval=1500, n_intervals=0, disabled=True),
     dcc.ConfirmDialog(id='error-dialog', message='')
 ], fluid=True, style={"padding": "0px", "height": "100vh", "overflow": "hidden"})

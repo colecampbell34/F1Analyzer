@@ -8,8 +8,8 @@ import fastf1
 from google import genai
 
 from data import (
-    _load_drivers_fast, get_session_preload_status, get_teammate_from_info,
-    get_event_schedule_cached, load_session_summary, load_session_with_preload, preload_session
+    _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
+    load_session_summary, load_session_with_preload, preload_session
 )
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
@@ -269,35 +269,6 @@ def register_callbacks(app):
             print(f"Drivers Error: {e}")
             return [], None, [], None
 
-    @app.callback(
-        [Output('session-preload-store', 'data'), Output('session-preload-poll', 'disabled')],
-        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value'), Input('year-dropdown', 'value')]
-    )
-    def start_session_preload(session_name, race, year):
-        if not session_name or not race or not year:
-            return None, True
-
-        preload_session(year, race, session_name)
-        status = get_session_preload_status(year, race, session_name)
-        return _preload_payload(year, race, session_name, status), status['state'] != 'loading'
-
-    @app.callback(
-        [Output('session-preload-store', 'data', allow_duplicate=True),
-         Output('session-preload-poll', 'disabled', allow_duplicate=True)],
-        Input('session-preload-poll', 'n_intervals'),
-        State('session-preload-store', 'data'),
-        prevent_initial_call=True
-    )
-    def monitor_session_preload(_, preload_data):
-        if not preload_data:
-            return dash.no_update, True
-
-        year = preload_data.get('year')
-        race = preload_data.get('race')
-        session_name = preload_data.get('session_type')
-        status = get_session_preload_status(year, race, session_name)
-        return _preload_payload(year, race, session_name, status), status['state'] != 'loading'
-
     # =============================================
     # 4. TEAMMATE AUTO-SELECT BUTTONS
     # =============================================
@@ -370,7 +341,8 @@ def register_callbacks(app):
             return dash.no_update, False, ""
         if not all([year, race, session_type, driver1, driver2]):
             return dash.no_update, True, "Please select Year, Race, Session, and both Drivers before updating."
-        
+
+        preload_session(year, race, session_type)
         params = {'year': year, 'race': race, 'session_type': session_type,
                   'driver1': driver1, 'driver2': driver2}
         return params, False, ""
