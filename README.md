@@ -10,6 +10,7 @@ This application provides a comprehensive suite of tools for visualizing and ana
 - **2D Track Dominance**: High-resolution track map colored by micro-sectors, visually highlighting which driver was faster in specific corners and straights.
 - **Strategy & Weather**: Dual-axis plot tracking race pace across stints, tyre compounds, pit windows, Track Status (SC, VSC, Red Flags), and live Track Temperature overlays.
 - **AI Data Assistant**: Ask questions directly to Google Gemini, which is fed comprehensive context regarding the session, including every lap time, sector time, and tyre compound for the entire grid.
+- **User Feedback Inbox**: Users can submit bug reports, feature requests, and general feedback from inside the app. Entries are stored server-side and can be reviewed in-app or exported as CSV.
 
 ## Try it out!
 

@@ -2,14 +2,20 @@ import dash
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 import plotly.graph_objects as go
 import pandas as pd
 import fastf1
+import flask
+import os
 from google import genai
+from datetime import datetime
+from urllib.parse import parse_qs
 
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
-    load_session_summary, load_session_with_preload, preload_session
+    load_session_summary, load_session_with_preload, preload_session,
+    store_feedback_entry, load_feedback_entries
 )
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
@@ -46,6 +52,124 @@ def _preload_payload(year, race, session_name, status):
         'session_type': session_name,
         **status
     }
+
+
+def _tab_label(tab_value):
+    labels = {
+        'tab-telemetry': 'Telemetry',
+        'tab-trackmap': 'Track Map',
+        'tab-strategy': 'Strategy',
+        'tab-race': 'Race',
+        'tab-gridpace': 'Grid Pace',
+        'tab-ai': 'AI Analysis'
+    }
+    return labels.get(tab_value, 'Unknown')
+
+
+def _feedback_admin_authorized(url_search):
+    token = os.getenv('FEEDBACK_ADMIN_TOKEN')
+    if not token:
+        return False
+
+    query_params = parse_qs((url_search or '').lstrip('?'))
+    supplied = (query_params.get('feedback_admin') or [''])[0]
+    return supplied == token
+
+
+def _format_feedback_time(timestamp):
+    if not timestamp:
+        return 'Unknown time'
+    try:
+        dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+        return dt.strftime('%Y-%m-%d %H:%M UTC')
+    except ValueError:
+        return str(timestamp)
+
+
+def _feedback_context_text(entry):
+    session = entry.get('session') or {}
+    parts = [
+        session.get('year'),
+        session.get('race'),
+        session.get('session_type')
+    ]
+    session_text = ' | '.join(str(part) for part in parts if part)
+    drivers = ' vs '.join(str(part) for part in [session.get('driver1'), session.get('driver2')] if part)
+
+    if session_text and drivers:
+        return f"{session_text} | {drivers}"
+    if session_text:
+        return session_text
+    return 'No session attached'
+
+
+def _build_feedback_card(entry):
+    category = entry.get('category', 'general')
+    badge_colors = {
+        'bug': 'danger',
+        'feature': 'info',
+        'data': 'warning',
+        'general': 'secondary'
+    }
+
+    meta_bits = [
+        f"Tab: {_tab_label(entry.get('active_tab'))}",
+        f"Context attached: {'Yes' if entry.get('context_loaded') else 'No'}",
+        f"Reporter: {entry.get('ip_hash', 'anonymous')}"
+    ]
+    if entry.get('contact'):
+        meta_bits.append(f"Contact: {entry['contact']}")
+
+    return dbc.Card(
+        dbc.CardBody([
+            html.Div([
+                html.Div([
+                    dbc.Badge(category.title(), color=badge_colors.get(category, 'secondary'),
+                              className='me-2'),
+                    dbc.Badge(f"{entry.get('rating', 0)}/5", color='light', text_color='dark')
+                ], style={'display': 'flex', 'gap': '0.4rem'}),
+                html.Small(_format_feedback_time(entry.get('submitted_at')), style={'color': '#999'})
+            ], style={'display': 'flex', 'justifyContent': 'space-between', 'gap': '1rem', 'marginBottom': '0.75rem'}),
+            html.P(entry.get('message', ''), style={'whiteSpace': 'pre-wrap', 'marginBottom': '0.75rem'}),
+            html.Div(_feedback_context_text(entry), style={'fontSize': '0.85rem', 'color': '#bbb', 'marginBottom': '0.35rem'}),
+            html.Div(' • '.join(meta_bits), style={'fontSize': '0.8rem', 'color': '#8f8f8f'})
+        ]),
+        className='mb-3'
+    )
+
+
+def _build_feedback_review_panel(entries):
+    total = len(entries)
+    bug_count = sum(1 for entry in entries if entry.get('category') == 'bug')
+    feature_count = sum(1 for entry in entries if entry.get('category') == 'feature')
+    recent_count = sum(
+        1
+        for entry in entries
+        if str(entry.get('submitted_at', ''))[:10] == datetime.utcnow().strftime('%Y-%m-%d')
+    )
+
+    summary_cards = dbc.Row([
+        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Total", style={'color': '#999'}), html.H4(str(total))])), md=3, xs=6),
+        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Bugs", style={'color': '#999'}), html.H4(str(bug_count))])), md=3, xs=6),
+        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Features", style={'color': '#999'}), html.H4(str(feature_count))])), md=3, xs=6),
+        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Today", style={'color': '#999'}), html.H4(str(recent_count))])), md=3, xs=6)
+    ], className='g-2 mb-3')
+
+    if not entries:
+        feedback_body = dbc.Alert("No feedback submitted yet.", color='dark')
+    else:
+        feedback_body = html.Div([_build_feedback_card(entry) for entry in entries[:25]])
+
+    return html.Div([
+        html.H5("Feedback Inbox", style={'marginTop': '0.5rem'}),
+        html.P(
+            "Newest submissions are shown here. Add "
+            "?feedback_admin=YOUR_TOKEN to the app URL to unlock this panel.",
+            style={'color': '#888', 'fontSize': '0.85rem'}
+        ),
+        summary_cards,
+        feedback_body
+    ])
 
 
 def _build_leaderboard_children(session, session_name):
@@ -596,7 +720,129 @@ def register_callbacks(app):
         return not is_open
 
     # =============================================
-    # 13. AI ANALYSIS (rate-limited, cached, budget-tracked)
+    # 13. FEEDBACK MODAL / INBOX
+    # =============================================
+    @app.callback(
+        Output('feedback-modal', 'is_open'),
+        [Input('open-feedback-modal-btn', 'n_clicks'),
+         Input('cancel-feedback-btn', 'n_clicks'),
+         Input('feedback-refresh-store', 'data')],
+        State('feedback-modal', 'is_open'),
+        prevent_initial_call=True
+    )
+    def toggle_feedback_modal(open_clicks, cancel_clicks, refresh_data, is_open):
+        trigger = dash.ctx.triggered_id
+        if trigger == 'open-feedback-modal-btn':
+            return True
+        if trigger in {'cancel-feedback-btn', 'feedback-refresh-store'}:
+            return False
+        return is_open
+
+    @app.callback(
+        [Output('feedback-submit-alert', 'children'),
+         Output('feedback-submit-alert', 'color'),
+         Output('feedback-submit-alert', 'is_open'),
+         Output('feedback-refresh-store', 'data'),
+         Output('feedback-message', 'value'),
+         Output('feedback-contact', 'value')],
+        Input('submit-feedback-btn', 'n_clicks'),
+        [State('feedback-category', 'value'),
+         State('feedback-rating', 'value'),
+         State('feedback-message', 'value'),
+         State('feedback-contact', 'value'),
+         State('dashboard-params-store', 'data'),
+         State('main-tabs', 'value'),
+         State('session-context-store', 'data')],
+        prevent_initial_call=True
+    )
+    def submit_feedback(n_clicks, category, rating, message, contact, params, active_tab, session_context):
+        if not n_clicks:
+            raise PreventUpdate
+
+        message = (message or '').strip()
+        if len(message) < 15:
+            return (
+                "Please include a bit more detail so the issue is actionable.",
+                'warning',
+                True,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update
+            )
+        if len(message) > 2500:
+            return (
+                "Feedback is too long. Keep it under 2500 characters.",
+                'warning',
+                True,
+                dash.no_update,
+                dash.no_update,
+                dash.no_update
+            )
+
+        forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
+        raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
+        user_agent = flask.request.headers.get('User-Agent')
+
+        entry = store_feedback_entry(
+            {
+                'category': category,
+                'rating': rating,
+                'message': message,
+                'contact': contact,
+                'active_tab': active_tab,
+                'session': params or {},
+                'context_loaded': bool(session_context)
+            },
+            raw_ip=raw_ip,
+            user_agent=user_agent
+        )
+
+        return (
+            "Feedback submitted. Thanks.",
+            'success',
+            True,
+            {'entry_id': entry['id'], 'submitted_at': entry['submitted_at']},
+            '',
+            ''
+        )
+
+    @app.callback(
+        [Output('feedback-review-panel', 'children'),
+         Output('feedback-review-controls', 'style')],
+        [Input('url', 'search'),
+         Input('feedback-refresh-store', 'data'),
+         Input('refresh-feedback-review-btn', 'n_clicks')]
+    )
+    def update_feedback_review_panel(url_search, refresh_data, refresh_clicks):
+        if not _feedback_admin_authorized(url_search):
+            return [], {'display': 'none'}
+        return _build_feedback_review_panel(load_feedback_entries(limit=100)), {
+            'display': 'flex',
+            'gap': '0.5rem',
+            'marginBottom': '1rem'
+        }
+
+    @app.callback(
+        Output('feedback-download', 'data'),
+        Input('download-feedback-btn', 'n_clicks'),
+        State('url', 'search'),
+        prevent_initial_call=True
+    )
+    def download_feedback_csv(n_clicks, url_search):
+        if not n_clicks or not _feedback_admin_authorized(url_search):
+            raise PreventUpdate
+
+        entries = load_feedback_entries()
+        df = pd.json_normalize(entries, sep='_') if entries else pd.DataFrame(columns=[
+            'id', 'submitted_at', 'category', 'rating', 'message', 'contact',
+            'active_tab', 'context_loaded', 'ip_hash', 'user_agent', 'status',
+            'session_year', 'session_race', 'session_session_type', 'session_driver1', 'session_driver2'
+        ])
+        filename = f"feedback-inbox-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
+        return dcc.send_data_frame(df.to_csv, filename, index=False)
+
+    # =============================================
+    # 14. AI ANALYSIS (rate-limited, cached, budget-tracked)
     # =============================================
     @app.callback(
         [Output('ai-response-output', 'children'), Output('ai-history-store', 'data'),

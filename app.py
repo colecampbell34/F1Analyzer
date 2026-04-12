@@ -13,6 +13,7 @@ app = dash.Dash(
 )
 
 data.setup_cache()
+data.setup_feedback_storage()
 app.layout = app_layout
 register_callbacks(app)
 

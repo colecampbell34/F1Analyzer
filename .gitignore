@@ -3,5 +3,6 @@
 *.class
 __pycache__/
 f1_cache/
+feedback/
 .idea/
 .DS_Store

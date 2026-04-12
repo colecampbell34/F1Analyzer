@@ -124,3 +124,49 @@ div[class*="tab-container"] {
     min-height: 0 !important;
     padding: 0 !important;
 }
+
+.feedback-fab {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    z-index: 1100;
+    border-radius: 999px;
+    padding: 0.7rem 1.1rem;
+    font-weight: 700;
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.modal-content {
+    background-color: #101010;
+    border: 1px solid #333;
+}
+
+.modal-header,
+.modal-footer {
+    border-color: #262626;
+}
+
+.modal-title,
+.modal-body label {
+    color: #f2f2f2;
+}
+
+#feedback-review-panel .card {
+    background: linear-gradient(180deg, #171717 0%, #121212 100%);
+    border: 1px solid #2d2d2d;
+}
+
+#feedback-review-panel .card-title,
+#feedback-review-panel .card-text,
+#feedback-review-panel .list-group-item {
+    color: #e3e3e3;
+}
+
+@media (max-width: 768px) {
+    .feedback-fab {
+        right: 16px;
+        bottom: 16px;
+        width: calc(100% - 32px);
+        border-radius: 14px;
+    }
+}
