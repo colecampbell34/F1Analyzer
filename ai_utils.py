@@ -5,7 +5,6 @@ import time
 import hashlib
 from datetime import datetime, timezone
 from collections import defaultdict
-from google import genai
 from dotenv import load_dotenv
 from data import get_track_status_events
 

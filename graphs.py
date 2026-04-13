@@ -369,62 +369,6 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     return fig
 
 
-def _build_qualifying_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Sector-by-sector comparison for qualifying sessions."""
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.2,
-                        subplot_titles=('Sector Times Comparison', 'Sector Delta (+ = Driver 2 Faster)'))
-
-    try:
-        lap1 = session.laps.pick_drivers(driver1).pick_fastest()
-        lap2 = session.laps.pick_drivers(driver2).pick_fastest()
-    except Exception:
-        fig.add_annotation(text="Could not load qualifying laps", showarrow=False,
-                           font=dict(size=18, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
-        fig.update_layout(template='plotly_dark')
-        return fig
-
-    sectors = ['Sector1Time', 'Sector2Time', 'Sector3Time']
-    sector_labels = ['Sector 1', 'Sector 2', 'Sector 3']
-
-    s1_times, s2_times, deltas = [], [], []
-    for sector in sectors:
-        t1 = lap1[sector].total_seconds() if pd.notna(lap1.get(sector)) else 0
-        t2 = lap2[sector].total_seconds() if pd.notna(lap2.get(sector)) else 0
-        s1_times.append(t1)
-        s2_times.append(t2)
-        deltas.append(t1 - t2)  # positive = driver1 slower = driver2 faster
-
-    # Top: Grouped bar chart of sector times
-    fig.add_trace(go.Bar(x=sector_labels, y=s1_times, name=lbl1, marker_color=c1,
-                         text=[f'{t:.3f}s' for t in s1_times], textposition='auto'), row=1, col=1)
-    fig.add_trace(go.Bar(x=sector_labels, y=s2_times, name=lbl2, marker_color=c2,
-                         text=[f'{t:.3f}s' for t in s2_times], textposition='auto'), row=1, col=1)
-
-    # Bottom: Delta per sector
-    delta_colors = [c2 if d > 0 else c1 for d in deltas]
-    delta_labels = [f'{lbl2} +{abs(d):.3f}s' if d > 0 else f'{lbl1} +{abs(d):.3f}s' for d in deltas]
-    fig.add_trace(go.Bar(x=sector_labels, y=[abs(d) for d in deltas], name='Sector Delta',
-                         marker_color=delta_colors, text=delta_labels, textposition='auto',
-                         showlegend=False), row=2, col=1)
-
-    total_delta = sum(deltas)
-    faster_driver = lbl2 if total_delta > 0 else lbl1
-    fig.add_annotation(
-        text=f"Total Δ: {faster_driver} faster by {abs(total_delta):.3f}s",
-        showarrow=False, font=dict(size=14, color='white'),
-        xref="paper", yref="paper", x=0.5, y=-0.05
-    )
-
-    fig.update_layout(
-        title='Qualifying Sector Analysis', template='plotly_dark', barmode='group',
-        margin=dict(l=40, r=40, t=80, b=80)
-    )
-    fig.update_yaxes(title_text='Time (s)', row=1, col=1)
-    fig.update_yaxes(title_text='Delta (s)', row=2, col=1)
-
-    return fig
-
-
 def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the gap-between-drivers chart over race laps."""
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,

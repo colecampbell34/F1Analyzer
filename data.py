@@ -166,27 +166,6 @@ def preload_session(year, race, session_name):
         return future
 
 
-def get_session_preload_status(year, race, session_name):
-    """Return a simple state dict for the requested session preload."""
-    if not all([year, race, session_name]):
-        return {'state': 'idle', 'message': ''}
-
-    key = _session_cache_key(year, race, session_name)
-    with _SESSION_PRELOAD_LOCK:
-        future = _SESSION_PRELOAD_FUTURES.get(key)
-
-    if future is None:
-        return {'state': 'idle', 'message': ''}
-    if not future.done():
-        return {'state': 'loading', 'message': ''}
-
-    error = future.exception()
-    if error is not None:
-        return {'state': 'error', 'message': str(error)}
-
-    return {'state': 'ready', 'message': ''}
-
-
 def load_session_with_preload(year, race, session_name):
     """Return a session, reusing any in-flight background preload when possible."""
     future = preload_session(year, race, session_name)
@@ -275,11 +254,6 @@ def get_teammate_from_info(driver_abbr, driver_info):
         if d['team'] == driver_team and d['abbr'] != driver_abbr:
             return d['abbr']
     return None
-
-
-def get_teammate(driver_abbr, session):
-    """Given a driver abbreviation, returns the abbreviation of their teammate (or None)."""
-    return get_teammate_from_info(driver_abbr, get_driver_info(session))
 
 
 @lru_cache(maxsize=32)

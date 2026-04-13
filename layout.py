@@ -1,9 +1,23 @@
-import dash
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 from datetime import datetime
 from graphs import GRAPH_CONFIG
 from ai_utils import AI_ENABLED
+
+
+# --- Tab graph height constants ---
+TAB_HEIGHTS = {
+    'single':       '75vh',
+    'telemetry':    '68vh',
+    'strategy_top': '40vh',
+    'strategy_bot': '35vh',
+    'race_top':     '42vh',
+    'race_bot':     '33vh',
+}
+
+# --- Tab / style constants ---
+TAB_STYLE          = {'backgroundColor': '#222', 'color': 'white'}
+TAB_SELECTED_STYLE = {'backgroundColor': '#ff0000', 'color': 'white'}
 
 
 # --- Reusable empty-state placeholder ---
@@ -30,6 +44,26 @@ def _empty_state(graph_id, height='68vh'):
     )
 
 
+# --- Reusable driver selector (dropdown + teammate button) ---
+def _driver_selector(label, dropdown_id, btn_id):
+    return html.Div([
+        dbc.Label(label, style={"fontSize": "0.9rem"}),
+        html.Div([
+            html.Div(
+                dcc.Dropdown(id=dropdown_id, persistence=True, persistence_type='session',
+                             style={'color': 'black', 'fontSize': '0.9rem'}),
+                style={'flex': '1'}
+            ),
+            dbc.Button("⇄", id=btn_id, color='secondary', size='sm', n_clicks=0,
+                       title='Select Teammate',
+                       style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
+            html.Span("Teammate", className='teammate-label',
+                      style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
+                             'display': 'none'}),
+        ], style={'display': 'flex', 'alignItems': 'center'}),
+    ], style={'marginBottom': '0.75rem'})
+
+
 # --- CONTROL PANEL (SIDEBAR) ---
 sidebar = html.Div([
     html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
@@ -41,55 +75,26 @@ sidebar = html.Div([
                  options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
                  value=datetime.now().year,
                  persistence=True, persistence_type='session',
-                 style={'color': 'black', 'fontSize': '0.9rem'}),
-    html.Br(),
+                 style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
 
     dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
     dcc.Loading(type='dot', color='#ff0000', children=[
         dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
-                     style={'color': 'black', 'fontSize': '0.9rem'}),
+                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
     ]),
-    html.Br(),
 
     dbc.Label("Session", style={"fontSize": "0.9rem"}),
     dcc.Loading(type='dot', color='#ff0000', children=[
         dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
-                     style={'color': 'black', 'fontSize': '0.9rem'}),
+                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
     ]),
-    html.Br(),
 
-    # Driver 1 + Teammate Button
-    dbc.Label("Driver 1", style={"fontSize": "0.9rem"}),
-    html.Div([
-        html.Div(dcc.Dropdown(id='driver1-dropdown', persistence=True, persistence_type='session',
-                               style={'color': 'black', 'fontSize': '0.9rem'}),
-                 style={'flex': '1'}),
-        dbc.Button("⇄", id='teammate1-btn', color='secondary', size='sm', n_clicks=0,
-                   title='Select Teammate',
-                   style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
-        html.Span("Teammate", className='teammate-label',
-                  style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
-                         'display': 'none'}),
-    ], style={'display': 'flex', 'alignItems': 'center'}),
-    html.Br(),
+    # Driver selectors
+    _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
+    _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
 
-    # Driver 2 + Teammate Button
-    dbc.Label("Driver 2", style={"fontSize": "0.9rem"}),
-    html.Div([
-        html.Div(dcc.Dropdown(id='driver2-dropdown', persistence=True, persistence_type='session',
-                               style={'color': 'black', 'fontSize': '0.9rem'}),
-                 style={'flex': '1'}),
-        dbc.Button("⇄", id='teammate2-btn', color='secondary', size='sm', n_clicks=0,
-                   title='Select Teammate',
-                   style={'marginLeft': '4px', 'padding': '4px 8px', 'fontSize': '0.8rem'}),
-        html.Span("Teammate", className='teammate-label',
-                  style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
-                         'display': 'none'}),
-    ], style={'display': 'flex', 'alignItems': 'center'}),
-    html.Br(),
     dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
                style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
-    html.Br(),
     html.Hr(),
     html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
     html.Div([
@@ -98,7 +103,7 @@ sidebar = html.Div([
         ])
     ], style={'overflowY': 'auto', 'overflowX': 'hidden', 'scrollbarGutter': 'stable', 'flex': '1', 'minHeight': '0'})
 
-], style={"padding": "1rem", "background-color": "#111111", "height": "100vh", "overflowY": "hidden",
+], style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh", "overflowY": "hidden",
           "display": "flex", "flexDirection": "column"})
 
 
@@ -143,87 +148,88 @@ telemetry_controls = html.Div([
           'marginBottom': '0.5rem', 'border': '1px solid #333'})
 
 
-tab_style = {'backgroundColor': '#222', 'color': 'white'}
-tab_selected_style = {'backgroundColor': '#ff0000', 'color': 'white'}
-
 content = html.Div([
     html.H3("Session Telemetry Analysis", className="text-center mt-2", id='main-title'),
     html.Hr(),
 
-        dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
-            dcc.Tab(label='Telemetry', value='tab-telemetry', children=[
-                telemetry_controls,
-                dcc.Loading(type='circle', color='#ff0000', children=[
-                    _empty_state('speed-graph', '68vh')
-                ])
-            ], style=tab_style, selected_style=tab_selected_style),
+    dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
+        dcc.Tab(label='Telemetry', value='tab-telemetry', children=[
+            telemetry_controls,
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('speed-graph', TAB_HEIGHTS['telemetry'])
+            ])
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-            dcc.Tab(label='Track Map', value='tab-trackmap', children=[
-                dcc.Loading(type='circle', color='#ff0000', children=[
-                    _empty_state('2d-dominance-graph', '75vh')
-                ])
-            ], style=tab_style, selected_style=tab_selected_style),
+        dcc.Tab(label='Track Map', value='tab-trackmap', children=[
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('2d-dominance-graph', TAB_HEIGHTS['single'])
+            ])
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-            dcc.Tab(label='Strategy', value='tab-strategy', children=[
-                dcc.Loading(type='circle', color='#ff0000', children=[
-                    _empty_state('strategy-graph', '40vh'),
-                    _empty_state('deg-graph', '35vh')
-                ])
-            ], style=tab_style, selected_style=tab_selected_style),
+        dcc.Tab(label='Strategy', value='tab-strategy', children=[
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
+            ]),
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('deg-graph', TAB_HEIGHTS['strategy_bot'])
+            ])
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-            dcc.Tab(label='Race', value='tab-race', children=[
-                dcc.Loading(type='circle', color='#ff0000', children=[
-                    _empty_state('race-gaps-graph', '42vh'),
-                    _empty_state('pit-stops-graph', '33vh')
-                ])
-            ], style=tab_style, selected_style=tab_selected_style),
+        dcc.Tab(label='Race', value='tab-race', children=[
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
+            ]),
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('pit-stops-graph', TAB_HEIGHTS['race_bot'])
+            ])
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-            dcc.Tab(label='Grid Pace', value='tab-gridpace', children=[
-                dcc.Loading(type='circle', color='#ff0000', children=[
-                    _empty_state('grid-pace-graph', '75vh')
-                ])
-            ], style=tab_style, selected_style=tab_selected_style),
+        dcc.Tab(label='Grid Pace', value='tab-gridpace', children=[
+            dcc.Loading(type='circle', color='#ff0000', children=[
+                _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
+            ])
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-            dcc.Tab(label='AI Analysis', value='tab-ai', children=[
+        dcc.Tab(label='AI Analysis', value='tab-ai', children=[
+            html.Div([
+                html.Div([
+                    dbc.InputGroup([
+                        dbc.Input(id='ai-question-input', type='text',
+                                  placeholder='Ask about this session... (e.g. "Why was NOR faster in sector 2?")',
+                                  n_submit=0,
+                                  style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444',
+                                         'fontSize': '0.95rem'},
+                                  disabled=not AI_ENABLED),
+                        dbc.Button('Ask AI', id='ai-ask-button', color='danger', n_clicks=0,
+                                   style={'fontWeight': 'bold'},
+                                   disabled=not AI_ENABLED)
+                    ], style={'marginBottom': '1rem'}),
+                ], style={'padding': '0.5rem 0'}),
+                dcc.Loading(
+                    type='default', color='#ff0000',
+                    children=html.Div(id='ai-response-output',
+                                      style={'padding': '1rem', 'minHeight': '200px',
+                                             'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
+                                             'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
+                                             'lineHeight': '1.6', 'fontSize': '0.95rem',
+                                             'maxHeight': '50vh', 'overflowY': 'auto'})
+                ),
+                html.Hr(style={'borderColor': '#333'}),
                 html.Div([
                     html.Div([
-                        dbc.InputGroup([
-                            dbc.Input(id='ai-question-input', type='text',
-                                      placeholder='Ask about this session... (e.g. "Why was NOR faster in sector 2?")',
-                                      n_submit=0,
-                                      style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444',
-                                             'fontSize': '0.95rem'},
-                                      disabled=not AI_ENABLED),
-                            dbc.Button('Ask AI', id='ai-ask-button', color='danger', n_clicks=0,
-                                       style={'fontWeight': 'bold'},
-                                       disabled=not AI_ENABLED)
-                        ], style={'marginBottom': '1rem'}),
-                    ], style={'padding': '0.5rem 0'}),
-                    dcc.Loading(
-                        type='default', color='#ff0000',
-                        children=html.Div(id='ai-response-output',
-                                          style={'padding': '1rem', 'minHeight': '200px',
-                                                 'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
-                                                 'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
-                                                 'lineHeight': '1.6', 'fontSize': '0.95rem',
-                                                 'maxHeight': '50vh', 'overflowY': 'auto'})
-                    ),
-                    html.Hr(style={'borderColor': '#333'}),
-                    html.Div([
-                        html.Div([
-                            dbc.Button("Refresh Inbox", id='refresh-feedback-review-btn', color='secondary',
-                                       outline=True, size='sm', n_clicks=0, className='me-2'),
-                            dbc.Button("Download CSV", id='download-feedback-btn', color='danger',
-                                       size='sm', n_clicks=0)
-                        ], id='feedback-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
-                        html.Div(id='feedback-review-panel')
-                    ]),
-                    dcc.Store(id='session-context-store', data=''),
-                    dcc.Store(id='ai-history-store', storage_type='session', data=[])
-                ], style={'padding': '1.5rem', 'height': '75vh', 'overflowY': 'auto'})
-            ], style=tab_style, selected_style=tab_selected_style)
-        ])
-    ], style={"padding": "1rem"})
+                        dbc.Button("Refresh Inbox", id='refresh-feedback-review-btn', color='secondary',
+                                   outline=True, size='sm', n_clicks=0, className='me-2'),
+                        dbc.Button("Download CSV", id='download-feedback-btn', color='danger',
+                                   size='sm', n_clicks=0)
+                    ], id='feedback-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
+                    html.Div(id='feedback-review-panel')
+                ]),
+                dcc.Store(id='session-context-store', data=''),
+                dcc.Store(id='ai-history-store', storage_type='session', data=[])
+            ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
+        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
+    ])
+], style={"padding": "1rem"})
 
 
 app_layout = dbc.Container([

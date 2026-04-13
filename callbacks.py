@@ -45,15 +45,6 @@ def _friendly_error(e):
     return f"Something went wrong loading the data: {msg}"
 
 
-def _preload_payload(year, race, session_name, status):
-    return {
-        'year': year,
-        'race': race,
-        'session_type': session_name,
-        **status
-    }
-
-
 def _tab_label(tab_value):
     labels = {
         'tab-telemetry': 'Telemetry',
@@ -843,8 +834,6 @@ def register_callbacks(app):
     )
     def ask_ai(n_clicks, n_submit, question, session_context, history):
         """Sends the user's question + session context to Gemini with full protection."""
-        import flask
-
         if history is None:
             history = []
 
