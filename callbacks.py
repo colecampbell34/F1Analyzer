@@ -15,7 +15,7 @@ from urllib.parse import parse_qs
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     load_session_summary, load_session_with_preload, preload_session,
-    store_feedback_entry, load_feedback_entries
+    store_feedback_entry, load_feedback_entries, get_best_lap
 )
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
@@ -542,7 +542,7 @@ def register_callbacks(app):
                     specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
                     if not specific.empty:
                         return specific.iloc[0]
-                return drv_laps.pick_fastest()
+                return get_best_lap(session, driver)
 
             lap1, lap2 = get_lap(d1, d1_mode, d1_lap_num), get_lap(d2, d2_mode, d2_lap_num)
 
@@ -577,8 +577,8 @@ def register_callbacks(app):
             return dash.no_update
         try:
             session, d1, d2, lbl1, lbl2, c1, c2 = _get_shared_data(params)
-            lap1 = session.laps.pick_drivers(d1).pick_fastest()
-            lap2 = session.laps.pick_drivers(d2).pick_fastest()
+            lap1 = get_best_lap(session, d1)
+            lap2 = get_best_lap(session, d2)
 
             tel1 = lap1.get_telemetry().add_distance()
             tel2 = lap2.get_telemetry().add_distance()
@@ -904,9 +904,16 @@ def register_callbacks(app):
                     history_text += f"Q: {h['question']}\nA: {h['answer'][:500]}...\n\n"
 
             prompt = (
-                "You are an expert Formula 1 data analyst. You have access to the following telemetry "
-                "and race data for a specific F1 session. Answer the user's question with detailed, "
-                "data-driven analysis. Reference specific numbers from the data. Be thorough and conclusive.\n\n"
+                "You are an expert Formula 1 data analyst. "
+                "Try to sound a little bit smarter than you are but dont make any wild claims. "
+                "Use lots of terms related to F1, that a real F1 analyst would use. "
+                "The session data below is the AUTHORITATIVE source of truth. "
+                "Do not make any claims that are not supported by the data. "
+                "IMPORTANT: The driver-team assignments at the top of the session data are definitive — "
+                "do NOT override them with your training knowledge. "
+                "Teams and driver lineups change every season; always trust the data, not your priors.\n\n"
+                "Answer the user's question with detailed, data-driven analysis, without being redundant. "
+                "Reference specific numbers from the data. Be thorough and conclusive.\n\n"
                 "=== SESSION DATA ===\n"
                 f"{session_context}\n"
                 f"{history_text}\n"

@@ -5,8 +5,7 @@ import fastf1.plotting
 import fastf1.utils
 import pandas as pd
 import numpy as np
-
-from data import get_pit_stop_data, get_track_status_events
+from data import get_pit_stop_data, get_track_status_events, get_best_lap
 
 
 def _downsample(df, max_points=2000):
@@ -465,16 +464,24 @@ def _build_grid_pace_fig(session, session_type):
     else:
         all_drivers = session.laps['Driver'].unique().tolist()
 
+    has_results = getattr(session, 'results', None) is not None and not session.results.empty
+    is_race = session_type in ['Race', 'Sprint']
+    is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
+
     for drv in all_drivers:
         if not isinstance(drv, str) or len(drv) != 3:
             continue
         try:
             drv_laps = session.laps.pick_drivers(drv)
 
-            is_race = session_type in ['Race', 'Sprint']
             if is_race:
                 laps = drv_laps.pick_wo_box().pick_track_status('1')
                 laps = laps[laps['LapNumber'] > 1]
+            elif is_quali:
+                # Remove in/out laps and ensure we only have flying laps
+                laps = drv_laps.pick_wo_box()
+                if not laps.empty and 'IsAccurate' in laps.columns:
+                    laps = laps[laps['IsAccurate']]
             else:
                 laps = drv_laps
 
@@ -490,20 +497,35 @@ def _build_grid_pace_fig(session, session_type):
             except (KeyError, ValueError):
                 pass
 
+            best_lap = get_best_lap(session, drv)
+            best_time = best_lap['LapTime'].total_seconds() if best_lap is not None and pd.notna(best_lap['LapTime']) else lap_times.min()
+
+            # Get official position
+            pos = 999
+            if has_results:
+                res_row = session.results[session.results['Abbreviation'] == drv]
+                if not res_row.empty:
+                    pos_val = res_row.iloc[0].get('Position')
+                    pos = int(pos_val) if pd.notna(pos_val) else 999
+
             drivers_data.append({
                 'driver': drv,
                 'times': lap_times.tolist(),
-                'fastest': lap_times.min(),
+                'fastest': best_time,
                 'median': lap_times.median(),
-                'color': color
+                'color': color,
+                'position': pos
             })
+
         except Exception:
             continue
 
-    # Sort by fastest lap for qualifying, median for races/practice
-    is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
-    sort_key = 'fastest' if is_quali else 'median'
-    drivers_data.sort(key=lambda x: x[sort_key])
+    # Sort: Priority 1 = Leaderboard Position, Priority 2 = Performance
+    if has_results:
+        drivers_data.sort(key=lambda x: x['position'])
+    else:
+        sort_key = 'fastest' if is_quali else 'median'
+        drivers_data.sort(key=lambda x: x[sort_key])
 
     for d in drivers_data:
         fig.add_trace(go.Box(
@@ -513,10 +535,9 @@ def _build_grid_pace_fig(session, session_type):
             hovertemplate=f"{d['driver']}<br>Lap Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "All Laps"
-    sort_label = "Fastest Lap" if is_quali else "Median"
+    session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "Flying Laps"
     fig.update_layout(
-        title=f'Grid Pace Distribution ({session_label}, Sorted by {sort_label})',
+        title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
         template='plotly_dark', showlegend=False,
         yaxis_title='Lap Time (s)',
         yaxis=dict(autorange='reversed'),

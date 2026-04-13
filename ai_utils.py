@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 from collections import defaultdict
 from dotenv import load_dotenv
-from data import get_track_status_events
+from data import get_track_status_events, get_best_lap
 
 # --- GEMINI API SETUP ---
 load_dotenv()
@@ -98,23 +98,47 @@ def store_cached_response(session_context, question, response):
 
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
-    lines = [f"Session Type: {session_type}", f"Drivers being compared: {driver1} vs {driver2}", ""]
+    lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
+             "CRITICAL: Use ONLY the team assignments listed here. "
+             "Do NOT rely on prior training knowledge for any driver's team or car number."]
+
+    try:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            for _, row in session.results.iterrows():
+                abbr = row.get('Abbreviation', '')
+                team = row.get('TeamName', '')
+                first = str(row.get('FirstName', '')).strip()
+                last = str(row.get('LastName', '')).strip()
+                if isinstance(abbr, str) and len(abbr) == 3 and isinstance(team, str) and team:
+                    full_name = f"{first} {last}".strip()
+                    lines.append(f"  {abbr} ({full_name}) → {team}")
+        else:
+            lines.append("  (Team data unavailable for this session)")
+    except Exception:
+        lines.append("  (Team data unavailable for this session)")
+    lines.append("")
+
+    lines += [f"Session Type: {session_type}", f"Drivers being compared: {driver1} vs {driver2}", ""]
 
     # Fastest lap comparison
     try:
-        lap1 = session.laps.pick_drivers(driver1).pick_fastest()
-        lap2 = session.laps.pick_drivers(driver2).pick_fastest()
-        t1 = lap1['LapTime'].total_seconds()
-        t2 = lap2['LapTime'].total_seconds()
-        lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
+        lap1 = get_best_lap(session, driver1)
+        lap2 = get_best_lap(session, driver2)
+        
+        if lap1 is not None and lap2 is not None and pd.notna(lap1['LapTime']) and pd.notna(lap2['LapTime']):
+            t1 = lap1['LapTime'].total_seconds()
+            t2 = lap2['LapTime'].total_seconds()
+            lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
 
-        # Sector times
-        for s in [1, 2, 3]:
-            s1 = lap1.get(f'Sector{s}Time')
-            s2 = lap2.get(f'Sector{s}Time')
-            if pd.notna(s1) and pd.notna(s2):
-                lines.append(
-                    f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+            # Sector times
+            for s in [1, 2, 3]:
+                s1 = lap1.get(f'Sector{s}Time')
+                s2 = lap2.get(f'Sector{s}Time')
+                if pd.notna(s1) and pd.notna(s2):
+                    lines.append(
+                        f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+        else:
+            lines.append("Fastest lap comparison: data incomplete for one or both drivers")
     except Exception:
         lines.append("Fastest lap data: unavailable")
 

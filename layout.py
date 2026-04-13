@@ -212,7 +212,7 @@ content = html.Div([
                                              'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
                                              'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
                                              'lineHeight': '1.6', 'fontSize': '0.95rem',
-                                             'maxHeight': '50vh', 'overflowY': 'auto'})
+                                             'maxHeight': '70vh', 'overflowY': 'auto'})
                 ),
                 html.Hr(style={'borderColor': '#333'}),
                 html.Div([

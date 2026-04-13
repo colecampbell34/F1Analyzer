@@ -256,6 +256,50 @@ def get_teammate_from_info(driver_abbr, driver_info):
     return None
 
 
+def get_best_lap(session, driver_abbr):
+    """
+    Returns the 'official' best lap object for a driver.
+    For Qualifying/Shootout, it prioritizes Q3 > Q2 > Q1 times from session.results.
+    For other sessions (Practice, Race), it uses pick_fastest().
+    """
+    try:
+        if not hasattr(session, 'laps') or session.laps.empty:
+            return None
+
+        # Determine if this is a qualifying session
+        session_name = getattr(session, 'name', '')
+        is_qualy = any(q in session_name for q in ['Qualifying', 'Shootout'])
+
+        # If qualy, try to match official leaderboard time from results
+        if is_qualy and getattr(session, 'results', None) is not None and not session.results.empty:
+            res = session.results[session.results['Abbreviation'] == driver_abbr]
+            if not res.empty:
+                row = res.iloc[0]
+                best_time = None
+                for col in ['Q3', 'Q2', 'Q1']:
+                    if col in row.index and pd.notna(row[col]):
+                        best_time = row[col]
+                        break
+                
+                if best_time is not None:
+                    drv_laps = session.laps.pick_drivers(driver_abbr)
+                    drv_laps = drv_laps[pd.notna(drv_laps['LapTime'])]
+                    if not drv_laps.empty:
+                        # Match within 50ms — timing sources can differ by a few milliseconds
+                        diffs = (drv_laps['LapTime'] - best_time).abs()
+                        if diffs.min() <= pd.Timedelta('0.05s'):
+                            return drv_laps.loc[diffs.idxmin()]
+
+        # Fallback to literal fastest lap
+        return session.laps.pick_drivers(driver_abbr).pick_fastest()
+    except Exception:
+        try:
+            return session.laps.pick_drivers(driver_abbr).pick_fastest()
+        except Exception:
+            return None
+
+
+
 @lru_cache(maxsize=32)
 def get_pit_stop_data(year, round_number):
     """Load official Ergast pit-stop durations for a race weekend."""
