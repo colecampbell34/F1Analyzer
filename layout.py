@@ -207,17 +207,6 @@ content = html.Div([
                                                  'lineHeight': '1.6', 'fontSize': '0.95rem',
                                                  'maxHeight': '50vh', 'overflowY': 'auto'})
                     ),
-                    # Session Notes (non-intrusive, collapsible)
-                    html.Hr(style={'borderColor': '#333'}),
-                    dbc.Button("📝 Session Notes", id='toggle-notes-btn', color='link', n_clicks=0,
-                               style={'color': '#888', 'fontSize': '0.85rem', 'padding': '0', 'textDecoration': 'none'}),
-                    dbc.Collapse(
-                        dbc.Textarea(id='session-notes', placeholder='Personal notes for this session...',
-                                     style={'backgroundColor': '#1a1a1a', 'color': '#ccc', 'border': '1px solid #333',
-                                            'fontSize': '0.85rem', 'minHeight': '80px', 'marginTop': '0.5rem'},
-                                     persistence=True, persistence_type='session'),
-                        id='notes-collapse', is_open=False
-                    ),
                     html.Hr(style={'borderColor': '#333'}),
                     html.Div([
                         html.Div([

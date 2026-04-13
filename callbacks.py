@@ -707,17 +707,6 @@ def register_callbacks(app):
                                font=dict(size=16, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
             return fig
 
-    # =============================================
-    # 8. NOTES TOGGLE
-    # =============================================
-    @app.callback(
-        Output('notes-collapse', 'is_open'),
-        Input('toggle-notes-btn', 'n_clicks'),
-        State('notes-collapse', 'is_open'),
-        prevent_initial_call=True
-    )
-    def toggle_notes(n_clicks, is_open):
-        return not is_open
 
     # =============================================
     # 13. FEEDBACK MODAL / INBOX
