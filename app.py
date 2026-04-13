@@ -21,4 +21,4 @@ server = app.server
 
 if __name__ == '__main__':
     data.clear_old_cache()
-    app.run(host='0.0.0.0', port=8080)
+    app.run(host='0.0.0.0', port=5000)
