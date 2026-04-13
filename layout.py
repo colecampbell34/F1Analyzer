@@ -3,7 +3,8 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 from datetime import datetime
 from graphs import GRAPH_CONFIG
-from ai_utils import GEMINI_API_KEY
+from ai_utils import AI_ENABLED
+
 
 # --- Reusable empty-state placeholder ---
 def _empty_state(graph_id, height='68vh'):
@@ -192,10 +193,10 @@ content = html.Div([
                                       n_submit=0,
                                       style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444',
                                              'fontSize': '0.95rem'},
-                                      disabled=not GEMINI_API_KEY),
+                                      disabled=not AI_ENABLED),
                             dbc.Button('Ask AI', id='ai-ask-button', color='danger', n_clicks=0,
                                        style={'fontWeight': 'bold'},
-                                       disabled=not GEMINI_API_KEY)
+                                       disabled=not AI_ENABLED)
                         ], style={'marginBottom': '1rem'}),
                     ], style={'padding': '0.5rem 0'}),
                     dcc.Loading(

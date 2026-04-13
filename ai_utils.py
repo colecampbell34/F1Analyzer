@@ -12,6 +12,7 @@ from data import get_track_status_events
 # --- GEMINI API SETUP ---
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+AI_ENABLED = bool(GEMINI_API_KEY)
 
 # --- Model Configuration ---
 GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
@@ -106,14 +107,15 @@ def _gather_session_context(session, session_type, driver1, driver2):
         lap2 = session.laps.pick_drivers(driver2).pick_fastest()
         t1 = lap1['LapTime'].total_seconds()
         t2 = lap2['LapTime'].total_seconds()
-        lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1-t2):.3f}s)")
+        lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
 
         # Sector times
         for s in [1, 2, 3]:
             s1 = lap1.get(f'Sector{s}Time')
             s2 = lap2.get(f'Sector{s}Time')
             if pd.notna(s1) and pd.notna(s2):
-                lines.append(f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+                lines.append(
+                    f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
     except Exception:
         lines.append("Fastest lap data: unavailable")
 
@@ -162,12 +164,12 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         if len(stint_racing) >= 3:
                             stint_racing['StintLap'] = range(1, len(stint_racing) + 1)
                             slope = np.polyfit(stint_racing['StintLap'].values.astype(float),
-                                             stint_racing['LapTime_Sec'].values, 1)[0]
+                                               stint_racing['LapTime_Sec'].values, 1)[0]
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
-                                       f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap")
+                                         f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap")
                         else:
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
-                                       f"({total_stint_laps} laps)")
+                                         f"({total_stint_laps} laps)")
 
                 # Position changes
                 if 'Position' in all_laps.columns and not all_laps.empty:
