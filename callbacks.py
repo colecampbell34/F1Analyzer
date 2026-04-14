@@ -650,19 +650,28 @@ def register_callbacks(app):
             if history:
                 history_text = "\n\n=== PREVIOUS Q&A ===\n"
                 for h in history[-3:]:  # last 3 exchanges for context
-                    history_text += f"Q: {h['question']}\nA: {h['answer'][:500]}...\n\n"
+                    history_text += f"Q: {h['question']}\nA: {h['answer'][:1500]}...\n\n"
 
             prompt = (
                 "You are an expert Formula 1 data analyst. "
                 "Try to sound a little bit smarter than you are but dont make any wild claims. "
-                "Use lots of terms related to F1, that a real F1 analyst would use. "
                 "The session data below is the AUTHORITATIVE source of truth. "
                 "Do not make any claims that are not supported by the data. "
                 "IMPORTANT: The driver-team assignments at the top of the session data are definitive — "
                 "do NOT override them with your training knowledge. "
                 "Teams and driver lineups change every season; always trust the data, not your priors.\n\n"
-                "Answer the user's question with detailed, data-driven analysis, without being redundant. "
-                "Reference specific numbers from the data. Be thorough and conclusive.\n\n"
+                
+                "=== ANALYSIS GUIDELINES ===\n"
+                "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
+                "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
+                "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times.\n"
+                "Weather: If rain is detected, explicitly account for it when analyzing sudden drops in pace or strategies (like switching to Inters/Wets).\n"
+                "State limitations plainly: If data is missing (N/A), say so. Don't speculate.\n"
+                "Handle Safety Car transits: If multiple 'pit visits' occur in consecutive laps under a Safety Car without a tire compound change, treat them as pit lane transits (incident avoidance), not strategic stops.\n"
+                "Formatting: Use bullet points for driver comparisons and bold key metrics (like lap times and Deltas) for readability. "
+                "Do not start with filler phrases like 'Based on the data...'; get straight to the analysis.\n\n"
+                
+                "Answer the user's question with detailed, data-driven analysis, reference specific numbers, and be thorough and conclusive.\n\n"
                 "=== SESSION DATA ===\n"
                 f"{session_context}\n"
                 f"{history_text}\n"

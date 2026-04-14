@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 from collections import defaultdict
 from dotenv import load_dotenv
-from data import get_track_status_events, get_best_lap
+from data import get_track_status_events, get_best_lap, get_pit_stop_data
 
 # --- GEMINI API SETUP ---
 load_dotenv()
@@ -137,6 +137,20 @@ def _gather_session_context(session, session_type, driver1, driver2):
                 if pd.notna(s1) and pd.notna(s2):
                     lines.append(
                         f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+            
+            # Telemetry Aggregation
+            for drv, l in [(driver1, lap1), (driver2, lap2)]:
+                try:
+                    tel = l.get_telemetry()
+                    if not tel.empty:
+                        max_spd = tel['Speed'].max()
+                        min_spd = tel['Speed'].min()
+                        full_thr = (tel['Throttle'] == 100).mean() * 100
+                        brk = (tel['Brake'] > 0).mean() * 100
+                        lines.append(f"  {drv} Telemetry (Fastest Lap): Max Speed = {max_spd} km/h, Min Speed = {min_spd} km/h, Full Throttle = {full_thr:.1f}%, Braking = {brk:.1f}%")
+                except Exception:
+                    pass
+
         else:
             lines.append("Fastest lap comparison: data incomplete for one or both drivers")
     except Exception:
@@ -144,6 +158,11 @@ def _gather_session_context(session, session_type, driver1, driver2):
 
     # Race/Sprint specific data
     if session_type in ['Race', 'Sprint']:
+        try:
+            pit_stops_df = get_pit_stop_data(session.event.year, session.event.RoundNumber)
+        except Exception:
+            pit_stops_df = pd.DataFrame()
+
         for drv in [driver1, driver2]:
             try:
                 all_laps = session.laps.pick_drivers(drv).reset_index(drop=True)
@@ -163,10 +182,25 @@ def _gather_session_context(session, session_type, driver1, driver2):
                     lines.append(f"  Best lap: {rl['LapTime_Sec'].min():.3f}s")
                     lines.append(f"  Worst lap: {rl['LapTime_Sec'].max():.3f}s")
 
-                # Pit stops (explicit lap numbers)
-                pit_laps = all_laps[all_laps['PitOutTime'].notna()]['LapNumber'].tolist()
+                # Pit stops (explicit lap numbers and duration)
+                pit_laps = all_laps[all_laps['PitInTime'].notna()]['LapNumber'].tolist()
                 if pit_laps:
-                    lines.append(f"  Pit stop(s) on lap(s): {', '.join(str(int(l)) for l in pit_laps)}")
+                    pit_info = []
+                    for pl in pit_laps:
+                        dur_str = ""
+                        if not pit_stops_df.empty:
+                            try:
+                                for _, stop in pit_stops_df.iterrows():
+                                    c = stop.get('driverCode') or str(stop.get('driverId', '')).upper()[:3]
+                                    if c == drv and str(stop.get('lap')) == str(int(pl)):
+                                        dur = stop.get('duration')
+                                        if pd.notna(dur):
+                                            dur_str = f" ({dur.total_seconds():.1f}s in pit lane)"
+                                        break
+                            except Exception:
+                                pass
+                        pit_info.append(f"Lap {int(pl)}{dur_str}")
+                    lines.append(f"  Pit stop(s): {', '.join(pit_info)}")
                 else:
                     lines.append("  Pit stops: None")
 
@@ -186,10 +220,12 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         stint_racing = rl[rl['Stint'] == stint].sort_values('LapNumber').reset_index(drop=True)
                         if len(stint_racing) >= 3:
                             stint_racing['StintLap'] = range(1, len(stint_racing) + 1)
+                            FUEL_CORRECTION = 0.06
+                            stint_racing['CorrectedTime'] = stint_racing['LapTime_Sec'] + FUEL_CORRECTION * stint_racing['StintLap']
                             slope = np.polyfit(stint_racing['StintLap'].values.astype(float),
-                                               stint_racing['LapTime_Sec'].values, 1)[0]
+                                               stint_racing['CorrectedTime'].values, 1)[0]
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
-                                         f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap")
+                                         f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap (fuel-corrected)")
                         else:
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
                                          f"({total_stint_laps} laps)")
@@ -231,19 +267,68 @@ def _gather_session_context(session, session_type, driver1, driver2):
             pass
 
         try:
-            lines.append("\n=== Detailed Lap Data (Selected Drivers) ===")
-            lines.append("Driver, Lap, LapTime(s), S1(s), S2(s), S3(s), Tyres, Status")
-            for drv in [driver1, driver2]:
-                all_laps = session.laps.pick_drivers(drv)
-                for _, lap in all_laps.iterrows():
-                    lt = f"{lap['LapTime'].total_seconds():.3f}" if pd.notna(lap['LapTime']) else "N/A"
-                    s1 = f"{lap['Sector1Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector1Time')) else "N/A"
-                    s2 = f"{lap['Sector2Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector2Time')) else "N/A"
-                    s3 = f"{lap['Sector3Time'].total_seconds():.3f}" if pd.notna(lap.get('Sector3Time')) else "N/A"
-                    comp = lap.get('Compound', 'N/A')
-                    stat = lap.get('TrackStatus', 'N/A')
-                    lines.append(f"{drv}, {lap['LapNumber']}, {lt}, {s1}, {s2}, {s3}, {comp}, {stat}")
+            lines.append("\n=== Detailed Head-to-Head Lap Data (Comparing Selected Drivers) ===")
+            lines.append(f"Lap, Gap ({driver1} minus {driver2}), {driver1}_Pos, {driver2}_Pos, {driver1}_LapTime, {driver2}_LapTime, {driver1}_Tyres, {driver2}_Tyres, Status")
+            lines.append(f"(Note: A negative Gap means {driver1} is AHEAD by that margin. A positive Gap means {driver2} is AHEAD. Gap < 1.5s implies dirty air trailing.)")
+            
+            laps1 = session.laps.pick_drivers(driver1).dropna(subset=['Time']).set_index('LapNumber')
+            laps2 = session.laps.pick_drivers(driver2).dropna(subset=['Time']).set_index('LapNumber')
+            
+            all_lap_nums = sorted(set(laps1.index).union(set(laps2.index)))
+            
+            for ln in all_lap_nums:
+                has_1 = ln in laps1.index
+                has_2 = ln in laps2.index
+                
+                lt1 = f"{laps1.loc[ln, 'LapTime'].total_seconds():.3f}s" if has_1 and pd.notna(laps1.loc[ln, 'LapTime']) else "N/A"
+                lt2 = f"{laps2.loc[ln, 'LapTime'].total_seconds():.3f}s" if has_2 and pd.notna(laps2.loc[ln, 'LapTime']) else "N/A"
+                
+                pos1 = f"P{int(laps1.loc[ln, 'Position'])}" if has_1 and pd.notna(laps1.loc[ln, 'Position']) else "N/A"
+                pos2 = f"P{int(laps2.loc[ln, 'Position'])}" if has_2 and pd.notna(laps2.loc[ln, 'Position']) else "N/A"
+                
+                gap = "N/A"
+                if has_1 and has_2:
+                    t1 = laps1.loc[ln, 'Time']
+                    t2 = laps2.loc[ln, 'Time']
+                    if pd.notna(t1) and pd.notna(t2):
+                        gap = f"{(t1 - t2).total_seconds():.3f}s"
+                
+                comp1 = str(laps1.loc[ln, 'Compound']) if has_1 else "N/A"
+                comp2 = str(laps2.loc[ln, 'Compound']) if has_2 else "N/A"
+                
+                stat = "1"
+                if has_1: stat = laps1.loc[ln, 'TrackStatus']
+                elif has_2: stat = laps2.loc[ln, 'TrackStatus']
+                
+                lines.append(f"{int(ln)}, {gap}, {pos1}, {pos2}, {lt1}, {lt2}, {comp1}, {comp2}, {stat}")
         except Exception:
             pass
+
+    try:
+        all_laps_session = session.laps.dropna(subset=['LapTime'])
+        if not all_laps_session.empty:
+            max_lap = all_laps_session['LapNumber'].max()
+            if max_lap > 10:
+                first_quarter_lap = max_lap * 0.25
+                last_quarter_lap = max_lap * 0.75
+                early_laps = all_laps_session[all_laps_session['LapNumber'] <= first_quarter_lap]
+                late_laps = all_laps_session[all_laps_session['LapNumber'] >= last_quarter_lap]
+                
+                if not early_laps.empty and not late_laps.empty:
+                    early_best = early_laps['LapTime'].dt.total_seconds().min()
+                    late_best = late_laps['LapTime'].dt.total_seconds().min()
+                    
+                    if pd.notna(early_best) and pd.notna(late_best):
+                        lines.append(f"\n=== Track Evolution ===")
+                        lines.append(f"Early session best lap (first 25% laps): {early_best:.3f}s")
+                        lines.append(f"Late session best lap (last 25% laps): {late_best:.3f}s")
+                        diff = early_best - late_best
+                        
+                        if diff > 0:
+                            lines.append(f"Track/Pace improved by ~{diff:.3f}s over the session.")
+                        else:
+                            lines.append(f"Track/Pace worsened by ~{-diff:.3f}s over the session.")
+    except Exception:
+        pass
 
     return "\n".join(lines)

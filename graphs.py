@@ -573,7 +573,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds a pit stop duration comparison chart for all drivers."""
     fig = go.Figure()
     pit_data = []
-    title = 'Pit Stop Durations (Stationary Time, All Drivers)'
+    title = 'Pit Stop Durations (Time spent in pit lane)'
     hover_label = 'Stop Time'
 
     try:
