@@ -477,7 +477,7 @@ def _build_grid_pace_fig(session, session_type):
             if is_race:
                 laps = drv_laps.pick_wo_box().pick_track_status('1')
                 laps = laps[laps['LapNumber'] > 1]
-            elif is_quali:
+            else:
                 # Remove in/out laps and ensure we only have flying laps
                 laps = drv_laps.pick_wo_box()
                 if not laps.empty and 'IsAccurate' in laps.columns:
@@ -487,8 +487,6 @@ def _build_grid_pace_fig(session, session_type):
                     fastest_lap_time = laps['LapTime'].dt.total_seconds().min()
                     if pd.notna(fastest_lap_time):
                         laps = laps[laps['LapTime'].dt.total_seconds() <= fastest_lap_time * 1.07]
-            else:
-                laps = drv_laps
 
             lap_times = laps['LapTime'].dt.total_seconds().dropna()
             if lap_times.empty:
@@ -527,7 +525,7 @@ def _build_grid_pace_fig(session, session_type):
 
     # Sort: Priority 1 = Leaderboard Position, Priority 2 = Performance
     if has_results:
-        drivers_data.sort(key=lambda x: x['position'])
+        drivers_data.sort(key=lambda x: (x['position'], x['fastest']))
     else:
         sort_key = 'fastest' if is_quali else 'median'
         drivers_data.sort(key=lambda x: x[sort_key])
@@ -540,7 +538,7 @@ def _build_grid_pace_fig(session, session_type):
             hovertemplate=f"{d['driver']}<br>Lap Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "Flying Laps"
+    session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "Practice Laps" if session_type in ['Practice 1', 'Practice 2', 'Practice 3'] else "Qualifying Laps"
     fig.update_layout(
         title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
         template='plotly_dark', showlegend=False,
