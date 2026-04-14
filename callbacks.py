@@ -178,7 +178,7 @@ def _build_leaderboard_children(session, session_name):
             if not isinstance(drv, str) or len(drv) != 3:
                 continue
             drv_laps = session.laps.pick_drivers(drv)
-            fastest_lap = drv_laps.pick_fastest() if not drv_laps.empty else None
+            fastest_lap = get_best_lap(session, drv)
             lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
                 fastest_lap['LapTime']) else pd.NaT
 
@@ -257,7 +257,7 @@ def _build_leaderboard_children(session, session_name):
                     color = f"#{color}"
 
                 raw_time = None
-                for col in ['Time', 'Q3', 'Q2', 'Q1']:
+                for col in ['Time', 'Q3', 'Q2', 'Q1', 'SQ3', 'SQ2', 'SQ1']:
                     if col in row and pd.notna(row[col]):
                         raw_time = row[col]
                         break
@@ -433,7 +433,7 @@ def register_callbacks(app):
             return html.Div("Select a session to load the leaderboard.", style={'color': '#888', 'fontSize': '0.9rem'})
 
         try:
-            include_laps = any(p in session_name for p in ['Practice', 'FP'])
+            include_laps = any(p in session_name for p in ['Practice', 'FP', 'Shootout', 'Sprint Qualifying'])
             session = load_session_summary(year, race, session_name, include_laps=include_laps)
             return _build_leaderboard_children(session, session_name)
 

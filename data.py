@@ -144,7 +144,7 @@ def _load_session_cached(year, race, session_name):
 def _load_session_summary_cached(year, race, session_name, include_laps):
     """LRU-cached lightweight session loader for sidebar data and labels."""
     session = fastf1.get_session(year, race, session_name)
-    session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=False)
+    session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
     return session
 
 
@@ -276,7 +276,7 @@ def get_best_lap(session, driver_abbr):
             if not res.empty:
                 row = res.iloc[0]
                 best_time = None
-                for col in ['Q3', 'Q2', 'Q1']:
+                for col in ['Q3', 'Q2', 'Q1', 'SQ3', 'SQ2', 'SQ1']:
                     if col in row.index and pd.notna(row[col]):
                         best_time = row[col]
                         break

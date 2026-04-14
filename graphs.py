@@ -482,6 +482,11 @@ def _build_grid_pace_fig(session, session_type):
                 laps = drv_laps.pick_wo_box()
                 if not laps.empty and 'IsAccurate' in laps.columns:
                     laps = laps[laps['IsAccurate']]
+                # Remove outliers (laps slower than 107% of the fastest lap)
+                if not laps.empty:
+                    fastest_lap_time = laps['LapTime'].dt.total_seconds().min()
+                    if pd.notna(fastest_lap_time):
+                        laps = laps[laps['LapTime'].dt.total_seconds() <= fastest_lap_time * 1.07]
             else:
                 laps = drv_laps
 
