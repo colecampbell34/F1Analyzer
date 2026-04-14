@@ -132,7 +132,7 @@ def get_event_schedule_cached(year):
 
 
 # --- 2. SESSION CACHE (always loads full data) ---
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=3)
 def _load_session_cached(year, race, session_name):
     """LRU-cached session loader. Always loads full telemetry/weather/messages."""
     session = fastf1.get_session(year, race, session_name)
@@ -140,7 +140,7 @@ def _load_session_cached(year, race, session_name):
     return session
 
 
-@lru_cache(maxsize=16)
+@lru_cache(maxsize=6)
 def _load_session_summary_cached(year, race, session_name, include_laps):
     """LRU-cached lightweight session loader for sidebar data and labels."""
     session = fastf1.get_session(year, race, session_name)
@@ -300,7 +300,7 @@ def get_best_lap(session, driver_abbr):
 
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=10)
 def get_pit_stop_data(year, round_number):
     """Load official Ergast pit-stop durations for a race weekend."""
     ergast = Ergast(result_type='pandas', auto_cast=True)

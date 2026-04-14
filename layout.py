@@ -96,7 +96,9 @@ sidebar = html.Div([
     dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
                style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
     html.Hr(),
-    html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem"}),
+    html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
+    dbc.Button("Update Leaderboard", id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
+               style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
     html.Div([
         dcc.Loading(type='dot', color='#ff0000', children=[
             html.Div(id='leaderboard-container')
@@ -293,7 +295,7 @@ app_layout = dbc.Container([
                 dbc.Input(
                     id='feedback-contact',
                     type='text',
-                    placeholder='Email or X handle if you want follow-up',
+                    placeholder='Email if you want follow-up',
                     style={'backgroundColor': '#1a1a1a', 'color': '#eee', 'border': '1px solid #444'}
                 )
             ]),

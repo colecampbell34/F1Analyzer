@@ -27,6 +27,18 @@ GRAPH_CONFIG = {
     'modeBarButtonsToAdd': ['toImage'],
 }
 
+BASE_LAYOUT = dict(
+    template='plotly_dark',
+    margin=dict(l=40, r=40, t=60, b=40),
+    hovermode='x unified'
+)
+
+def _apply_base_layout(fig, **kwargs):
+    """Applies the base F1 analyzer layout, allowing kwargs to override specifics."""
+    fig.update_layout(**BASE_LAYOUT)
+    fig.update_layout(**kwargs)
+    return fig
+
 
 def _get_driver_colors(driver1, driver2, session):
     """Fetches driver colors and handles teammate color collisions."""
@@ -105,9 +117,10 @@ def _build_telemetry_fig(fast_data, slow_data):
     fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_driver} Gear',
                              line=dict(color=slow_c)), row=4, col=1)
 
-    fig.update_layout(
+    _apply_base_layout(
+        fig,
         title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)',
-        template='plotly_dark', hovermode='x unified', margin=dict(l=40, r=40, t=80, b=40),
+        margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5),
         uirevision='telemetry'
     )
@@ -177,10 +190,12 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
             hovertemplate=f'Sector {ms+1}<br>{winner} faster by {delta_km:.1f} km/h<extra></extra>'
         ))
 
-    fig.update_layout(
-        title="High-Resolution Track Dominance Map (50 Sectors)", template='plotly_dark',
+    _apply_base_layout(
+        fig,
+        title="High-Resolution Track Dominance Map (50 Sectors)",
+        hovermode="closest",
         xaxis=dict(visible=False, scaleanchor="y", scaleratio=1), yaxis=dict(visible=False),
-        margin=dict(l=40, r=40, t=60, b=40), legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
         uirevision='dominance'
     )
     return fig
@@ -282,9 +297,9 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                                      marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
                                      legend='legend'), row=1, col=1)
 
-    fig.update_layout(
-        title="Strategy & Weather", template='plotly_dark', hovermode='x unified',
-        margin=dict(l=40, r=40, t=60, b=40),
+    _apply_base_layout(
+        fig,
+        title="Strategy & Weather",
         legend=dict(title=dict(text="Legend"), yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(0,0,0,0)"),
         uirevision='strategy'
     )
@@ -356,10 +371,11 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         except Exception:
             continue
 
-    fig.update_layout(
+    _apply_base_layout(
+        fig,
         title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)<br><sup>+ = more degradation, - = pace improving</sup>',
-        template='plotly_dark', margin=dict(l=40, r=40, t=80, b=40),
-        hovermode='x unified', uirevision='degradation'
+        margin=dict(l=40, r=40, t=80, b=40),
+        uirevision='degradation'
     )
     fig.update_yaxes(title_text='Fuel-Corrected Lap Time (s)', row=1, col=1, autorange='reversed')
     fig.update_xaxes(title_text='Stint Lap', row=1, col=1)
@@ -441,8 +457,9 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         fig.add_annotation(text=f"Race gap data unavailable: {e}", showarrow=False,
                            font=dict(size=16, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
 
-    fig.update_layout(
-        title='Race Gap & Position Analysis', template='plotly_dark', hovermode='x unified',
+    _apply_base_layout(
+        fig,
+        title='Race Gap & Position Analysis',
         margin=dict(l=40, r=40, t=80, b=40), uirevision='gaps'
     )
     fig.update_yaxes(title_text='Gap (seconds)', row=1, col=1)
@@ -539,12 +556,13 @@ def _build_grid_pace_fig(session, session_type):
         ))
 
     session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "Practice Laps" if session_type in ['Practice 1', 'Practice 2', 'Practice 3'] else "Qualifying Laps"
-    fig.update_layout(
+    _apply_base_layout(
+        fig,
         title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
-        template='plotly_dark', showlegend=False,
+        showlegend=False,
+        hovermode='closest',
         yaxis_title='Lap Time (s)',
         yaxis=dict(autorange='reversed'),
-        margin=dict(l=40, r=40, t=60, b=40),
         uirevision='gridpace'
     )
 
@@ -637,7 +655,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     if not pit_data:
         fig.add_annotation(text="No pit stop data available", showarrow=False,
                            font=dict(size=18), xref="paper", yref="paper", x=0.5, y=0.5)
-        fig.update_layout(template='plotly_dark')
+        _apply_base_layout(fig, hovermode='closest')
         return fig
 
     # Sort by duration
@@ -658,9 +676,10 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             hovertemplate=f"{p['driver']} - Lap {p['lap']}<br>{hover_label}: {p['duration']:.1f}s<extra></extra>"
         ))
 
-    fig.update_layout(
+    _apply_base_layout(
+        fig,
         title=title,
-        template='plotly_dark',
+        hovermode='closest',
         yaxis_title='Duration (s)',
         xaxis_title='Driver & Lap',
         margin=dict(l=40, r=40, t=60, b=80),
