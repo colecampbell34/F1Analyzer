@@ -4,7 +4,7 @@ import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import flask
-import os
+import time
 from datetime import datetime
 from urllib.parse import parse_qs
 
@@ -633,13 +633,15 @@ def register_callbacks(app):
             new_idx = len(new_history) - 1
             return _render_history_page(new_history, new_idx), new_history, '', new_idx
 
-        # --- Call Gemini ---
-        try:
-            from google import genai
-            client = genai.Client(api_key=GEMINI_API_KEY)
-            prompt = build_ai_prompt(session_context, question, history)
-
+        # --- Call Gemini with Exponential Backoff for 503s ---
+        attempts = 3
+        last_error = ""
+        for i in range(attempts):
             try:
+                from google import genai
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                prompt = build_ai_prompt(session_context, question, history)
+                
                 response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
                 answer = response.text
 
@@ -649,21 +651,28 @@ def register_callbacks(app):
                 new_history = history + [{'question': question, 'answer': answer}]
                 new_idx = len(new_history) - 1
                 return _render_history_page(new_history, new_idx), new_history, '', new_idx
+
             except Exception as e:
-                error_str = str(e)
-                if '429' in error_str:
+                last_error = str(e)
+                # If it's a 503/Unavailable, wait and retry
+                if i < attempts - 1 and ("503" in last_error or "UNAVAILABLE" in last_error.upper()):
+                    time.sleep(2 ** i)  # 1s, 2s delay
+                    continue
+                
+                # Otherwise, or if we're out of attempts, handle the error
+                if '429' in last_error:
                     err = "⏳ **AI service is busy right now.** Please wait about 60 seconds and try again."
+                elif '503' in last_error or 'UNAVAILABLE' in last_error.upper():
+                    err = "📊 **The AI service is currently at capacity.** After 3 automatic retries, the server is still unavailable. Please try again in a few minutes."
                 else:
-                    err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{error_str}\n```\nPlease try again in a moment."
+                    err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
+                
                 new_history = history + [{'question': question, 'answer': err}]
                 new_idx = len(new_history) - 1
                 return _render_history_page(new_history, new_idx), new_history, '', new_idx
 
-        except Exception as e:
-            err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{str(e)}\n```"
-            new_history = history + [{'question': question, 'answer': err}]
-            new_idx = len(new_history) - 1
-            return _render_history_page(new_history, new_idx), new_history, '', new_idx
+
+        return html.P("Something went wrong with the AI request.", style={'color': '#888'}), history, '', current_index
 
 
 def _render_history_page(history, index):
