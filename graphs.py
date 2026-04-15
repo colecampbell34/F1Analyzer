@@ -1,15 +1,9 @@
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import fastf1
-import fastf1.plotting
-import fastf1.utils
-import pandas as pd
-import numpy as np
 from data import get_pit_stop_data, get_track_status_events, get_best_lap, get_single_driver_color
 
 
 def _downsample(df, max_points=2000):
     """Downsample a DataFrame to max_points rows via even spacing. Visually identical at chart resolution."""
+    import pandas as pd
     if len(df) <= max_points:
         return df
     step = max(1, len(df) // max_points)
@@ -42,6 +36,7 @@ def _apply_base_layout(fig, **kwargs):
 
 def _error_figure(message):
     """Creates a standard dark-themed error annotation figure."""
+    import plotly.graph_objects as go
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.add_annotation(text=f"Error: {message}", showarrow=False,
@@ -52,6 +47,7 @@ def _error_figure(message):
 
 def _not_applicable_figure(message):
     """Creates a standard dark-themed 'N/A' placeholder figure."""
+    import plotly.graph_objects as go
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.update_xaxes(visible=False).update_yaxes(visible=False)
@@ -63,6 +59,7 @@ def _not_applicable_figure(message):
 
 def _get_driver_colors(driver1, driver2, session):
     """Fetches driver colors and handles teammate color collisions."""
+    import fastf1.plotting
     try:
         c1 = fastf1.plotting.get_driver_color(driver1, session)
         c2 = fastf1.plotting.get_driver_color(driver2, session)
@@ -90,9 +87,12 @@ def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
 
 def _build_telemetry_fig(fast_data, slow_data):
     """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, fast_lap, fast_lbl = fast_data
     slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
 
+    import fastf1.utils
     delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(fast_lap, slow_lap)
 
     # Downsample for faster transfer over Replit bandwidth
@@ -163,6 +163,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     Groups consecutive sectors won by the same driver into single traces 
     to minimize JSON payload size.
     """
+    import plotly.graph_objects as go
     fast_driver, _, fast_c, fast_t, _, fast_lbl = fast_data
     slow_driver, _, slow_c, slow_t, _, slow_lbl = slow_data
 
@@ -244,6 +245,9 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
 def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the Race Pace, Pits, Tyres & Weather dual-axis strategy plot."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import pandas as pd
     # 1. Fetch unfiltered laps
     unf_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
     unf_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
@@ -361,6 +365,10 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Fuel-corrected tyre degradation analysis per stint, side-by-side."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots  # required: was missing, caused NameError
+    import pandas as pd
+    import numpy as np
     FUEL_CORRECTION = 0.06  # approx seconds saved per lap from fuel burn
 
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(lbl1, lbl2),
@@ -431,6 +439,9 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the gap-between-drivers chart over race laps."""
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots  # required: was missing, caused NameError
+    import pandas as pd
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         row_heights=[0.7, 0.3],
                         subplot_titles=('Gap Between Drivers', 'Position'))
@@ -517,6 +528,8 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_grid_pace_fig(session, session_type):
     """Builds a box plot of lap time distributions for all drivers."""
+    import plotly.graph_objects as go
+    import pandas as pd
     from data import is_race, is_qualifying
     fig = go.Figure()
     drivers_data = []
@@ -620,6 +633,8 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     Uses a single go.Bar trace with arrays for efficient JSON serialization
     instead of one trace per pit stop.
     """
+    import plotly.graph_objects as go
+    import pandas as pd
     pit_data = []
     title = 'Pit Stop Durations (Time spent in pit lane)'
     hover_label = 'Stop Time'

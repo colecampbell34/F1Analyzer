@@ -1,15 +1,10 @@
 import os
 import shutil
 import threading
-import fastf1
-import fastf1.plotting
-import fastf1.req
-import pandas as pd
 import gzip
 import builtins
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
-from fastf1.ergast import Ergast
 
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _SESSION_PRELOAD_FUTURES = {}
@@ -34,9 +29,6 @@ def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=N
                 pass
     return builtins.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
 
-# Inject the compressed open into FastF1's caching module
-fastf1.req.open = _compressed_cache_open
-
 
 # --- SESSION TYPE HELPERS ---
 def is_qualifying(session_type):
@@ -56,6 +48,11 @@ def is_practice(session_type):
 
 # --- 1. SETUP F1 CACHE ---
 def setup_cache():
+    import fastf1
+    import fastf1.req
+    # Inject the compressed open into FastF1's caching module
+    fastf1.req.open = _compressed_cache_open
+    
     cache_dir = 'f1_cache'
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
@@ -66,6 +63,7 @@ def setup_cache():
 @lru_cache(maxsize=20)
 def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
+    import fastf1
     return fastf1.get_event_schedule(year)
 
 
@@ -73,6 +71,7 @@ def get_event_schedule_cached(year):
 @lru_cache(maxsize=3)
 def _load_session_cached(year, race, session_name):
     """LRU-cached session loader. Always loads full telemetry/weather/messages."""
+    import fastf1
     session = fastf1.get_session(year, race, session_name)
     session.load(telemetry=True, weather=True, messages=True)
     return session
@@ -81,6 +80,7 @@ def _load_session_cached(year, race, session_name):
 @lru_cache(maxsize=6)
 def _load_session_summary_cached(year, race, session_name, include_laps):
     """LRU-cached lightweight session loader for sidebar data and labels."""
+    import fastf1
     session = fastf1.get_session(year, race, session_name)
     session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
     return session
@@ -131,6 +131,7 @@ def _load_drivers_fast(year, race, session_name):
 # --- 3. TRACK STATUS UTILITY ---
 def get_track_status_events(session):
     """Returns (sc_laps, vsc_laps, red_laps) sets extracted from session laps."""
+    import pandas as pd
     sc_laps, vsc_laps, red_laps = set(), set(), set()
     try:
         all_laps = session.laps
@@ -153,6 +154,7 @@ def get_driver_info(session):
         return drivers
 
     for _, row in session.results.iterrows():
+        import pandas as pd
         abbr = row.get('Abbreviation', '')
         if not isinstance(abbr, str) or len(abbr) != 3:
             continue
@@ -163,6 +165,7 @@ def get_driver_info(session):
         color = row.get('TeamColor', '')
         if pd.isna(color) or not color:
             try:
+                import fastf1.plotting
                 color = fastf1.plotting.get_team_color(team, session=session)
             except Exception:
                 color = 'ffffff'
@@ -200,6 +203,7 @@ def get_best_lap(session, driver_abbr):
     For Qualifying/Shootout, it prioritizes Q3 > Q2 > Q1 times from session.results.
     For other sessions (Practice, Race), it uses pick_fastest().
     """
+    import pandas as pd
     try:
         if not hasattr(session, 'laps') or session.laps.empty:
             return None
@@ -241,6 +245,7 @@ def get_best_lap(session, driver_abbr):
 def get_single_driver_color(driver_abbr, session):
     """Fetch a single driver's team color with fallback."""
     try:
+        import fastf1.plotting
         color = fastf1.plotting.get_driver_color(driver_abbr, session)
         if not color.startswith('#'):
             color = f'#{color}'
@@ -252,6 +257,7 @@ def get_single_driver_color(driver_abbr, session):
 # --- 5c. SHARED DATA (session + labels + colors) ---
 def get_shared_data(params):
     """Loads session and computes shared labels/colors from stored params."""
+    import pandas as pd
     session = load_session_with_preload(params['year'], params['race'], params['session_type'])
     d1, d2 = params['driver1'], params['driver2']
 
@@ -278,18 +284,23 @@ def get_pit_stop_data(year, round_number):
     Falls back gracefully if the Ergast API is unavailable (deprecated).
     """
     try:
+        from fastf1.ergast import Ergast
+        import pandas as pd
         ergast = Ergast(result_type='pandas', auto_cast=True)
         result = ergast.get_pit_stops(season=int(year), round=int(round_number))
         if not result.content:
             return pd.DataFrame()
         return result.content[0].copy()
     except Exception:
+        import pandas as pd
         # Ergast API may be offline (deprecated) — return empty to trigger fallback
         return pd.DataFrame()
 
 
 # --- 6. CACHE MANAGEMENT ---
 def clear_old_cache(max_size_gb=1.0):
+    """Checks cache directory size and clears it if it exceeds limit."""
+    import fastf1
     cache_path = "f1_cache"
 
     if not os.path.exists(cache_path):

@@ -1,9 +1,6 @@
 import os
 from datetime import datetime
 from urllib.parse import parse_qs
-import pandas as pd
-import fastf1
-import fastf1.plotting
 from dash import html
 import dash_bootstrap_components as dbc
 from data import get_best_lap, is_practice
@@ -135,6 +132,8 @@ def _build_feedback_review_panel(entries):
     ])
 
 def _build_leaderboard_children(session, session_name):
+    import fastf1.plotting
+    import pandas as pd
     leaderboard_children = []
 
     _is_practice = is_practice(session_name)

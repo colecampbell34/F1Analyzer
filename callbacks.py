@@ -3,12 +3,8 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-import plotly.graph_objects as go
-import pandas as pd
-import fastf1
 import flask
 import os
-from google import genai
 from datetime import datetime
 from urllib.parse import parse_qs
 
@@ -80,6 +76,8 @@ def register_callbacks(app):
         [State('year-dropdown', 'value'), State('session-dropdown', 'value')]
     )
     def update_sessions(race, year, current_session):
+        import fastf1
+        import pandas as pd
         if not race or not year:
             return dash.no_update, dash.no_update
         event = fastf1.get_event(year, race)
@@ -232,6 +230,7 @@ def register_callbacks(app):
         driver1, driver2 = params['driver1'], params['driver2']
         
         try:
+            import pandas as pd
             session = load_session_with_preload(year, race, session_type)
 
             # Build labels for the title
@@ -274,6 +273,7 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update
         try:
+            import pandas as pd
             session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
 
             def get_lap(driver, mode, lap_num):
@@ -517,6 +517,7 @@ def register_callbacks(app):
         if not n_clicks or not _feedback_admin_authorized(url_search):
             raise PreventUpdate
 
+        import pandas as pd
         entries = load_feedback_entries()
         df = pd.json_normalize(entries, sep='_') if entries else pd.DataFrame(columns=[
             'id', 'submitted_at', 'category', 'rating', 'message', 'contact',
@@ -634,6 +635,7 @@ def register_callbacks(app):
 
         # --- Call Gemini ---
         try:
+            from google import genai
             client = genai.Client(api_key=GEMINI_API_KEY)
             prompt = build_ai_prompt(session_context, question, history)
 

@@ -4,6 +4,7 @@ from layout import app_layout
 from callbacks import register_callbacks
 import data
 from feedback import setup_feedback_storage
+from flask_compress import Compress
 
 app = dash.Dash(
     __name__,
@@ -13,13 +14,14 @@ app = dash.Dash(
     suppress_callback_exceptions=True
 )
 
+Compress(app.server)
+server = app.server
+
 data.setup_cache()
 setup_feedback_storage()
 app.layout = app_layout
 register_callbacks(app)
 
-server = app.server
-
 if __name__ == '__main__':
     data.clear_old_cache()
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8000)

@@ -1,5 +1,3 @@
-import pandas as pd
-import numpy as np
 import os
 import json
 import time
@@ -203,6 +201,7 @@ def build_ai_prompt(session_context, question, history=None):
 
 def _get_field_summary(session):
     """Returns a text summary of the full finishing order and key field stats."""
+    import pandas as pd 
     lines = ["=== FULL FIELD CLASSIFICATION ==="]
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
@@ -240,6 +239,7 @@ def _get_field_summary(session):
 
 def _get_teammate_benchmark(session, driver_abbr):
     """Returns key performance stats for a driver's teammate to provide car-performance baseline."""
+    import pandas as pd  
     try:
         driver_info = get_driver_info(session)
         teammate = get_teammate_from_info(driver_abbr, driver_info)
@@ -273,6 +273,7 @@ def _get_teammate_benchmark(session, driver_abbr):
 
 def _get_session_narrative(session):
     """Extracts high-level race events from session messages (Overtakes, Flags, Retirements)."""
+    import pandas as pd  
     lines = ["=== SESSION NARRATIVE (High-Level Events) ==="]
     try:
         if not hasattr(session, 'messages') or session.messages is None or session.messages.empty:
@@ -322,6 +323,8 @@ def _get_session_narrative(session):
 
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
+    import pandas as pd
+    import numpy as np
     lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
              "CRITICAL: Use ONLY the team assignments listed here. "
              "Do NOT rely on prior training knowledge for any driver's team or car number."]
