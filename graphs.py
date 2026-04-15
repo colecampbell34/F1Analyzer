@@ -494,9 +494,9 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 name=f'{lbl2} Pos', line=dict(color=c2, width=2)
             ), row=2, col=1)
 
-        # Pit stop markers
+        # Pit stop markers (consistent with in-lap display)
         for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
-            pit_laps = laps_df[laps_df['PitInTime'].notna()]['LapNumber'].tolist()
+            pit_laps = (laps_df[laps_df['PitInTime'].notna()]['LapNumber'] - 1).tolist()
             for pl in pit_laps:
                 fig.add_vline(x=pl, line_width=1.5, line_dash="dot", line_color=color, opacity=0.6,
                               row='all', col='all')
@@ -662,7 +662,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
             pit_data.append({
                 'driver': drv,
-                'lap': int(stop['lap']),
+                'lap': int(stop['lap']) - 1,
                 'duration': duration_seconds,
                 'color': color,
                 'highlight': drv in [driver1, driver2]
@@ -695,7 +695,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
                             pit_data.append({
                                 'driver': drv,
-                                'lap': int(pit_lap['LapNumber']),
+                                'lap': int(pit_lap['LapNumber']) - 1,
                                 'duration': duration,
                                 'color': color,
                                 'highlight': drv in [driver1, driver2]
