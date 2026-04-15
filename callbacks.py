@@ -24,7 +24,7 @@ from graphs import (
 )
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODEL,
-    check_rate_limit, check_daily_budget,
+    check_rate_limit, check_global_rpm, check_daily_budget,
     get_cached_response, store_cached_response
 )
 from ui_utils import (
@@ -630,6 +630,12 @@ def register_callbacks(app):
             err = f"⏳ **Slow down!** {rate_msg}"
             return _render_history(history + [{'question': question, 'answer': err}]), history, ''
 
+        # --- Guard: Global RPM limit ---
+        global_allowed, global_msg = check_global_rpm()
+        if not global_allowed:
+            err = f"📊 **System Capacity Reached.** {global_msg}"
+            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+
         # --- Guard: Daily budget ---
         if not check_daily_budget():
             err = "📊 **Daily AI analysis limit reached.** The AI assistant has a daily usage limit to manage costs. Please try again tomorrow (resets at midnight UTC)."
@@ -664,7 +670,10 @@ def register_callbacks(app):
                 "=== ANALYSIS GUIDELINES ===\n"
                 "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
                 "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
-                "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times.\n"
+                "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. "
+                "Use the 'Teammate Benchmarks' to distinguish between a driver's individual performance and the car's inherent pace.\n"
+                "Contextual Awareness: Consult the 'Session Narrative' to explain sudden pace changes or strategic shifts (e.g., 'the pace dropped after the incident at [00:45]'). "
+                "Use the 'Full Field Classification' to provide context on where the drivers finished relative to the winner and the rest of the field.\n"
                 "Weather: If rain is detected, explicitly account for it when analyzing sudden drops in pace or strategies (like switching to Inters/Wets).\n"
                 "State limitations plainly: If data is missing (N/A), say so. Don't speculate.\n"
                 "Handle Safety Car transits: If multiple 'pit visits' occur in consecutive laps under a Safety Car without a tire compound change, treat them as pit lane transits (incident avoidance), not strategic stops.\n"

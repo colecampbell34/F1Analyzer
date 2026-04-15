@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime, timezone
 from collections import defaultdict
 from dotenv import load_dotenv
-from data import get_track_status_events, get_best_lap, get_pit_stop_data
+from data import get_track_status_events, get_best_lap, get_pit_stop_data, get_driver_info, get_teammate_from_info
 
 # --- GEMINI API SETUP ---
 load_dotenv()
@@ -20,6 +20,10 @@ GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
 _AI_RATE_LIMIT = defaultdict(list)  # IP → list of timestamps
 MAX_REQUESTS_PER_MINUTE = 2
 MAX_REQUESTS_PER_HOUR = 10
+
+# --- Rate Limiting (Global RPM) ---
+_GLOBAL_REQUEST_HISTORY = []  # List of timestamps for all requests
+MAX_GLOBAL_RPM = 14  # Buffer: API limit is 15
 
 # --- Daily Budget (global, across all users) ---
 _daily_request_count = 0
@@ -47,6 +51,21 @@ def check_rate_limit(ip):
         return False, "You've reached the limit of 10 questions per hour. Please take a break and come back shortly."
 
     _AI_RATE_LIMIT[ip].append(now)
+    return True, None
+
+
+def check_global_rpm():
+    """Check if the global request count is within the 15 RPM limit. Returns (allowed, wait_message)."""
+    global _GLOBAL_REQUEST_HISTORY
+    now = time.time()
+
+    # Clean entries older than 60 seconds
+    _GLOBAL_REQUEST_HISTORY = [t for t in _GLOBAL_REQUEST_HISTORY if now - t < 60]
+
+    if len(_GLOBAL_REQUEST_HISTORY) >= MAX_GLOBAL_RPM:
+        return False, "The AI assistant is currently at capacity due to high demand. Please try again in a minute."
+
+    _GLOBAL_REQUEST_HISTORY.append(now)
     return True, None
 
 
@@ -96,6 +115,126 @@ def store_cached_response(session_context, question, response):
     _AI_RESPONSE_CACHE[key] = response
 
 
+
+def _get_field_summary(session):
+    """Returns a text summary of the full finishing order and key field stats."""
+    lines = ["=== FULL FIELD CLASSIFICATION ==="]
+    try:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            res = session.results.sort_values('Position')
+            for _, row in res.iterrows():
+                pos = row.get('Position')
+                abbr = row.get('Abbreviation', '')
+                team = row.get('TeamName', '')
+                status = row.get('Status', 'Finished')
+                
+                # Gap to leader
+                time_val = row.get('Time')
+                if pd.notna(time_val) and isinstance(time_val, pd.Timedelta):
+                    gap = f"+{time_val.total_seconds():.3f}s" if pos > 1 else "LEADER"
+                else:
+                    gap = status if status != 'Finished' else ""
+
+                # Pit stops for this driver
+                pits = 0
+                try:
+                    pits = len(session.laps.pick_drivers(abbr).pick_wo_box().pick_pit_stops())
+                except Exception:
+                    pass
+
+                line = f"P{int(pos) if pd.notna(pos) else 'N/A'}: {abbr} ({team}) | {gap}"
+                if pits > 0:
+                    line += f" | {pits} stops"
+                lines.append(line)
+        else:
+            lines.append("Full classification data unavailable.")
+    except Exception:
+        lines.append("Error fetching full classification.")
+    return "\n".join(lines)
+
+
+def _get_teammate_benchmark(session, driver_abbr):
+    """Returns key performance stats for a driver's teammate to provide car-performance baseline."""
+    try:
+        driver_info = get_driver_info(session)
+        teammate = get_teammate_from_info(driver_abbr, driver_info)
+        if not teammate:
+            return f"No teammate data found for {driver_abbr}."
+
+        res = session.results[session.results['Abbreviation'] == teammate]
+        if res.empty:
+            return f"Teammate {teammate} data unavailable."
+        
+        row = res.iloc[0]
+        pos = row.get('Position')
+        p_str = f"P{int(pos)}" if pd.notna(pos) else "DNF/Unknown"
+        
+        best_lap = get_best_lap(session, teammate)
+        bl_str = f"{best_lap['LapTime'].total_seconds():.3f}s" if best_lap is not None and pd.notna(best_lap['LapTime']) else "N/A"
+        
+        # Avg Pace
+        avg_pace = "N/A"
+        try:
+            tl = session.laps.pick_drivers(teammate).pick_wo_box().pick_track_status('1')
+            if not tl.empty:
+                avg_pace = f"{tl['LapTime'].dt.total_seconds().mean():.3f}s"
+        except Exception:
+            pass
+
+        return f"Teammate {teammate} Baseline: Finished {p_str}, Best Lap {bl_str}, Avg Pace {avg_pace}"
+    except Exception:
+        return f"Error fetching teammate benchmark for {driver_abbr}."
+
+
+def _get_session_narrative(session):
+    """Extracts high-level race events from session messages (Overtakes, Flags, Retirements)."""
+    lines = ["=== SESSION NARRATIVE (High-Level Events) ==="]
+    try:
+        if not hasattr(session, 'messages') or session.messages is None or session.messages.empty:
+            return ""
+        
+        # Filter for interesting categories
+        # FastF1 messages usually have 'Category' and 'Message'
+        # Categories: 'Flag', 'Safety Car', 'Decision', 'Incident', 'Other'
+        interesting = session.messages.copy()
+        
+        # Heuristic: exclude repetitive/low-info messages
+        exclude_keywords = ['DRS ENABLED', 'DRS DISABLED', 'TRACK LIMITS', 'METEOROLOGICAL', 'WIND']
+        
+        for _, row in interesting.iterrows():
+            msg = str(row.get('Message', '')).upper()
+            if any(k in msg for k in exclude_keywords):
+                continue
+            
+            # Focus on Flags, Overtakes (rare in messages but sometimes noted), Incidents, decisions
+            cat = str(row.get('Category', '')).lower()
+            if cat in ['flag', 'safety car', 'incident', 'decision']:
+                # Format time if possible
+                time_val = row.get('Time')
+                t_str = ""
+                if pd.notna(time_val):
+                    if isinstance(time_val, pd.Timedelta):
+                        total_secs = time_val.total_seconds()
+                        mins = int(total_secs // 60)
+                        secs = int(total_secs % 60)
+                        t_str = f"[{mins:02d}:{secs:02d}] "
+                    else:
+                        t_str = f"[{str(time_val)}] "
+                
+                lines.append(f"{t_str}{msg}")
+        
+        if len(lines) == 1:
+            return "" # No interesting events found
+            
+        # Limit to last 50 events to avoid bloating if race was chaotic
+        if len(lines) > 51:
+            lines = lines[:1] + lines[-50:]
+            
+    except Exception:
+        pass
+    return "\n".join(lines)
+
+
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
     lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
@@ -119,6 +258,22 @@ def _gather_session_context(session, session_type, driver1, driver2):
     lines.append("")
 
     lines += [f"Session Type: {session_type}", f"Drivers being compared: {driver1} vs {driver2}", ""]
+
+    # Teammate Context (Benchmark)
+    lines.append("=== TEAMMATE BENCHMARKS ===")
+    lines.append(_get_teammate_benchmark(session, driver1))
+    lines.append(_get_teammate_benchmark(session, driver2))
+    lines.append("")
+
+    # Full Field Classification
+    lines.append(_get_field_summary(session))
+    lines.append("")
+
+    # Session Narrative
+    narrative = _get_session_narrative(session)
+    if narrative:
+        lines.append(narrative)
+        lines.append("")
 
     # Fastest lap comparison
     try:
