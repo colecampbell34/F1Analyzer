@@ -227,7 +227,13 @@ content = html.Div([
                     html.Div(id='feedback-review-panel')
                 ]),
                 dcc.Store(id='session-context-store', data=''),
-                dcc.Store(id='ai-history-store', storage_type='session', data=[])
+                dcc.Store(id='ai-history-store', storage_type='session', data=[]),
+                dcc.Store(id='ai-history-index-store', storage_type='session', data=0),
+                # Hidden placeholders for nav buttons (rendered dynamically in callbacks)
+                html.Div([
+                    dbc.Button(id='ai-prev-btn', style={'display': 'none'}, n_clicks=0),
+                    dbc.Button(id='ai-next-btn', style={'display': 'none'}, n_clicks=0),
+                ], style={'display': 'none'})
             ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
     ])

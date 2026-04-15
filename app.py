@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 from layout import app_layout
 from callbacks import register_callbacks
 import data
+from feedback import setup_feedback_storage
 
 app = dash.Dash(
     __name__,
@@ -13,7 +14,7 @@ app = dash.Dash(
 )
 
 data.setup_cache()
-data.setup_feedback_storage()
+setup_feedback_storage()
 app.layout = app_layout
 register_callbacks(app)
 

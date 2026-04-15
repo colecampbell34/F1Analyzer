@@ -1,8 +1,10 @@
 import pandas as pd
 import numpy as np
 import os
+import json
 import time
 import hashlib
+import threading
 from datetime import datetime, timezone
 from collections import defaultdict
 from dotenv import load_dotenv
@@ -15,6 +17,9 @@ AI_ENABLED = bool(GEMINI_API_KEY)
 
 # --- Model Configuration ---
 GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
+
+# --- Thread lock for all rate-limiting state ---
+_RATE_LIMIT_LOCK = threading.Lock()
 
 # --- Rate Limiting (per IP) ---
 _AI_RATE_LIMIT = defaultdict(list)  # IP → list of timestamps
@@ -30,27 +35,61 @@ _daily_request_count = 0
 _daily_reset_date = None
 DAILY_REQUEST_LIMIT = 400  # Hard cap (API limit is 500 rpd for flash-lite)
 
-# --- Response Cache (exact normalized match) ---
+# --- Response Cache (disk-backed for persistence across restarts) ---
+_AI_CACHE_DIR = 'ai_cache'
+_AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
+_AI_CACHE_LOCK = threading.Lock()
 _AI_RESPONSE_CACHE = {}  # cache_key → response_text
 MAX_CACHE_SIZE = 100
+
+
+def _load_cache_from_disk():
+    """Load the AI response cache from disk on startup."""
+    global _AI_RESPONSE_CACHE
+    try:
+        if os.path.exists(_AI_CACHE_FILE):
+            with open(_AI_CACHE_FILE, 'r', encoding='utf-8') as f:
+                _AI_RESPONSE_CACHE = json.load(f)
+            # Enforce max size
+            if len(_AI_RESPONSE_CACHE) > MAX_CACHE_SIZE:
+                keys = list(_AI_RESPONSE_CACHE.keys())
+                for k in keys[:len(keys) - MAX_CACHE_SIZE]:
+                    del _AI_RESPONSE_CACHE[k]
+    except (json.JSONDecodeError, IOError):
+        _AI_RESPONSE_CACHE = {}
+
+
+def _save_cache_to_disk():
+    """Persist the AI response cache to disk."""
+    try:
+        os.makedirs(_AI_CACHE_DIR, exist_ok=True)
+        with open(_AI_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(_AI_RESPONSE_CACHE, f, ensure_ascii=False)
+    except IOError:
+        pass
+
+
+# Load cache from disk on module import
+_load_cache_from_disk()
 
 
 def check_rate_limit(ip):
     """Check if the given IP is within rate limits. Returns (allowed, wait_message)."""
     now = time.time()
 
-    # Clean entries older than 1 hour
-    _AI_RATE_LIMIT[ip] = [t for t in _AI_RATE_LIMIT[ip] if now - t < 3600]
+    with _RATE_LIMIT_LOCK:
+        # Clean entries older than 1 hour
+        _AI_RATE_LIMIT[ip] = [t for t in _AI_RATE_LIMIT[ip] if now - t < 3600]
 
-    recent_minute = sum(1 for t in _AI_RATE_LIMIT[ip] if now - t < 60)
-    recent_hour = len(_AI_RATE_LIMIT[ip])
+        recent_minute = sum(1 for t in _AI_RATE_LIMIT[ip] if now - t < 60)
+        recent_hour = len(_AI_RATE_LIMIT[ip])
 
-    if recent_minute >= MAX_REQUESTS_PER_MINUTE:
-        return False, "You've reached the limit of 2 questions per minute. Please wait a moment before asking again."
-    if recent_hour >= MAX_REQUESTS_PER_HOUR:
-        return False, "You've reached the limit of 10 questions per hour. Please take a break and come back shortly."
+        if recent_minute >= MAX_REQUESTS_PER_MINUTE:
+            return False, "You've reached the limit of 2 questions per minute. Please wait a moment before asking again."
+        if recent_hour >= MAX_REQUESTS_PER_HOUR:
+            return False, "You've reached the limit of 10 questions per hour. Please take a break and come back shortly."
 
-    _AI_RATE_LIMIT[ip].append(now)
+        _AI_RATE_LIMIT[ip].append(now)
     return True, None
 
 
@@ -59,13 +98,14 @@ def check_global_rpm():
     global _GLOBAL_REQUEST_HISTORY
     now = time.time()
 
-    # Clean entries older than 60 seconds
-    _GLOBAL_REQUEST_HISTORY = [t for t in _GLOBAL_REQUEST_HISTORY if now - t < 60]
+    with _RATE_LIMIT_LOCK:
+        # Clean entries older than 60 seconds
+        _GLOBAL_REQUEST_HISTORY = [t for t in _GLOBAL_REQUEST_HISTORY if now - t < 60]
 
-    if len(_GLOBAL_REQUEST_HISTORY) >= MAX_GLOBAL_RPM:
-        return False, "The AI assistant is currently at capacity due to high demand. Please try again in a minute."
+        if len(_GLOBAL_REQUEST_HISTORY) >= MAX_GLOBAL_RPM:
+            return False, "The AI assistant is currently at capacity due to high demand. Please try again in a minute."
 
-    _GLOBAL_REQUEST_HISTORY.append(now)
+        _GLOBAL_REQUEST_HISTORY.append(now)
     return True, None
 
 
@@ -74,45 +114,90 @@ def check_daily_budget():
     global _daily_request_count, _daily_reset_date
     today = datetime.now(timezone.utc).date()
 
-    if _daily_reset_date != today:
-        _daily_request_count = 0
-        _daily_reset_date = today
+    with _RATE_LIMIT_LOCK:
+        if _daily_reset_date != today:
+            _daily_request_count = 0
+            _daily_reset_date = today
 
-    if _daily_request_count >= DAILY_REQUEST_LIMIT:
-        return False
+        if _daily_request_count >= DAILY_REQUEST_LIMIT:
+            return False
 
-    _daily_request_count += 1
+        _daily_request_count += 1
     return True
 
 
 def _cache_key(session_context, question):
-    """Generate a cache key from session context + normalized question.
+    """Generate a cache key from full session context + normalized question.
 
-    Only matches EXACT same questions (after lowering + stripping) for the same session.
-    Similar-but-different questions will miss the cache intentionally — we don't want
-    to return a wrong answer for a different question.
+    Uses SHA-256 of the full context string to avoid collisions between
+    sessions with similar headers (e.g. same drivers at consecutive races).
     """
     q_normalized = question.lower().strip()
-    # Use first 200 chars of context to identify the session uniquely
-    ctx_prefix = session_context[:200] if session_context else ''
-    raw = ctx_prefix + '||' + q_normalized
-    return hashlib.md5(raw.encode()).hexdigest()
+    raw = (session_context or '') + '||' + q_normalized
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 def get_cached_response(session_context, question):
     """Returns cached response if an exact normalized match exists, else None."""
     key = _cache_key(session_context, question)
-    return _AI_RESPONSE_CACHE.get(key)
+    with _AI_CACHE_LOCK:
+        return _AI_RESPONSE_CACHE.get(key)
 
 
 def store_cached_response(session_context, question, response):
-    """Store a response in the cache. Evicts oldest entries if cache is full."""
-    if len(_AI_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
-        # Evict the oldest entry (first inserted key)
-        oldest_key = next(iter(_AI_RESPONSE_CACHE))
-        del _AI_RESPONSE_CACHE[oldest_key]
-    key = _cache_key(session_context, question)
-    _AI_RESPONSE_CACHE[key] = response
+    """Store a response in the cache and persist to disk. Evicts oldest entries if cache is full."""
+    with _AI_CACHE_LOCK:
+        if len(_AI_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
+            # Evict the oldest entry (first inserted key)
+            oldest_key = next(iter(_AI_RESPONSE_CACHE))
+            del _AI_RESPONSE_CACHE[oldest_key]
+        key = _cache_key(session_context, question)
+        _AI_RESPONSE_CACHE[key] = response
+        _save_cache_to_disk()
+
+
+def build_ai_prompt(session_context, question, history=None):
+    """Builds the complete prompt for the Gemini API call.
+    
+    Keeps prompt engineering logic centralized in the AI module.
+    """
+    # Build conversation context from history
+    history_text = ""
+    if history:
+        history_text = "\n\n=== PREVIOUS Q&A ===\n"
+        for h in history[-3:]:  # last 3 exchanges for context
+            history_text += f"Q: {h['question']}\nA: {h['answer'][:1500]}...\n\n"
+
+    prompt = (
+        "You are an expert Formula 1 data analyst. "
+        "Try to sound a little bit smarter than you are but dont make any wild claims. "
+        "The session data below is the AUTHORITATIVE source of truth. "
+        "Do not make any claims that are not supported by the data. "
+        "IMPORTANT: The driver-team assignments at the top of the session data are definitive — "
+        "do NOT override them with your training knowledge. "
+        "Teams and driver lineups change every season; always trust the data, not your priors.\n\n"
+        
+        "=== ANALYSIS GUIDELINES ===\n"
+        "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
+        "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
+        "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. "
+        "Use the 'Teammate Benchmarks' to distinguish between a driver's individual performance and the car's inherent pace.\n"
+        "Contextual Awareness: Consult the 'Session Narrative' to explain sudden pace changes or strategic shifts (e.g., 'the pace dropped after the incident at [00:45]'). "
+        "Use the 'Full Field Classification' to provide context on where the drivers finished relative to the winner and the rest of the field.\n"
+        "Weather: If rain is detected, explicitly account for it when analyzing sudden drops in pace or strategies (like switching to Inters/Wets).\n"
+        "State limitations plainly: If data is missing (N/A), say so. Don't speculate.\n"
+        "Handle Safety Car transits: If multiple 'pit visits' occur in consecutive laps under a Safety Car without a tire compound change, treat them as pit lane transits (incident avoidance), not strategic stops.\n"
+        "Formatting: Use bullet points for driver comparisons and bold key metrics (like lap times and Deltas) for readability. "
+        "Do not start with filler phrases like 'Based on the data...'; get straight to the analysis.\n\n"
+        
+        "Answer the user's question with detailed, data-driven analysis, reference specific numbers, and be thorough and conclusive.\n\n"
+        "=== SESSION DATA ===\n"
+        f"{session_context}\n"
+        f"{history_text}\n"
+        "=== USER QUESTION ===\n"
+        f"{question}"
+    )
+    return prompt
 
 
 

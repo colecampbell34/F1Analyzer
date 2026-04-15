@@ -15,17 +15,19 @@ from urllib.parse import parse_qs
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     load_session_summary, load_session_with_preload, preload_session,
-    store_feedback_entry, load_feedback_entries, get_best_lap
+    get_best_lap, get_shared_data, is_qualifying, is_race, is_practice
 )
+from feedback import store_feedback_entry, load_feedback_entries
 from graphs import (
     _get_driver_colors, _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
     _build_strategy_fig, _build_deg_fig, _build_race_gaps_fig,
-    _build_grid_pace_fig, _build_pit_stops_fig, _apply_base_layout
+    _build_grid_pace_fig, _build_pit_stops_fig, _apply_base_layout,
+    _error_figure, _not_applicable_figure
 )
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODEL,
     check_rate_limit, check_global_rpm, check_daily_budget,
-    get_cached_response, store_cached_response
+    get_cached_response, store_cached_response, build_ai_prompt
 )
 from ui_utils import (
     _friendly_error, _tab_label, _feedback_admin_authorized,
@@ -33,27 +35,16 @@ from ui_utils import (
     _build_feedback_review_panel, _build_leaderboard_children
 )
 
-def _get_shared_data(params):
-    """Loads session and computes shared labels/colors from stored params."""
-    session = load_session_with_preload(params['year'], params['race'], params['session_type'])
-    d1, d2 = params['driver1'], params['driver2']
 
-    try:
-        p1 = session.results.loc[session.results['Abbreviation'] == d1, 'Position'].values[0]
-        lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
-    except (IndexError, KeyError):
-        lbl1 = d1
-    try:
-        p2 = session.results.loc[session.results['Abbreviation'] == d2, 'Position'].values[0]
-        lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
-    except (IndexError, KeyError):
-        lbl2 = d2
-
-    c1, c2 = _get_driver_colors(d1, d2, session)
-    return session, d1, d2, lbl1, lbl2, c1, c2
+# Max number of AI Q&A exchanges stored in browser sessionStorage
+MAX_AI_HISTORY = 20
 
 
-
+def _trim_history(history):
+    """Enforce max history length by dropping oldest entries."""
+    if len(history) > MAX_AI_HISTORY:
+        return history[-MAX_AI_HISTORY:]
+    return history
 
 
 def register_callbacks(app):
@@ -200,7 +191,7 @@ def register_callbacks(app):
             return html.Div("Select a session to load the leaderboard.", style={'color': '#888', 'fontSize': '0.9rem'})
 
         try:
-            include_laps = any(p in session_name for p in ['Practice', 'FP', 'Shootout', 'Sprint Qualifying'])
+            include_laps = is_practice(session_name) or is_qualifying(session_name)
             session = load_session_summary(year, race, session_name, include_laps=include_laps)
             return _build_leaderboard_children(session, session_name)
 
@@ -283,7 +274,7 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update
         try:
-            session, d1, d2, lbl1, lbl2, c1, c2 = _get_shared_data(params)
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
 
             def get_lap(driver, mode, lap_num):
                 drv_laps = session.laps.pick_drivers(driver)
@@ -309,10 +300,7 @@ def register_callbacks(app):
             return _build_telemetry_fig(fast_data, slow_data)
         except Exception as e:
             print(f"Telemetry Error: {e}")
-            fig = go.Figure().update_layout(template='plotly_dark')
-            fig.add_annotation(text=f"Error: {_friendly_error(e)}", showarrow=False,
-                               font=dict(size=14, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
-            return fig
+            return _error_figure(_friendly_error(e))
 
     # =============================================
     # 8. TAB: Track Dominance (lazy)
@@ -325,7 +313,7 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-trackmap':
             return dash.no_update
         try:
-            session, d1, d2, lbl1, lbl2, c1, c2 = _get_shared_data(params)
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
             lap1 = get_best_lap(session, d1)
             lap2 = get_best_lap(session, d2)
 
@@ -338,10 +326,7 @@ def register_callbacks(app):
             return _build_dominance_fig(d1, d2, c1, c2, tel1.copy(), tel2.copy(), fast_data, slow_data)
         except Exception as e:
             print(f"Dominance Error: {e}")
-            fig = go.Figure().update_layout(template='plotly_dark')
-            fig.add_annotation(text=f"Error: {_friendly_error(e)}", showarrow=False,
-                               font=dict(size=14, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
-            return fig
+            return _error_figure(_friendly_error(e))
 
     # =============================================
     # 9. TAB: Strategy & Tyres (lazy)
@@ -354,33 +339,17 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-strategy':
             return dash.no_update, dash.no_update
         try:
-            session, d1, d2, lbl1, lbl2, c1, c2 = _get_shared_data(params)
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
             session_type = params['session_type']
 
-            is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
-            if is_quali:
-                fig_strat = go.Figure().update_layout(template='plotly_dark')
-                fig_strat.update_xaxes(visible=False).update_yaxes(visible=False)
-                fig_strat.add_annotation(text="Strategy timeline is not applicable for Qualifying sessions",
-                                         showarrow=False, font=dict(size=15, color='#888'),
-                                         xref="paper", yref="paper", x=0.5, y=0.5)
-
-                fig_deg = go.Figure().update_layout(template='plotly_dark')
-                fig_deg.update_xaxes(visible=False).update_yaxes(visible=False)
-                fig_deg.add_annotation(text="Tyre degradation is not applicable for Qualifying sessions",
-                                       showarrow=False, font=dict(size=15, color='#888'),
-                                       xref="paper", yref="paper", x=0.5, y=0.5)
-            elif any(p in session_type for p in ['Practice', 'FP']):
-                fig_strat = go.Figure().update_layout(template='plotly_dark')
-                fig_strat.add_annotation(
-                    text="Strategy view available for Race & Sprint sessions.\n"
-                         "For practice, check the Grid Pace tab for pace comparisons.",
-                    showarrow=False, font=dict(size=16, color='#888'),
-                    xref="paper", yref="paper", x=0.5, y=0.5)
-                fig_deg = go.Figure().update_layout(template='plotly_dark')
-                fig_deg.add_annotation(text="Tyre degradation not applicable for practice sessions",
-                                       showarrow=False, font=dict(size=16, color='#888'),
-                                       xref="paper", yref="paper", x=0.5, y=0.5)
+            if is_qualifying(session_type):
+                fig_strat = _not_applicable_figure("Strategy timeline is not applicable for Qualifying sessions")
+                fig_deg = _not_applicable_figure("Tyre degradation is not applicable for Qualifying sessions")
+            elif is_practice(session_type):
+                fig_strat = _not_applicable_figure(
+                    "Strategy view available for Race & Sprint sessions.\n"
+                    "For practice, check the Grid Pace tab for pace comparisons.")
+                fig_deg = _not_applicable_figure("Tyre degradation not applicable for practice sessions")
             else:
                 fig_strat = _build_strategy_fig(session, d1, d2, lbl1, lbl2, c1, c2)
                 fig_deg = _build_deg_fig(session, d1, d2, lbl1, lbl2, c1, c2)
@@ -388,9 +357,7 @@ def register_callbacks(app):
             return fig_strat, fig_deg
         except Exception as e:
             print(f"Strategy Error: {e}")
-            err = go.Figure().update_layout(template='plotly_dark')
-            err.add_annotation(text=f"Error: {_friendly_error(e)}", showarrow=False,
-                               font=dict(size=14, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
+            err = _error_figure(_friendly_error(e))
             return err, err
 
     # =============================================
@@ -404,27 +371,19 @@ def register_callbacks(app):
         if not params or active_tab != 'tab-race':
             return dash.no_update, dash.no_update
         try:
-            session, d1, d2, lbl1, lbl2, c1, c2 = _get_shared_data(params)
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
             session_type = params['session_type']
 
-            if session_type in ['Race', 'Sprint']:
+            if is_race(session_type):
                 fig_gaps = _build_race_gaps_fig(session, d1, d2, lbl1, lbl2, c1, c2)
                 fig_pits = _build_pit_stops_fig(session, d1, d2, lbl1, lbl2, c1, c2)
             else:
-                fig_gaps = _apply_base_layout(go.Figure())
-                fig_gaps.add_annotation(text="Race gap analysis available for Race & Sprint sessions only",
-                                        showarrow=False, font=dict(size=16, color='#888'),
-                                        xref="paper", yref="paper", x=0.5, y=0.5)
-                fig_pits = _apply_base_layout(go.Figure())
-                fig_pits.add_annotation(text="Pit stop data available for Race & Sprint sessions only",
-                                        showarrow=False, font=dict(size=16, color='#888'),
-                                        xref="paper", yref="paper", x=0.5, y=0.5)
+                fig_gaps = _not_applicable_figure("Race gap analysis available for Race & Sprint sessions only")
+                fig_pits = _not_applicable_figure("Pit stop data available for Race & Sprint sessions only")
             return fig_gaps, fig_pits
         except Exception as e:
             print(f"Race Analysis Error: {e}")
-            err = go.Figure().update_layout(template='plotly_dark')
-            err.add_annotation(text=f"Error: {_friendly_error(e)}", showarrow=False,
-                               font=dict(size=14, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
+            err = _error_figure(_friendly_error(e))
             return err, err
 
     # =============================================
@@ -442,10 +401,7 @@ def register_callbacks(app):
             return _build_grid_pace_fig(session, params['session_type'])
         except Exception as e:
             print(f"Grid Pace Error: {e}")
-            fig = go.Figure().update_layout(template='plotly_dark')
-            fig.add_annotation(text=f"Error: {_friendly_error(e)}", showarrow=False,
-                               font=dict(size=16, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
-            return fig
+            return _error_figure(_friendly_error(e))
 
 
     # =============================================
@@ -572,52 +528,74 @@ def register_callbacks(app):
 
     # =============================================
     # 14. AI ANALYSIS (rate-limited, cached, budget-tracked)
+    #     with paginated history (prev/next arrows)
     # =============================================
     @app.callback(
         [Output('ai-response-output', 'children'), Output('ai-history-store', 'data'),
-         Output('ai-question-input', 'value')],
-        [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
+         Output('ai-question-input', 'value'), Output('ai-history-index-store', 'data')],
+        [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit'),
+         Input('ai-prev-btn', 'n_clicks'), Input('ai-next-btn', 'n_clicks')],
         [State('ai-question-input', 'value'), State('session-context-store', 'data'),
-         State('ai-history-store', 'data')],
+         State('ai-history-store', 'data'), State('ai-history-index-store', 'data')],
         prevent_initial_call=False
     )
-    def ask_ai(n_clicks, n_submit, question, session_context, history):
+    def ask_ai(n_clicks, n_submit, n_prev, n_next, question, session_context, history, current_index):
         """Sends the user's question + session context to Gemini with full protection."""
         if history is None:
             history = []
+        history = _trim_history(history)
+        if current_index is None:
+            current_index = max(0, len(history) - 1)
+
+        trigger = dash.ctx.triggered_id
+
+        # --- Navigation: prev/next arrows ---
+        if trigger == 'ai-prev-btn':
+            new_index = max(0, current_index - 1)
+            return _render_history_page(history, new_index), dash.no_update, dash.no_update, new_index
+        if trigger == 'ai-next-btn':
+            new_index = min(len(history) - 1, current_index + 1) if history else 0
+            return _render_history_page(history, new_index), dash.no_update, dash.no_update, new_index
 
         # On initial load: show existing history or default message
-        if not dash.ctx.triggered_id:
+        if not trigger:
             if history:
-                return _render_history(history), dash.no_update, dash.no_update
+                idx = len(history) - 1
+                return _render_history_page(history, idx), dash.no_update, dash.no_update, idx
             if not GEMINI_API_KEY:
                 return html.P("🔒 AI Analysis is not available at this time.",
-                              style={'color': '#888'}), dash.no_update, dash.no_update
+                              style={'color': '#888'}), dash.no_update, dash.no_update, 0
             return html.P("Type a question and click 'Ask AI' or press Enter to get started.",
-                          style={'color': '#888'}), dash.no_update, dash.no_update
+                          style={'color': '#888'}), dash.no_update, dash.no_update, 0
 
         total_clicks = (n_clicks or 0) + (n_submit or 0)
         if total_clicks == 0 or not question or not question.strip():
-            return dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
         # --- Guard: API key ---
         if not GEMINI_API_KEY:
             return html.P("🔒 AI Analysis is not available at this time.",
-                          style={'color': '#888'}), dash.no_update, dash.no_update
+                          style={'color': '#888'}), dash.no_update, dash.no_update, current_index
 
         # --- Guard: Session context ---
         if not session_context:
             err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
 
         # --- Guard: Input validation ---
         question = question.strip()
         if len(question) < 10:
             err = "⚠️ Please ask a more specific question (at least 10 characters)."
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
         if len(question) > 300:
             err = "⚠️ Question is too long. Please keep it under 300 characters."
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
 
         # --- Guard: Per-IP rate limit ---
         try:
@@ -628,65 +606,36 @@ def register_callbacks(app):
         allowed, rate_msg = check_rate_limit(ip)
         if not allowed:
             err = f"⏳ **Slow down!** {rate_msg}"
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
 
         # --- Guard: Global RPM limit ---
         global_allowed, global_msg = check_global_rpm()
         if not global_allowed:
             err = f"📊 **System Capacity Reached.** {global_msg}"
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
 
         # --- Guard: Daily budget ---
         if not check_daily_budget():
             err = "📊 **Daily AI analysis limit reached.** The AI assistant has a daily usage limit to manage costs. Please try again tomorrow (resets at midnight UTC)."
-            return _render_history(history + [{'question': question, 'answer': err}]), history, ''
+            new_history = history + [{'question': question, 'answer': err}]
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), history, '', new_idx
 
         # --- Check response cache ---
         cached = get_cached_response(session_context, question)
         if cached:
             new_history = history + [{'question': question, 'answer': cached}]
-            return _render_history(new_history), new_history, ''
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), new_history, '', new_idx
 
         # --- Call Gemini ---
         try:
             client = genai.Client(api_key=GEMINI_API_KEY)
-
-            # Build conversation context from history
-            history_text = ""
-            if history:
-                history_text = "\n\n=== PREVIOUS Q&A ===\n"
-                for h in history[-3:]:  # last 3 exchanges for context
-                    history_text += f"Q: {h['question']}\nA: {h['answer'][:1500]}...\n\n"
-
-            prompt = (
-                "You are an expert Formula 1 data analyst. "
-                "Try to sound a little bit smarter than you are but dont make any wild claims. "
-                "The session data below is the AUTHORITATIVE source of truth. "
-                "Do not make any claims that are not supported by the data. "
-                "IMPORTANT: The driver-team assignments at the top of the session data are definitive — "
-                "do NOT override them with your training knowledge. "
-                "Teams and driver lineups change every season; always trust the data, not your priors.\n\n"
-                
-                "=== ANALYSIS GUIDELINES ===\n"
-                "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
-                "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
-                "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. "
-                "Use the 'Teammate Benchmarks' to distinguish between a driver's individual performance and the car's inherent pace.\n"
-                "Contextual Awareness: Consult the 'Session Narrative' to explain sudden pace changes or strategic shifts (e.g., 'the pace dropped after the incident at [00:45]'). "
-                "Use the 'Full Field Classification' to provide context on where the drivers finished relative to the winner and the rest of the field.\n"
-                "Weather: If rain is detected, explicitly account for it when analyzing sudden drops in pace or strategies (like switching to Inters/Wets).\n"
-                "State limitations plainly: If data is missing (N/A), say so. Don't speculate.\n"
-                "Handle Safety Car transits: If multiple 'pit visits' occur in consecutive laps under a Safety Car without a tire compound change, treat them as pit lane transits (incident avoidance), not strategic stops.\n"
-                "Formatting: Use bullet points for driver comparisons and bold key metrics (like lap times and Deltas) for readability. "
-                "Do not start with filler phrases like 'Based on the data...'; get straight to the analysis.\n\n"
-                
-                "Answer the user's question with detailed, data-driven analysis, reference specific numbers, and be thorough and conclusive.\n\n"
-                "=== SESSION DATA ===\n"
-                f"{session_context}\n"
-                f"{history_text}\n"
-                "=== USER QUESTION ===\n"
-                f"{question}"
-            )
+            prompt = build_ai_prompt(session_context, question, history)
 
             try:
                 response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
@@ -696,7 +645,8 @@ def register_callbacks(app):
                 store_cached_response(session_context, question, answer)
 
                 new_history = history + [{'question': question, 'answer': answer}]
-                return _render_history(new_history), new_history, ''
+                new_idx = len(new_history) - 1
+                return _render_history_page(new_history, new_idx), new_history, '', new_idx
             except Exception as e:
                 error_str = str(e)
                 if '429' in error_str:
@@ -704,23 +654,38 @@ def register_callbacks(app):
                 else:
                     err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{error_str}\n```\nPlease try again in a moment."
                 new_history = history + [{'question': question, 'answer': err}]
-                return _render_history(new_history), new_history, ''
+                new_idx = len(new_history) - 1
+                return _render_history_page(new_history, new_idx), new_history, '', new_idx
 
         except Exception as e:
             err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{str(e)}\n```"
             new_history = history + [{'question': question, 'answer': err}]
-            return _render_history(new_history), new_history, ''
+            new_idx = len(new_history) - 1
+            return _render_history_page(new_history, new_idx), new_history, '', new_idx
 
 
-def _render_history(history):
-    """Renders only the most recent AI conversation exchange."""
+def _render_history_page(history, index):
+    """Renders a single AI Q&A exchange with prev/next navigation."""
     if not history:
         return []
-    
-    # Grab only the latest exchange
-    h = history[-1]
-    
-    return html.Div([
+
+    index = max(0, min(index, len(history) - 1))
+    h = history[index]
+    total = len(history)
+
+    # Navigation bar
+    nav_bar = html.Div([
+        dbc.Button("◀", id='ai-prev-btn', color='secondary', size='sm', n_clicks=0,
+                   disabled=(index == 0),
+                   style={'padding': '2px 10px', 'fontSize': '0.85rem'}),
+        html.Span(f" {index + 1} / {total} ",
+                  style={'color': '#999', 'fontSize': '0.85rem', 'margin': '0 0.5rem'}),
+        dbc.Button("▶", id='ai-next-btn', color='secondary', size='sm', n_clicks=0,
+                   disabled=(index >= total - 1),
+                   style={'padding': '2px 10px', 'fontSize': '0.85rem'}),
+    ], style={'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'marginBottom': '1rem'})
+
+    content = html.Div([
         html.Div([
             html.Strong("Q: ", style={'color': '#ff4444'}),
             html.Span(h['question'], style={'color': '#ddd'})
@@ -728,4 +693,6 @@ def _render_history(history):
         html.Div([
             dcc.Markdown(h['answer'], style={'color': '#e0e0e0', 'lineHeight': '1.7'})
         ]),
-    ], style={'marginBottom': '1.5rem', 'paddingBottom': '1rem'})
+    ], style={'marginBottom': '1rem', 'paddingBottom': '1rem'})
+
+    return html.Div([nav_bar, content])

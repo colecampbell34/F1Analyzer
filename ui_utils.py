@@ -6,7 +6,7 @@ import fastf1
 import fastf1.plotting
 from dash import html
 import dash_bootstrap_components as dbc
-from data import get_best_lap
+from data import get_best_lap, is_practice
 
 def _friendly_error(e):
     """Translate cryptic FastF1/network errors to user-friendly messages."""
@@ -137,9 +137,9 @@ def _build_feedback_review_panel(entries):
 def _build_leaderboard_children(session, session_name):
     leaderboard_children = []
 
-    is_practice = any(p in session_name for p in ['Practice', 'FP'])
+    _is_practice = is_practice(session_name)
 
-    if is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
+    if _is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
         drivers_data = []
         all_drivers = (session.results['Abbreviation'].dropna().unique()
                        if getattr(session, 'results', None) is not None and not session.results.empty

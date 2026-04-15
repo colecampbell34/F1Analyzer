@@ -5,7 +5,7 @@ import fastf1.plotting
 import fastf1.utils
 import pandas as pd
 import numpy as np
-from data import get_pit_stop_data, get_track_status_events, get_best_lap
+from data import get_pit_stop_data, get_track_status_events, get_best_lap, get_single_driver_color
 
 
 def _downsample(df, max_points=2000):
@@ -37,6 +37,27 @@ def _apply_base_layout(fig, **kwargs):
     """Applies the base F1 analyzer layout, allowing kwargs to override specifics."""
     fig.update_layout(**BASE_LAYOUT)
     fig.update_layout(**kwargs)
+    return fig
+
+
+def _error_figure(message):
+    """Creates a standard dark-themed error annotation figure."""
+    fig = go.Figure()
+    _apply_base_layout(fig)
+    fig.add_annotation(text=f"Error: {message}", showarrow=False,
+                       font=dict(size=14, color='#ff4444'),
+                       xref="paper", yref="paper", x=0.5, y=0.5)
+    return fig
+
+
+def _not_applicable_figure(message):
+    """Creates a standard dark-themed 'N/A' placeholder figure."""
+    fig = go.Figure()
+    _apply_base_layout(fig)
+    fig.update_xaxes(visible=False).update_yaxes(visible=False)
+    fig.add_annotation(text=message, showarrow=False,
+                       font=dict(size=15, color='#888'),
+                       xref="paper", yref="paper", x=0.5, y=0.5)
     return fig
 
 
@@ -137,9 +158,17 @@ def _build_telemetry_fig(fast_data, slow_data):
 
 
 def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data):
-    """Builds the 2D Track Dominance Map colored by mini-sectors (50 sectors for high resolution)."""
+    """Builds the 2D Track Dominance Map colored by mini-sectors (50 sectors for high resolution).
+    
+    Groups consecutive sectors won by the same driver into single traces 
+    to minimize JSON payload size.
+    """
     fast_driver, _, fast_c, fast_t, _, fast_lbl = fast_data
     slow_driver, _, slow_c, slow_t, _, slow_lbl = slow_data
+
+    # Downsample telemetry before processing to reduce computation
+    tel1 = _downsample(tel1, max_points=3000)
+    tel2 = _downsample(tel2, max_points=3000)
 
     num_minisectors = 50
     total_dist = max(tel1['Distance'].max(), tel2['Distance'].max())
@@ -152,7 +181,6 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     # Use the local copied tel DataFrames which contain 'MiniSector'
     fast_tel = tel1 if fast_driver == driver1 else tel2
-    slow_tel = tel2 if fast_driver == driver1 else tel1
 
     v1_avg = tel1.groupby('MiniSector')['Speed'].mean()
     v2_avg = tel2.groupby('MiniSector')['Speed'].mean()
@@ -171,24 +199,37 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=slow_c, width=6),
                              name=f'{slow_lbl} Faster ({slow_t:.3f}s)'))
 
-    for ms in range(num_minisectors):
-        sector_data = fast_tel[fast_tel['MiniSector'] == ms]
-        if sector_data.empty:
-            continue
+    # Group consecutive sectors with the same winner into single traces
+    # to dramatically reduce the number of traces (from 50 to typically ~8-12)
+    group_start = 0
+    for ms in range(1, num_minisectors + 1):
+        # If the winner changes or we're at the last sector, emit a trace for the group
+        if ms == num_minisectors or winner_list[ms] != winner_list[group_start]:
+            group_end = ms  # exclusive
+            # Collect all sector data for this group
+            sector_data = fast_tel[
+                (fast_tel['MiniSector'] >= group_start) & (fast_tel['MiniSector'] <= group_end)
+            ]
+            if sector_data.empty:
+                group_start = ms
+                continue
 
-        next_sector = fast_tel[fast_tel['MiniSector'] == ms + 1]
-        if not next_sector.empty:
-            sector_data = pd.concat([sector_data, next_sector.iloc[[0]]])
+            winner = winner_list[group_start]
+            color = c1 if winner == driver1 else c2
 
-        winner = winner_list[ms]
-        color = c1 if winner == driver1 else c2
-        delta_km = speed_deltas.get(ms, 0)
+            # Build hover text per point showing sector info
+            hover_texts = []
+            for _, row in sector_data.iterrows():
+                sec = int(row['MiniSector'])
+                delta_km = speed_deltas.get(sec, 0)
+                hover_texts.append(f'Sector {sec+1}<br>{winner} faster by {delta_km:.1f} km/h')
 
-        fig.add_trace(go.Scatter(
-            x=sector_data['X'], y=sector_data['Y'], mode='lines',
-            line=dict(color=color, width=8), showlegend=False,
-            hovertemplate=f'Sector {ms+1}<br>{winner} faster by {delta_km:.1f} km/h<extra></extra>'
-        ))
+            fig.add_trace(go.Scatter(
+                x=sector_data['X'], y=sector_data['Y'], mode='lines',
+                line=dict(color=color, width=8), showlegend=False,
+                hovertext=hover_texts, hoverinfo='text'
+            ))
+            group_start = ms
 
     _apply_base_layout(
         fig,
@@ -271,31 +312,35 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
                                      marker=dict(color=COMPOUND_COLORS[comp], size=10), legend='legend'), row=1, col=1)
 
-    # 6. Weather & Rain Overlay
+    # 6. Weather & Rain Overlay — vectorized with merge_asof instead of O(n²) loop
     weather_data = session.weather_data
     if not weather_data.empty and not session.laps.empty:
-        track_temps, lap_nums, rain_laps = [], [], set()
-        lap_times = session.laps.dropna(subset=['Time']).groupby('LapNumber')['Time'].median()
+        try:
+            lap_times = session.laps.dropna(subset=['Time']).groupby('LapNumber')['Time'].median().reset_index()
+            lap_times.columns = ['LapNumber', 'Time']
+            lap_times = lap_times.sort_values('Time')
 
-        for lap_num, lap_time in lap_times.items():
-            idx = (weather_data['Time'] - lap_time).abs().idxmin()
-            track_temps.append(weather_data.loc[idx, 'TrackTemp'])
-            lap_nums.append(lap_num)
-            if weather_data.loc[idx, 'Rainfall']:
-                rain_laps.add(lap_num)
+            weather_sorted = weather_data.sort_values('Time')
+            merged_weather = pd.merge_asof(lap_times, weather_sorted[['Time', 'TrackTemp', 'Rainfall']],
+                                           on='Time', direction='nearest')
 
-        fig.add_trace(go.Scatter(
-            x=lap_nums, y=track_temps, mode='lines+markers', name='Track Temp (°C)',
-            line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
-        ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=merged_weather['LapNumber'], y=merged_weather['TrackTemp'],
+                mode='lines+markers', name='Track Temp (°C)',
+                line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
+            ), row=2, col=1)
 
-        for lap in rain_laps:
-            fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below", line_width=0,
-                          row='all', col='all')
-        if rain_laps:
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                                     marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
-                                     legend='legend'), row=1, col=1)
+            rain_laps = merged_weather[merged_weather['Rainfall'] == True]['LapNumber'].tolist()
+            for lap in rain_laps:
+                fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below",
+                              line_width=0, row='all', col='all')
+            if rain_laps:
+                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                                         marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
+                                         legend='legend'), row=1, col=1)
+        except Exception:
+            # Fallback: skip weather if merge fails
+            pass
 
     _apply_base_layout(
         fig,
@@ -472,6 +517,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_grid_pace_fig(session, session_type):
     """Builds a box plot of lap time distributions for all drivers."""
+    from data import is_race, is_qualifying
     fig = go.Figure()
     drivers_data = []
 
@@ -482,8 +528,8 @@ def _build_grid_pace_fig(session, session_type):
         all_drivers = session.laps['Driver'].unique().tolist()
 
     has_results = getattr(session, 'results', None) is not None and not session.results.empty
-    is_race = session_type in ['Race', 'Sprint']
-    is_quali = any(q in session_type for q in ['Qualifying', 'Shootout'])
+    _is_race = is_race(session_type)
+    _is_quali = is_qualifying(session_type)
 
     for drv in all_drivers:
         if not isinstance(drv, str) or len(drv) != 3:
@@ -491,7 +537,7 @@ def _build_grid_pace_fig(session, session_type):
         try:
             drv_laps = session.laps.pick_drivers(drv)
 
-            if is_race:
+            if _is_race:
                 laps = drv_laps.pick_wo_box().pick_track_status('1')
                 laps = laps[laps['LapNumber'] > 1]
             else:
@@ -509,13 +555,7 @@ def _build_grid_pace_fig(session, session_type):
             if lap_times.empty:
                 continue
 
-            color = '#ffffff'
-            try:
-                color = fastf1.plotting.get_driver_color(drv, session)
-                if not color.startswith('#'):
-                    color = f'#{color}'
-            except (KeyError, ValueError):
-                pass
+            color = get_single_driver_color(drv, session)
 
             best_lap = get_best_lap(session, drv)
             best_time = best_lap['LapTime'].total_seconds() if best_lap is not None and pd.notna(best_lap['LapTime']) else lap_times.min()
@@ -544,7 +584,7 @@ def _build_grid_pace_fig(session, session_type):
     if has_results:
         drivers_data.sort(key=lambda x: (x['position'], x['fastest']))
     else:
-        sort_key = 'fastest' if is_quali else 'median'
+        sort_key = 'fastest' if _is_quali else 'median'
         drivers_data.sort(key=lambda x: x[sort_key])
 
     for d in drivers_data:
@@ -555,7 +595,7 @@ def _build_grid_pace_fig(session, session_type):
             hovertemplate=f"{d['driver']}<br>Lap Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    session_label = "Racing Laps" if session_type in ['Race', 'Sprint'] else "Practice Laps" if session_type in ['Practice 1', 'Practice 2', 'Practice 3'] else "Qualifying Laps"
+    session_label = "Racing Laps" if _is_race else "Practice Laps" if is_practice_session(session_type) else "Qualifying Laps"
     _apply_base_layout(
         fig,
         title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
@@ -569,9 +609,17 @@ def _build_grid_pace_fig(session, session_type):
     return fig
 
 
+def is_practice_session(session_type):
+    """Helper for grid pace label."""
+    return any(p in session_type for p in ['Practice 1', 'Practice 2', 'Practice 3'])
+
+
 def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Builds a pit stop duration comparison chart for all drivers."""
-    fig = go.Figure()
+    """Builds a pit stop duration comparison chart for all drivers.
+    
+    Uses a single go.Bar trace with arrays for efficient JSON serialization
+    instead of one trace per pit stop.
+    """
     pit_data = []
     title = 'Pit Stop Durations (Time spent in pit lane)'
     hover_label = 'Stop Time'
@@ -595,13 +643,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             if not isinstance(drv, str) or len(drv) != 3:
                 continue
 
-            color = '#ffffff'
-            try:
-                color = fastf1.plotting.get_driver_color(drv, session)
-                if not color.startswith('#'):
-                    color = f'#{color}'
-            except (KeyError, ValueError):
-                pass
+            color = get_single_driver_color(drv, session)
 
             pit_data.append({
                 'driver': drv,
@@ -634,13 +676,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                         pit_out_time = next_lap.iloc[0]['PitOutTime']
                         duration = (pit_out_time - pit_in_time).total_seconds()
                         if 10 < duration < 120:
-                            color = '#ffffff'
-                            try:
-                                color = fastf1.plotting.get_driver_color(drv, session)
-                                if not color.startswith('#'):
-                                    color = f'#{color}'
-                            except (KeyError, ValueError):
-                                pass
+                            color = get_single_driver_color(drv, session)
 
                             pit_data.append({
                                 'driver': drv,
@@ -653,6 +689,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 continue
 
     if not pit_data:
+        fig = go.Figure()
         fig.add_annotation(text="No pit stop data available", showarrow=False,
                            font=dict(size=18), xref="paper", yref="paper", x=0.5, y=0.5)
         _apply_base_layout(fig, hovermode='closest')
@@ -661,20 +698,28 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     # Sort by duration
     pit_data.sort(key=lambda x: x['duration'])
 
-    for i, p in enumerate(pit_data):
-        border_width = 3 if p['highlight'] else 0
-        border_color = 'white' if p['highlight'] else p['color']
-        fig.add_trace(go.Bar(
-            x=[f"{p['driver']} L{p['lap']}"],
-            y=[p['duration']],
-            marker_color=p['color'],
-            marker_line_width=border_width,
-            marker_line_color=border_color,
-            text=f"{p['duration']:.1f}s",
-            textposition='auto',
-            showlegend=False,
-            hovertemplate=f"{p['driver']} - Lap {p['lap']}<br>{hover_label}: {p['duration']:.1f}s<extra></extra>"
-        ))
+    # Build single-trace arrays for efficient JSON payload
+    x_labels = [f"{p['driver']} L{p['lap']}" for p in pit_data]
+    y_values = [p['duration'] for p in pit_data]
+    colors = [p['color'] for p in pit_data]
+    border_widths = [3 if p['highlight'] else 0 for p in pit_data]
+    border_colors = ['white' if p['highlight'] else p['color'] for p in pit_data]
+    text_labels = [f"{p['duration']:.1f}s" for p in pit_data]
+    hover_texts = [f"{p['driver']} - Lap {p['lap']}<br>{hover_label}: {p['duration']:.1f}s" for p in pit_data]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=x_labels,
+        y=y_values,
+        marker_color=colors,
+        marker_line_width=border_widths,
+        marker_line_color=border_colors,
+        text=text_labels,
+        textposition='auto',
+        showlegend=False,
+        hovertext=hover_texts,
+        hoverinfo='text'
+    ))
 
     _apply_base_layout(
         fig,

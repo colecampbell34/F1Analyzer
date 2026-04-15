@@ -1,16 +1,12 @@
 import os
 import shutil
 import threading
-import json
-import uuid
-import hashlib
 import fastf1
 import fastf1.plotting
 import fastf1.req
 import pandas as pd
 import gzip
 import builtins
-from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from fastf1.ergast import Ergast
@@ -18,9 +14,6 @@ from fastf1.ergast import Ergast
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
-_FEEDBACK_LOCK = threading.Lock()
-_FEEDBACK_DIR = 'feedback'
-_FEEDBACK_FILE = os.path.join(_FEEDBACK_DIR, 'entries.jsonl')
 
 def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
     """Monkey-patched open() to compress/decompress FastF1 cache files on the fly."""
@@ -45,83 +38,28 @@ def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=N
 fastf1.req.open = _compressed_cache_open
 
 
+# --- SESSION TYPE HELPERS ---
+def is_qualifying(session_type):
+    """Check if a session type is any form of qualifying."""
+    return any(q in session_type for q in ['Qualifying', 'Shootout'])
+
+
+def is_race(session_type):
+    """Check if a session type is a race or sprint race."""
+    return session_type in ['Race', 'Sprint']
+
+
+def is_practice(session_type):
+    """Check if a session type is any form of practice."""
+    return any(p in session_type for p in ['Practice', 'FP'])
+
+
 # --- 1. SETUP F1 CACHE ---
 def setup_cache():
     cache_dir = 'f1_cache'
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
     fastf1.Cache.enable_cache(cache_dir)
-
-
-def setup_feedback_storage():
-    """Ensure the feedback inbox storage exists."""
-    os.makedirs(_FEEDBACK_DIR, exist_ok=True)
-    if not os.path.exists(_FEEDBACK_FILE):
-        with open(_FEEDBACK_FILE, 'a', encoding='utf-8'):
-            pass
-
-
-def _hash_feedback_ip(raw_ip):
-    if not raw_ip:
-        return 'anonymous'
-    return hashlib.sha256(str(raw_ip).encode('utf-8')).hexdigest()[:12]
-
-
-def store_feedback_entry(payload, raw_ip=None, user_agent=None):
-    """Append a feedback entry to the JSONL inbox and return the stored record."""
-    setup_feedback_storage()
-
-    session = payload.get('session') or {}
-    entry = {
-        'id': uuid.uuid4().hex[:12],
-        'submitted_at': datetime.now(timezone.utc).isoformat(),
-        'category': str(payload.get('category') or 'general').strip().lower(),
-        'rating': int(payload.get('rating') or 0),
-        'message': str(payload.get('message') or '').strip(),
-        'contact': str(payload.get('contact') or '').strip(),
-        'active_tab': str(payload.get('active_tab') or '').strip(),
-        'session': {
-            'year': session.get('year'),
-            'race': session.get('race'),
-            'session_type': session.get('session_type'),
-            'driver1': session.get('driver1'),
-            'driver2': session.get('driver2')
-        },
-        'context_loaded': bool(payload.get('context_loaded')),
-        'ip_hash': _hash_feedback_ip(raw_ip),
-        'user_agent': (str(user_agent).strip()[:180] if user_agent else ''),
-        'status': 'new'
-    }
-
-    with _FEEDBACK_LOCK:
-        with open(_FEEDBACK_FILE, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(entry, ensure_ascii=True) + '\n')
-
-    return entry
-
-
-def load_feedback_entries(limit=None):
-    """Return feedback entries sorted newest-first."""
-    setup_feedback_storage()
-
-    with _FEEDBACK_LOCK:
-        with open(_FEEDBACK_FILE, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-
-    entries = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-
-    entries.sort(key=lambda item: item.get('submitted_at', ''), reverse=True)
-    if limit is not None:
-        return entries[:limit]
-    return entries
 
 
 # --- 1b. EVENT SCHEDULE CACHE ---
@@ -299,15 +237,55 @@ def get_best_lap(session, driver_abbr):
             return None
 
 
+# --- 5b. SINGLE DRIVER COLOR UTILITY ---
+def get_single_driver_color(driver_abbr, session):
+    """Fetch a single driver's team color with fallback."""
+    try:
+        color = fastf1.plotting.get_driver_color(driver_abbr, session)
+        if not color.startswith('#'):
+            color = f'#{color}'
+        return color
+    except (KeyError, ValueError):
+        return '#ffffff'
+
+
+# --- 5c. SHARED DATA (session + labels + colors) ---
+def get_shared_data(params):
+    """Loads session and computes shared labels/colors from stored params."""
+    session = load_session_with_preload(params['year'], params['race'], params['session_type'])
+    d1, d2 = params['driver1'], params['driver2']
+
+    try:
+        p1 = session.results.loc[session.results['Abbreviation'] == d1, 'Position'].values[0]
+        lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
+    except (IndexError, KeyError):
+        lbl1 = d1
+    try:
+        p2 = session.results.loc[session.results['Abbreviation'] == d2, 'Position'].values[0]
+        lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
+    except (IndexError, KeyError):
+        lbl2 = d2
+
+    from graphs import _get_driver_colors
+    c1, c2 = _get_driver_colors(d1, d2, session)
+    return session, d1, d2, lbl1, lbl2, c1, c2
+
 
 @lru_cache(maxsize=10)
 def get_pit_stop_data(year, round_number):
-    """Load official Ergast pit-stop durations for a race weekend."""
-    ergast = Ergast(result_type='pandas', auto_cast=True)
-    result = ergast.get_pit_stops(season=int(year), round=int(round_number))
-    if not result.content:
+    """Load official Ergast pit-stop durations for a race weekend.
+    
+    Falls back gracefully if the Ergast API is unavailable (deprecated).
+    """
+    try:
+        ergast = Ergast(result_type='pandas', auto_cast=True)
+        result = ergast.get_pit_stops(season=int(year), round=int(round_number))
+        if not result.content:
+            return pd.DataFrame()
+        return result.content[0].copy()
+    except Exception:
+        # Ergast API may be offline (deprecated) — return empty to trigger fallback
         return pd.DataFrame()
-    return result.content[0].copy()
 
 
 # --- 6. CACHE MANAGEMENT ---
