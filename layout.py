@@ -205,7 +205,9 @@ content = html.Div([
                         dbc.Button('Ask AI', id='ai-ask-button', color='danger', n_clicks=0,
                                    style={'fontWeight': 'bold'},
                                    disabled=not AI_ENABLED)
-                    ], style={'marginBottom': '1rem'}),
+                    ], style={'marginBottom': '0.5rem'}),
+                    html.Div("AI can make mistakes. Check important info.",
+                             style={'fontSize': '0.75rem', 'color': '#888', 'textAlign': 'center', 'marginBottom': '0.75rem'}),
                 ], style={'padding': '0.5rem 0'}),
                 dcc.Loading(
                     type='default', color='#ff0000',

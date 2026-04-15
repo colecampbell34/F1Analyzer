@@ -14,25 +14,20 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 AI_ENABLED = bool(GEMINI_API_KEY)
 
 # --- Model Configuration ---
-GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
-GEMINI_BACKUP_MODEL = 'gemini-3-flash-preview'
+GEMINI_MODELS = [
+    'gemini-3-flash-preview',
+    'gemini-3.1-flash-lite-preview',
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash'
+]
 
 # --- Thread lock for all rate-limiting state ---
 _RATE_LIMIT_LOCK = threading.Lock()
 
-# --- Rate Limiting (per IP) ---
-_AI_RATE_LIMIT = defaultdict(list)  # IP → list of timestamps
-MAX_REQUESTS_PER_MINUTE = 2
-MAX_REQUESTS_PER_HOUR = 10
-
-# --- Rate Limiting (Global RPM) ---
-_GLOBAL_REQUEST_HISTORY = []  # List of timestamps for all requests
-MAX_GLOBAL_RPM = 14  # Buffer: API limit is 15
-
-# --- Daily Budget (global, across all users) ---
-_daily_request_count = 0
+# --- Rate Limiting (User-Specific Daily Limit) ---
+_USER_DAILY_USAGE = defaultdict(int)  # IP → count
+USER_DAILY_LIMIT = 10
 _daily_reset_date = None
-DAILY_REQUEST_LIMIT = 400  # Hard cap (API limit is 500 rpd for flash-lite)
 
 # --- Response Cache (disk-backed for persistence across restarts) ---
 _AI_CACHE_DIR = 'ai_cache'
@@ -72,57 +67,26 @@ def _save_cache_to_disk():
 _load_cache_from_disk()
 
 
-def check_rate_limit(ip):
-    """Check if the given IP is within rate limits. Returns (allowed, wait_message)."""
-    now = time.time()
-
-    with _RATE_LIMIT_LOCK:
-        # Clean entries older than 1 hour
-        _AI_RATE_LIMIT[ip] = [t for t in _AI_RATE_LIMIT[ip] if now - t < 3600]
-
-        recent_minute = sum(1 for t in _AI_RATE_LIMIT[ip] if now - t < 60)
-        recent_hour = len(_AI_RATE_LIMIT[ip])
-
-        if recent_minute >= MAX_REQUESTS_PER_MINUTE:
-            return False, "You've reached the limit of 2 questions per minute. Please wait a moment before asking again."
-        if recent_hour >= MAX_REQUESTS_PER_HOUR:
-            return False, "You've reached the limit of 10 questions per hour. Please take a break and come back shortly."
-
-        _AI_RATE_LIMIT[ip].append(now)
-    return True, None
-
-
-def check_global_rpm():
-    """Check if the global request count is within the 15 RPM limit. Returns (allowed, wait_message)."""
-    global _GLOBAL_REQUEST_HISTORY
-    now = time.time()
-
-    with _RATE_LIMIT_LOCK:
-        # Clean entries older than 60 seconds
-        _GLOBAL_REQUEST_HISTORY = [t for t in _GLOBAL_REQUEST_HISTORY if now - t < 60]
-
-        if len(_GLOBAL_REQUEST_HISTORY) >= MAX_GLOBAL_RPM:
-            return False, "The AI assistant is currently at capacity due to high demand. Please try again in a minute."
-
-        _GLOBAL_REQUEST_HISTORY.append(now)
-    return True, None
-
-
-def check_daily_budget():
-    """Check if the global daily request budget allows another call. Returns True if allowed."""
-    global _daily_request_count, _daily_reset_date
+def check_user_limit(ip):
+    """Checks and increments the daily request count for a specific IP.
+    
+    Returns (allowed, current_count).
+    """
+    global _daily_reset_date
     today = datetime.now(timezone.utc).date()
 
     with _RATE_LIMIT_LOCK:
+        # Reset all users' daily counts at midnight UTC
         if _daily_reset_date != today:
-            _daily_request_count = 0
+            _USER_DAILY_USAGE.clear()
             _daily_reset_date = today
 
-        if _daily_request_count >= DAILY_REQUEST_LIMIT:
-            return False
+        current_usage = _USER_DAILY_USAGE[ip]
+        if current_usage >= USER_DAILY_LIMIT:
+            return False, current_usage
 
-        _daily_request_count += 1
-    return True
+        _USER_DAILY_USAGE[ip] += 1
+        return True, _USER_DAILY_USAGE[ip]
 
 
 def _cache_key(session_context, question):
@@ -235,6 +199,27 @@ def _get_field_summary(session):
             lines.append("Full classification data unavailable.")
     except Exception:
         lines.append("Error fetching full classification.")
+    return "\n".join(lines)
+
+
+def _get_starting_grid(session):
+    """Extracts official starting grid positions for all drivers."""
+    import pandas as pd
+    lines = ["=== OFFICIAL STARTING GRID ==="]
+    try:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            # Sort by GridPosition (handles cases where they started from pits etc)
+            res = session.results.sort_values('GridPosition')
+            for _, row in res.iterrows():
+                grid_pos = row.get('GridPosition')
+                if pd.isna(grid_pos) or grid_pos <= 0:
+                    continue
+                abbr = row.get('Abbreviation', '')
+                lines.append(f"P{int(grid_pos)}: {abbr}")
+        else:
+            lines.append("Starting grid data unavailable.")
+    except Exception:
+        lines.append("Error fetching starting grid.")
     return "\n".join(lines)
 
 
@@ -356,6 +341,10 @@ def _gather_session_context(session, session_type, driver1, driver2):
 
     # Full Field Classification
     lines.append(_get_field_summary(session))
+    lines.append("")
+    
+    # Starting Grid
+    lines.append(_get_starting_grid(session))
     lines.append("")
 
     # Session Narrative
