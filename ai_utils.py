@@ -15,6 +15,7 @@ AI_ENABLED = bool(GEMINI_API_KEY)
 
 # --- Model Configuration ---
 GEMINI_MODEL = 'gemini-3.1-flash-lite-preview'
+GEMINI_BACKUP_MODEL = 'gemini-3-flash-preview'
 
 # --- Thread lock for all rate-limiting state ---
 _RATE_LIMIT_LOCK = threading.Lock()

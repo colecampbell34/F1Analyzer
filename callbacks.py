@@ -21,7 +21,7 @@ from graphs import (
     _error_figure, _not_applicable_figure
 )
 from ai_utils import (
-    _gather_session_context, GEMINI_API_KEY, GEMINI_MODEL,
+    _gather_session_context, GEMINI_API_KEY, GEMINI_MODEL, GEMINI_BACKUP_MODEL,
     check_rate_limit, check_global_rpm, check_daily_budget,
     get_cached_response, store_cached_response, build_ai_prompt
 )
@@ -642,7 +642,9 @@ def register_callbacks(app):
                 client = genai.Client(api_key=GEMINI_API_KEY)
                 prompt = build_ai_prompt(session_context, question, history)
                 
-                response = client.models.generate_content(model=GEMINI_MODEL, contents=prompt)
+                # Use backup model on the last retry attempt
+                model_to_use = GEMINI_MODEL if i < attempts - 1 else GEMINI_BACKUP_MODEL
+                response = client.models.generate_content(model=model_to_use, contents=prompt)
                 answer = response.text
 
                 # Cache the response for future identical questions
@@ -663,7 +665,7 @@ def register_callbacks(app):
                 if '429' in last_error:
                     err = "⏳ **AI service is busy right now.** Please wait about 60 seconds and try again."
                 elif '503' in last_error or 'UNAVAILABLE' in last_error.upper():
-                    err = "📊 **The AI service is currently at capacity.** After 3 automatic retries, the server is still unavailable. Please try again in a few minutes."
+                    err = f"📊 **The AI service is currently at capacity.** After retrying with {GEMINI_MODEL} and {GEMINI_BACKUP_MODEL}, the server is still unavailable. Please try again later."
                 else:
                     err = f"❌ **AI Analysis encountered an error.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
                 
