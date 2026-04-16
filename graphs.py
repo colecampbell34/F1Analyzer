@@ -95,7 +95,6 @@ def _build_telemetry_fig(fast_data, slow_data):
     import fastf1.utils
     delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(fast_lap, slow_lap)
 
-    # Downsample for faster transfer over Replit bandwidth
     fast_tel = _downsample(fast_tel)
     slow_tel = _downsample(slow_tel)
 
@@ -115,27 +114,27 @@ def _build_telemetry_fig(fast_data, slow_data):
                        xanchor="left")
 
     # Row 2: Speed
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_driver} Speed',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_lbl} Speed',
                              line=dict(color=fast_c)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Speed'], mode='lines', name=f'{slow_driver} Speed',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Speed'], mode='lines', name=f'{slow_lbl} Speed',
                              line=dict(color=slow_c)), row=2, col=1)
 
     # Row 3: Throttle and Brake
     fig.add_trace(
-        go.Scatter(x=fast_tel['Distance'], y=fast_tel['Throttle'], mode='lines', name=f'{fast_driver} Throttle',
+        go.Scatter(x=fast_tel['Distance'], y=fast_tel['Throttle'], mode='lines', name=f'{fast_lbl} Throttle',
                    line=dict(color=fast_c, dash='solid')), row=3, col=1, secondary_y=False)
     fig.add_trace(
-        go.Scatter(x=slow_tel['Distance'], y=slow_tel['Throttle'], mode='lines', name=f'{slow_driver} Throttle',
+        go.Scatter(x=slow_tel['Distance'], y=slow_tel['Throttle'], mode='lines', name=f'{slow_lbl} Throttle',
                    line=dict(color=slow_c, dash='solid')), row=3, col=1, secondary_y=False)
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Brake'], mode='lines', name=f'{fast_driver} Brake',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Brake'], mode='lines', name=f'{fast_lbl} Brake',
                              line=dict(color=fast_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Brake'], mode='lines', name=f'{slow_driver} Brake',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Brake'], mode='lines', name=f'{slow_lbl} Brake',
                              line=dict(color=slow_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
 
     # Row 4: Gear
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['nGear'], mode='lines', name=f'{fast_driver} Gear',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['nGear'], mode='lines', name=f'{fast_lbl} Gear',
                              line=dict(color=fast_c)), row=4, col=1)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_driver} Gear',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_lbl} Gear',
                              line=dict(color=slow_c)), row=4, col=1)
 
     _apply_base_layout(
@@ -149,8 +148,7 @@ def _build_telemetry_fig(fast_data, slow_data):
     fig.update_yaxes(title_text="Delta (s)", row=1, col=1)
     fig.update_yaxes(title_text="Speed (km/h)", row=2, col=1)
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False,
-                     categoryorder='array', categoryarray=[False, True])
+    fig.update_yaxes(title_text="Brake (%)", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
     fig.update_xaxes(title_text="Distance along track (meters)", row=4, col=1)
 
@@ -158,16 +156,11 @@ def _build_telemetry_fig(fast_data, slow_data):
 
 
 def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data):
-    """Builds the 2D Track Dominance Map colored by mini-sectors (50 sectors for high resolution).
-    
-    Groups consecutive sectors won by the same driver into single traces 
-    to minimize JSON payload size.
-    """
+    """Builds the 2D Track Dominance Map colored by mini-sectors."""
     import plotly.graph_objects as go
     fast_driver, _, fast_c, fast_t, _, fast_lbl = fast_data
     slow_driver, _, slow_c, slow_t, _, slow_lbl = slow_data
 
-    # Downsample telemetry before processing to reduce computation
     tel1 = _downsample(tel1, max_points=3000)
     tel2 = _downsample(tel2, max_points=3000)
 
@@ -180,14 +173,12 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     tel1['MiniSector'] = (tel1['Distance'] // sector_length).astype(int).clip(upper=num_minisectors)
     tel2['MiniSector'] = (tel2['Distance'] // sector_length).astype(int).clip(upper=num_minisectors)
 
-    # Use the local copied tel DataFrames which contain 'MiniSector'
     fast_tel = tel1 if fast_driver == driver1 else tel2
 
     v1_avg = tel1.groupby('MiniSector')['Speed'].mean()
     v2_avg = tel2.groupby('MiniSector')['Speed'].mean()
     winner_list = [driver1 if v1_avg.get(i, 0) > v2_avg.get(i, 0) else driver2 for i in range(num_minisectors + 1)]
 
-    # Compute speed deltas per sector for hover tooltips
     speed_deltas = {}
     for i in range(num_minisectors + 1):
         s1 = v1_avg.get(i, 0)
@@ -204,10 +195,8 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     # to dramatically reduce the number of traces (from 50 to typically ~8-12)
     group_start = 0
     for ms in range(1, num_minisectors + 1):
-        # If the winner changes or we're at the last sector, emit a trace for the group
         if ms == num_minisectors or winner_list[ms] != winner_list[group_start]:
-            group_end = ms  # exclusive
-            # Collect all sector data for this group
+            group_end = ms
             sector_data = fast_tel[
                 (fast_tel['MiniSector'] >= group_start) & (fast_tel['MiniSector'] <= group_end)
             ]
@@ -218,7 +207,6 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
             winner = winner_list[group_start]
             color = c1 if winner == driver1 else c2
 
-            # Build hover text per point showing sector info
             hover_texts = []
             for _, row in sector_data.iterrows():
                 sec = int(row['MiniSector'])
@@ -234,7 +222,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     _apply_base_layout(
         fig,
-        title="High-Resolution Track Dominance Map (50 Sectors)",
+        title="Track Dominance Map (50 Sectors)",
         hovermode="closest",
         xaxis=dict(visible=False, scaleanchor="y", scaleratio=1), yaxis=dict(visible=False),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -248,13 +236,15 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     import pandas as pd
+
     # 1. Fetch unfiltered laps
     unf_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
     unf_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
 
-    # 2. Apply Filters (Racing laps only)
-    all_laps1 = unf_1.pick_wo_box().pick_track_status('1').loc[unf_1['LapNumber'] > 1].reset_index(drop=True)
-    all_laps2 = unf_2.pick_wo_box().pick_track_status('1').loc[unf_2['LapNumber'] > 1].reset_index(drop=True)
+    clean_1 = unf_1.pick_wo_box().pick_track_status('1')
+    clean_2 = unf_2.pick_wo_box().pick_track_status('1')
+    all_laps1 = clean_1[clean_1['LapNumber'] > 1].reset_index(drop=True)
+    all_laps2 = clean_2[clean_2['LapNumber'] > 1].reset_index(drop=True)
 
     # 3. Calculate seconds, fallback for red flags (NaT)
     for laps_df in [all_laps1, all_laps2]:
@@ -273,8 +263,6 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     for lap_data, drv, lbl, col, unf in [(all_laps1, driver1, lbl1, c1, unf_1),
                                           (all_laps2, driver2, lbl2, c2, unf_2)]:
         if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
-            max_stint = lap_data['Stint'].max()
-
             for stint in lap_data['Stint'].dropna().unique():
                 stint_subset = lap_data[lap_data['Stint'] == stint].sort_values(by='LapNumber')
                 if stint_subset.empty:
@@ -285,26 +273,28 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
                 fig.add_trace(go.Scatter(
                     x=stint_subset['LapNumber'], y=stint_subset['LapTime_Sec'],
-                    mode='lines+markers', name=f'{drv} {comp}',
+                    mode='lines+markers', name=f'{lbl} {comp}',
                     line=dict(color=col, width=2),
                     marker=dict(color=COMPOUND_COLORS.get(comp, 'grey'), size=10, symbol='circle', line=dict(width=0)),
                     showlegend=False
                 ), row=1, col=1)
 
-                if stint < max_stint:
-                    last_lap = stint_subset['LapNumber'].max()
-                    fig.add_vline(x=last_lap, line_width=1.5, line_dash="dot", line_color=col, opacity=0.6,
-                                  row='all', col='all')
+        pit_laps = unf[unf['PitInTime'].notna()]['LapNumber'].tolist()
+        for pl in pit_laps:
+            fig.add_vline(x=pl, line_width=1.5, line_dash="dot", line_color=col, opacity=0.6,
+                          row='all', col='all')
 
-    # 5. Overlay SC/VSC/Red Flag lines
+    # 5. Overlay SC/VSC/Red Flag areas
     sc_laps, vsc_laps, red_laps = get_track_status_events(session)
 
     lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
     for laps, color, name in lines:
         for lap in laps:
-            fig.add_vline(x=lap, line_width=2, line_dash="dash", line_color=color, opacity=0.5, row='all', col='all')
+            fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor=color, opacity=0.15,
+                          layer="below", line_width=0, row='all', col='all')
         if laps:
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=color, dash='dash', width=2),
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                                     marker=dict(color=color, symbol='square', size=12, opacity=0.5),
                                      name=name, legend='legend'), row=1, col=1)
 
     # General Legend additions
@@ -316,7 +306,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
                                      marker=dict(color=COMPOUND_COLORS[comp], size=10), legend='legend'), row=1, col=1)
 
-    # 6. Weather & Rain Overlay — vectorized with merge_asof instead of O(n²) loop
+    # 6. Weather & Rain Overlay
     weather_data = session.weather_data
     if not weather_data.empty and not session.laps.empty:
         try:
@@ -343,7 +333,6 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                                          marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
                                          legend='legend'), row=1, col=1)
         except Exception:
-            # Fallback: skip weather if merge fails
             pass
 
     _apply_base_layout(
@@ -359,17 +348,12 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     return fig
 
 
-# ===========================
-# NEW CHART FUNCTIONS
-# ===========================
-
 def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Fuel-corrected tyre degradation analysis per stint, side-by-side."""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots  # required: was missing, caused NameError
-    import pandas as pd
+    from plotly.subplots import make_subplots
     import numpy as np
-    FUEL_CORRECTION = 0.06  # approx seconds saved per lap from fuel burn
+    FUEL_CORRECTION = 0.06
 
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(lbl1, lbl2),
                         horizontal_spacing=0.05)
@@ -377,8 +361,8 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     for col_idx, (drv, lbl, color) in enumerate([(driver1, lbl1, c1), (driver2, lbl2, c2)], 1):
         try:
             all_laps = session.laps.pick_drivers(drv).reset_index(drop=True)
-            racing_laps = all_laps.pick_wo_box().pick_track_status('1')
-            racing_laps = racing_laps[racing_laps['LapNumber'] > 1].reset_index(drop=True)
+            clean_laps = all_laps.pick_wo_box().pick_track_status('1')
+            racing_laps = clean_laps[clean_laps['LapNumber'] > 1].reset_index(drop=True)
             racing_laps['LapTime_Sec'] = racing_laps['LapTime'].dt.total_seconds()
             racing_laps = racing_laps.dropna(subset=['LapTime_Sec'])
 
@@ -393,32 +377,31 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 comp = stint_data['Compound'].iloc[0] if 'Compound' in stint_data.columns else 'Unknown'
                 stint_data['StintLap'] = range(1, len(stint_data) + 1)
 
-                # Fuel correction: add time back to account for lighter car
                 stint_data['CorrectedTime'] = stint_data['LapTime_Sec'] + FUEL_CORRECTION * stint_data['StintLap']
-
                 marker_color = COMPOUND_COLORS.get(comp, 'grey')
 
                 fig.add_trace(go.Scatter(
                     x=stint_data['StintLap'], y=stint_data['CorrectedTime'],
-                    mode='lines+markers', name=f'{drv} {comp} (Stint {int(stint)})',
+                    mode='lines+markers', name=f'{lbl} {comp} (Stint {int(stint)})',
                     marker=dict(color=marker_color, size=7),
                     line=dict(color=marker_color, width=1.5),
                     showlegend=True,
-                    hovertemplate=f'{drv} Stint {int(stint)} ({comp})<br>'
-                                 f'Stint Lap %{{x}}<br>Corrected: %{{y:.3f}}s<extra></extra>'
+                    hovertemplate=f'{lbl} Stint {int(stint)} ({comp})<br>'
+                                  f'Stint Lap %{{x}}<br>Corrected: %{{y:.3f}}s<extra></extra>'
                 ), row=1, col=col_idx)
 
-                # Add regression line for deg rate
-                if len(stint_data) >= 3:
+                fit_data = stint_data.dropna(subset=['StintLap', 'CorrectedTime'])
+                if len(fit_data) >= 3:
                     slope, intercept = np.polyfit(
-                        stint_data['StintLap'].values.astype(float),
-                        stint_data['CorrectedTime'].values, 1)
-                    x_fit = [stint_data['StintLap'].min(), stint_data['StintLap'].max()]
+                        fit_data['StintLap'].values.astype(float),
+                        fit_data['CorrectedTime'].values, 1)
+
+                    x_fit = [fit_data['StintLap'].min(), fit_data['StintLap'].max()]
                     y_fit = [slope * x + intercept for x in x_fit]
                     fig.add_trace(go.Scatter(
                         x=x_fit, y=y_fit, mode='lines',
                         line=dict(dash='dash', color=marker_color, width=2),
-                        name=f'{drv} {comp} [{slope:+.3f}s/lap]',
+                        name=f'{lbl} {comp} [{slope:+.3f}s/lap]',
                         showlegend=True
                     ), row=1, col=col_idx)
         except Exception:
@@ -440,7 +423,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the gap-between-drivers chart over race laps."""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots  # required: was missing, caused NameError
+    from plotly.subplots import make_subplots
     import pandas as pd
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         row_heights=[0.7, 0.3],
@@ -459,10 +442,8 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         if merged.empty:
             raise ValueError("No common laps between drivers")
 
-        # Gap: negative = driver1 ahead, positive = driver2 ahead
         merged['Gap'] = (merged['Time1'] - merged['Time2']).dt.total_seconds()
 
-        # Color the gap fill
         fig.add_trace(go.Scatter(
             x=merged['LapNumber'], y=merged['Gap'], mode='lines',
             fill='tozeroy', line=dict(color='white', width=2),
@@ -471,10 +452,8 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             hovertemplate='Lap %{x}<br>Gap: %{y:.3f}s<extra></extra>'
         ), row=1, col=1)
 
-        # Zero line
         fig.add_hline(y=0, line_dash="dash", line_color="grey", opacity=0.5, row=1, col=1)
 
-        # Annotations for who's ahead
         fig.add_annotation(xref="paper", yref="y domain", x=1.02, y=0.95,
                            text=f"↑ {driver2} ahead", showarrow=False, font=dict(size=11, color=c2),
                            xanchor="left", row=1, col=1)
@@ -482,7 +461,6 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                            text=f"↓ {driver1} ahead", showarrow=False, font=dict(size=11, color=c1),
                            xanchor="left", row=1, col=1)
 
-        # Get grid positions for Lap 0
         grid1, grid2 = None, None
         if getattr(session, 'results', None) is not None and not session.results.empty:
             res1 = session.results[session.results['Abbreviation'] == driver1]
@@ -490,7 +468,6 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             res2 = session.results[session.results['Abbreviation'] == driver2]
             if not res2.empty: grid2 = res2.iloc[0].get('GridPosition')
 
-        # Position traces (Row 2)
         if 'Pos1' in merged.columns:
             x_vals = merged['LapNumber'].tolist()
             y_vals = merged['Pos1'].astype(float).tolist()
@@ -515,14 +492,12 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 name=f'{lbl2} Pos', line=dict(color=c2, width=2)
             ), row=2, col=1)
 
-        # Pit stop markers (consistent with in-lap display)
         for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
-            pit_laps = (laps_df[laps_df['PitInTime'].notna()]['LapNumber'] - 1).tolist()
+            pit_laps = laps_df[laps_df['PitInTime'].notna()]['LapNumber'].tolist()
             for pl in pit_laps:
                 fig.add_vline(x=pl, line_width=1.5, line_dash="dot", line_color=color, opacity=0.6,
                               row='all', col='all')
 
-        # SC/VSC/Red shading
         sc_laps, vsc_laps, red_laps = get_track_status_events(session)
         for laps_set, color, name in [(sc_laps, 'orange', 'SC'), (vsc_laps, 'yellow', 'VSC'),
                                        (red_laps, 'red', 'Red Flag')]:
@@ -572,14 +547,12 @@ def _build_grid_pace_fig(session, session_type):
             drv_laps = session.laps.pick_drivers(drv)
 
             if _is_race:
-                laps = drv_laps.pick_wo_box().pick_track_status('1')
-                laps = laps[laps['LapNumber'] > 1]
+                clean_laps = drv_laps.pick_wo_box().pick_track_status('1')
+                laps = clean_laps[clean_laps['LapNumber'] > 1]
             else:
-                # Remove in/out laps and ensure we only have flying laps
                 laps = drv_laps.pick_wo_box()
                 if not laps.empty and 'IsAccurate' in laps.columns:
                     laps = laps[laps['IsAccurate']]
-                # Remove outliers (laps slower than 107% of the fastest lap)
                 if not laps.empty:
                     fastest_lap_time = laps['LapTime'].dt.total_seconds().min()
                     if pd.notna(fastest_lap_time):
@@ -592,9 +565,9 @@ def _build_grid_pace_fig(session, session_type):
             color = get_single_driver_color(drv, session)
 
             best_lap = get_best_lap(session, drv)
-            best_time = best_lap['LapTime'].total_seconds() if best_lap is not None and pd.notna(best_lap['LapTime']) else lap_times.min()
+            best_time = best_lap['LapTime'].total_seconds() if best_lap is not None and pd.notna(
+                best_lap['LapTime']) else lap_times.min()
 
-            # Get official position
             pos = 999
             if has_results:
                 res_row = session.results[session.results['Abbreviation'] == drv]
@@ -614,7 +587,6 @@ def _build_grid_pace_fig(session, session_type):
         except Exception:
             continue
 
-    # Sort: Priority 1 = Leaderboard Position, Priority 2 = Performance
     if has_results:
         drivers_data.sort(key=lambda x: (x['position'], x['fastest']))
     else:
@@ -629,7 +601,8 @@ def _build_grid_pace_fig(session, session_type):
             hovertemplate=f"{d['driver']}<br>Lap Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    session_label = "Racing Laps" if _is_race else "Practice Laps" if is_practice_session(session_type) else "Qualifying Laps"
+    session_label = "Racing Laps" if _is_race else "Practice Laps" if is_practice_session(
+        session_type) else "Qualifying Laps"
     _apply_base_layout(
         fig,
         title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
@@ -649,11 +622,7 @@ def is_practice_session(session_type):
 
 
 def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Builds a pit stop duration comparison chart for all drivers.
-    
-    Uses a single go.Bar trace with arrays for efficient JSON serialization
-    instead of one trace per pit stop.
-    """
+    """Builds a pit stop duration comparison chart for all drivers."""
     import plotly.graph_objects as go
     import pandas as pd
     pit_data = []
@@ -683,7 +652,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
             pit_data.append({
                 'driver': drv,
-                'lap': int(stop['lap']) - 1,
+                'lap': int(stop['lap']),
                 'duration': duration_seconds,
                 'color': color,
                 'highlight': drv in [driver1, driver2]
@@ -716,7 +685,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
                             pit_data.append({
                                 'driver': drv,
-                                'lap': int(pit_lap['LapNumber']) - 1,
+                                'lap': int(pit_lap['LapNumber']),
                                 'duration': duration,
                                 'color': color,
                                 'highlight': drv in [driver1, driver2]
@@ -731,10 +700,8 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         _apply_base_layout(fig, hovermode='closest')
         return fig
 
-    # Sort by duration
     pit_data.sort(key=lambda x: x['duration'])
 
-    # Build single-trace arrays for efficient JSON payload
     x_labels = [f"{p['driver']} L{p['lap']}" for p in pit_data]
     y_values = [p['duration'] for p in pit_data]
     colors = [p['color'] for p in pit_data]
