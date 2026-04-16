@@ -114,27 +114,27 @@ def _build_telemetry_fig(fast_data, slow_data):
                        xanchor="left")
 
     # Row 2: Speed
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_lbl} Speed',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_driver} Speed',
                              line=dict(color=fast_c)), row=2, col=1)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Speed'], mode='lines', name=f'{slow_lbl} Speed',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Speed'], mode='lines', name=f'{slow_driver} Speed',
                              line=dict(color=slow_c)), row=2, col=1)
 
     # Row 3: Throttle and Brake
     fig.add_trace(
-        go.Scatter(x=fast_tel['Distance'], y=fast_tel['Throttle'], mode='lines', name=f'{fast_lbl} Throttle',
+        go.Scatter(x=fast_tel['Distance'], y=fast_tel['Throttle'], mode='lines', name=f'{fast_driver} Throttle',
                    line=dict(color=fast_c, dash='solid')), row=3, col=1, secondary_y=False)
     fig.add_trace(
-        go.Scatter(x=slow_tel['Distance'], y=slow_tel['Throttle'], mode='lines', name=f'{slow_lbl} Throttle',
+        go.Scatter(x=slow_tel['Distance'], y=slow_tel['Throttle'], mode='lines', name=f'{slow_driver} Throttle',
                    line=dict(color=slow_c, dash='solid')), row=3, col=1, secondary_y=False)
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Brake'], mode='lines', name=f'{fast_lbl} Brake',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Brake'], mode='lines', name=f'{fast_driver} Brake',
                              line=dict(color=fast_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Brake'], mode='lines', name=f'{slow_lbl} Brake',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Brake'], mode='lines', name=f'{slow_driver} Brake',
                              line=dict(color=slow_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
 
     # Row 4: Gear
-    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['nGear'], mode='lines', name=f'{fast_lbl} Gear',
+    fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['nGear'], mode='lines', name=f'{fast_driver} Gear',
                              line=dict(color=fast_c)), row=4, col=1)
-    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_lbl} Gear',
+    fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_driver} Gear',
                              line=dict(color=slow_c)), row=4, col=1)
 
     _apply_base_layout(
@@ -187,9 +187,9 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=fast_c, width=6),
-                             name=f'{fast_lbl} Faster ({fast_t:.3f}s)'))
+                             name=f'{fast_driver} Faster ({fast_t:.3f}s)'))
     fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=slow_c, width=6),
-                             name=f'{slow_lbl} Faster ({slow_t:.3f}s)'))
+                             name=f'{slow_driver} Faster ({slow_t:.3f}s)'))
 
     # Group consecutive sectors with the same winner into single traces
     # to dramatically reduce the number of traces (from 50 to typically ~8-12)
@@ -273,7 +273,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
                 fig.add_trace(go.Scatter(
                     x=stint_subset['LapNumber'], y=stint_subset['LapTime_Sec'],
-                    mode='lines+markers', name=f'{lbl} {comp}',
+                    mode='lines+markers', name=f'{drv} {comp}',
                     line=dict(color=col, width=2),
                     marker=dict(color=COMPOUND_COLORS.get(comp, 'grey'), size=10, symbol='circle', line=dict(width=0)),
                     showlegend=False
@@ -299,7 +299,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     # General Legend additions
     for drv, lbl, col in [(driver1, lbl1, c1), (driver2, lbl2, c2)]:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name=lbl,
+        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name=drv,
                                  line=dict(color=col, width=2), legend='legend'), row=1, col=1)
     for comp in comp_drawn:
         if comp in COMPOUND_COLORS:
@@ -382,11 +382,11 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
                 fig.add_trace(go.Scatter(
                     x=stint_data['StintLap'], y=stint_data['CorrectedTime'],
-                    mode='lines+markers', name=f'{lbl} {comp} (Stint {int(stint)})',
+                    mode='lines+markers', name=f'{drv} {comp} (Stint {int(stint)})',
                     marker=dict(color=marker_color, size=7),
                     line=dict(color=marker_color, width=1.5),
                     showlegend=True,
-                    hovertemplate=f'{lbl} Stint {int(stint)} ({comp})<br>'
+                    hovertemplate=f'{drv} Stint {int(stint)} ({comp})<br>'
                                   f'Stint Lap %{{x}}<br>Corrected: %{{y:.3f}}s<extra></extra>'
                 ), row=1, col=col_idx)
 
@@ -401,7 +401,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                     fig.add_trace(go.Scatter(
                         x=x_fit, y=y_fit, mode='lines',
                         line=dict(dash='dash', color=marker_color, width=2),
-                        name=f'{lbl} {comp} [{slope:+.3f}s/lap]',
+                        name=f'{drv} {comp} [{slope:+.3f}s/lap]',
                         showlegend=True
                     ), row=1, col=col_idx)
         except Exception:
