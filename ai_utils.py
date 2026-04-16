@@ -143,7 +143,8 @@ def build_ai_prompt(session_context, question, history=None):
         "=== ANALYSIS GUIDELINES ===\n"
         "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
         "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
-        "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. "
+        "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. \n"
+        "Never compare first laps to regular race laps, they are always slower. You can however compare the first laps of all drivers to each other."
         "Use the 'Teammate Benchmarks' to distinguish between a driver's individual performance and the car's inherent pace.\n"
         "Contextual Awareness: Consult the 'Session Narrative' to explain sudden pace changes or strategic shifts (e.g., 'the pace dropped after the incident at [00:45]'). "
         "Use the 'Full Field Classification' to provide context on where the drivers finished relative to the winner and the rest of the field.\n"
@@ -220,6 +221,49 @@ def _get_starting_grid(session):
             lines.append("Starting grid data unavailable.")
     except Exception:
         lines.append("Error fetching starting grid.")
+    return "\n".join(lines)
+
+
+def _get_field_tyre_strategy(session):
+    """Extracts tyre compounds and stint lengths for every driver in the race."""
+    import pandas as pd
+    lines = ["=== FIELD TYRE STRATEGY (EVERY DRIVER) ==="]
+    try:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            all_laps = session.laps
+            # Sort by finishing position for logical order
+            res = session.results.sort_values('Position')
+            for _, row in res.iterrows():
+                abbr = row.get('Abbreviation', '')
+                if not abbr: continue
+                
+                try:
+                    drv_laps = all_laps.pick_drivers(abbr).sort_values('LapNumber')
+                    if drv_laps.empty:
+                        # lines.append(f"{abbr}: No lap data") # Keep it compact
+                        continue
+                    
+                    stint_summary = []
+                    # Get unique stints in chronological order
+                    stints = sorted(drv_laps['Stint'].dropna().unique())
+                    for stint in stints:
+                        subset = drv_laps[drv_laps['Stint'] == stint]
+                        if subset.empty: continue
+                        comp = subset['Compound'].iloc[0]
+                        start = int(subset['LapNumber'].min())
+                        end = int(subset['LapNumber'].max())
+                        stint_summary.append(f"{comp} ({start}-{end})")
+                    
+                    if stint_summary:
+                        lines.append(f"{abbr}: {', '.join(stint_summary)}")
+                except Exception:
+                    continue
+        else:
+            lines.append("Tyre strategy data unavailable.")
+    except Exception:
+        lines.append("Error fetching tyre strategy.")
+    if len(lines) == 1:
+        return ""
     return "\n".join(lines)
 
 
@@ -346,6 +390,12 @@ def _gather_session_context(session, session_type, driver1, driver2):
     # Starting Grid
     lines.append(_get_starting_grid(session))
     lines.append("")
+
+    # Full Field Tyre Strategy
+    tyre_strat = _get_field_tyre_strategy(session)
+    if tyre_strat:
+        lines.append(tyre_strat)
+        lines.append("")
 
     # Session Narrative
     narrative = _get_session_narrative(session)

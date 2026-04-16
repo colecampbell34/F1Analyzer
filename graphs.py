@@ -482,15 +482,36 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                            text=f"↓ {driver1} ahead", showarrow=False, font=dict(size=11, color=c1),
                            xanchor="left", row=1, col=1)
 
+        # Get grid positions for Lap 0
+        grid1, grid2 = None, None
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            res1 = session.results[session.results['Abbreviation'] == driver1]
+            if not res1.empty: grid1 = res1.iloc[0].get('GridPosition')
+            res2 = session.results[session.results['Abbreviation'] == driver2]
+            if not res2.empty: grid2 = res2.iloc[0].get('GridPosition')
+
         # Position traces (Row 2)
         if 'Pos1' in merged.columns:
+            x_vals = merged['LapNumber'].tolist()
+            y_vals = merged['Pos1'].astype(float).tolist()
+            if grid1 is not None and grid1 > 0:
+                x_vals = [0] + x_vals
+                y_vals = [float(grid1)] + y_vals
+            
             fig.add_trace(go.Scatter(
-                x=merged['LapNumber'], y=merged['Pos1'].astype(float), mode='lines',
+                x=x_vals, y=y_vals, mode='lines',
                 name=f'{lbl1} Pos', line=dict(color=c1, width=2)
             ), row=2, col=1)
+
         if 'Pos2' in merged.columns:
+            x_vals = merged['LapNumber'].tolist()
+            y_vals = merged['Pos2'].astype(float).tolist()
+            if grid2 is not None and grid2 > 0:
+                x_vals = [0] + x_vals
+                y_vals = [float(grid2)] + y_vals
+
             fig.add_trace(go.Scatter(
-                x=merged['LapNumber'], y=merged['Pos2'].astype(float), mode='lines',
+                x=x_vals, y=y_vals, mode='lines',
                 name=f'{lbl2} Pos', line=dict(color=c2, width=2)
             ), row=2, col=1)
 
