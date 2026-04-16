@@ -148,7 +148,7 @@ def _build_telemetry_fig(fast_data, slow_data):
     fig.update_yaxes(title_text="Delta (s)", row=1, col=1)
     fig.update_yaxes(title_text="Speed (km/h)", row=2, col=1)
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
-    fig.update_yaxes(title_text="Brake (%)", row=3, col=1, secondary_y=True, showgrid=False)
+    fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
     fig.update_xaxes(title_text="Distance along track (meters)", row=4, col=1)
 
