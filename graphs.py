@@ -222,7 +222,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     _apply_base_layout(
         fig,
-        title="Track Dominance Map (50 Sectors)",
+        title="Track Dominance Map (50 Mini-Sectors) - Using the laps you selected in the Telemetry tab",
         hovermode="closest",
         xaxis=dict(visible=False, scaleanchor="y", scaleratio=1), yaxis=dict(visible=False),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),

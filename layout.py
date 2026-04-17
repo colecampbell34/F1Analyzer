@@ -218,6 +218,16 @@ content = html.Div([
                                              'lineHeight': '1.6', 'fontSize': '0.95rem',
                                              'maxHeight': '70vh', 'overflowY': 'auto'})
                 ),
+                html.Div([
+                    dbc.Button("◀", id='ai-prev-btn', color='secondary', size='sm', n_clicks=0,
+                               disabled=True, style={'padding': '2px 10px', 'fontSize': '0.85rem'}),
+                    html.Span('', id='ai-history-position',
+                              style={'color': '#999', 'fontSize': '0.85rem', 'margin': '0 0.5rem'}),
+                    dbc.Button("▶", id='ai-next-btn', color='secondary', size='sm', n_clicks=0,
+                               disabled=True, style={'padding': '2px 10px', 'fontSize': '0.85rem'}),
+                ], id='ai-history-nav',
+                   style={'display': 'none', 'alignItems': 'center', 'justifyContent': 'center',
+                          'marginTop': '0.75rem'}),
                 html.Hr(style={'borderColor': '#333'}),
                 html.Div([
                     html.Div([
@@ -230,12 +240,7 @@ content = html.Div([
                 ]),
                 dcc.Store(id='session-context-store', data=''),
                 dcc.Store(id='ai-history-store', storage_type='session', data=[]),
-                dcc.Store(id='ai-history-index-store', storage_type='session', data=0),
-                # Hidden placeholders for nav buttons (rendered dynamically in callbacks)
-                html.Div([
-                    dbc.Button(id='ai-prev-btn', style={'display': 'none'}, n_clicks=0),
-                    dbc.Button(id='ai-next-btn', style={'display': 'none'}, n_clicks=0),
-                ], style={'display': 'none'})
+                dcc.Store(id='ai-history-index-store', storage_type='session', data=0)
             ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
     ])

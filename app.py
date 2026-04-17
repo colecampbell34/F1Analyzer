@@ -18,10 +18,10 @@ Compress(app.server)
 server = app.server
 
 data.setup_cache()
+data.maybe_prune_cache()
 setup_feedback_storage()
 app.layout = app_layout
 register_callbacks(app)
 
 if __name__ == '__main__':
-    data.clear_old_cache()
     app.run(host='0.0.0.0', port=5000)

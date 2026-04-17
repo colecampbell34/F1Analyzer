@@ -8,14 +8,17 @@ from data import get_best_lap, is_practice
 def _friendly_error(e):
     """Translate cryptic FastF1/network errors to user-friendly messages."""
     msg = str(e)
+    lower_msg = msg.lower()
+    if 'data has not been loaded' in lower_msg or 'session does not exist' in lower_msg:
+        return "This session is not live in FastF1 yet. If the weekend has not started or the data feed is still syncing, try again shortly."
     if '404' in msg:
-        return "This session's data is not yet available. It may not have taken place yet, or the data hasn't been published."
-    if '503' in msg or '502' in msg or 'Connection' in msg.lower():
+        return "This session's data is not available yet. It may not have started, or FastF1 has not published it yet."
+    if '503' in msg or '502' in msg or 'Connection' in lower_msg:
         return "The F1 data server is temporarily unavailable. Please try again in a few minutes."
-    if 'Timeout' in msg or 'timeout' in msg:
+    if 'timeout' in lower_msg:
         return "The data request timed out. This can happen on the first load — please try again."
-    if 'No lap data' in msg or 'no laps' in msg.lower():
-        return "No lap data is available for this session yet."
+    if 'no lap data' in lower_msg or 'no laps' in lower_msg:
+        return "Lap data is not available for this session yet. The event may still be in progress or not published."
     if 'did not set a valid lap' in msg:
         return msg  # Already user-friendly
     return f"Something went wrong loading the data: {msg}"

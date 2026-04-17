@@ -3,12 +3,21 @@ import shutil
 import threading
 import gzip
 import builtins
+import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
+_CACHE_DIR = 'f1_cache'
+_CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
+_CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 
 def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
     """Monkey-patched open() to compress/decompress FastF1 cache files on the fly."""
@@ -52,11 +61,10 @@ def setup_cache():
     import fastf1.req
     # Inject the compressed open into FastF1's caching module
     fastf1.req.open = _compressed_cache_open
-    
-    cache_dir = 'f1_cache'
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    fastf1.Cache.enable_cache(cache_dir)
+
+    if not os.path.exists(_CACHE_DIR):
+        os.makedirs(_CACHE_DIR)
+    fastf1.Cache.enable_cache(_CACHE_DIR)
 
 
 # --- 1b. EVENT SCHEDULE CACHE ---
@@ -65,6 +73,21 @@ def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
     import fastf1
     return fastf1.get_event_schedule(year)
+
+
+@lru_cache(maxsize=64)
+def get_event_sessions_cached(year, race):
+    """LRU-cached session names for a specific event."""
+    import fastf1
+    import pandas as pd
+
+    event = fastf1.get_event(int(year), str(race))
+    sessions = []
+    for idx in range(1, 6):
+        session_name = event.get(f'Session{idx}')
+        if pd.notna(session_name) and session_name:
+            sessions.append(str(session_name))
+    return tuple(sessions)
 
 
 # --- 2. SESSION CACHE (always loads full data) ---
@@ -297,25 +320,64 @@ def get_pit_stop_data(year, round_number):
         return pd.DataFrame()
 
 
-# --- 6. CACHE MANAGEMENT ---
-def clear_old_cache(max_size_gb=1.0):
-    """Checks cache directory size and clears it if it exceeds limit."""
-    import fastf1
-    cache_path = "f1_cache"
-
-    if not os.path.exists(cache_path):
-        os.makedirs(cache_path)
-        fastf1.Cache.enable_cache(cache_path)
-        return
-
+def _cache_size_bytes(cache_path):
     total_size = 0
     for root, _, files in os.walk(cache_path):
-        for f in files:
-            fp = os.path.join(root, f)
-            total_size += os.path.getsize(fp)
+        for filename in files:
+            total_size += os.path.getsize(os.path.join(root, filename))
+    return total_size
 
-    if total_size > max_size_gb * 1024 ** 3:
-        print("***Cache limit reached! Clearing cache...")
-        shutil.rmtree(cache_path)
-        os.makedirs(cache_path)
-        fastf1.Cache.enable_cache(cache_path)
+
+def maybe_prune_cache(max_size_gb=1.0, min_interval_seconds=3600):
+    """Production-safe cache pruning with a best-effort cross-worker file lock."""
+    import fastf1
+
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    now = time.time()
+
+    if os.path.exists(_CACHE_PRUNE_STAMP):
+        try:
+            if now - os.path.getmtime(_CACHE_PRUNE_STAMP) < min_interval_seconds:
+                return
+        except OSError:
+            pass
+
+    lock_handle = None
+    try:
+        lock_handle = open(_CACHE_PRUNE_LOCKFILE, 'a+', encoding='utf-8')
+        if fcntl is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return
+
+        if os.path.exists(_CACHE_PRUNE_STAMP):
+            try:
+                if now - os.path.getmtime(_CACHE_PRUNE_STAMP) < min_interval_seconds:
+                    return
+            except OSError:
+                pass
+
+        total_size = _cache_size_bytes(_CACHE_DIR)
+        if total_size > max_size_gb * 1024 ** 3:
+            print(f"[cache] pruning FastF1 cache at {total_size / 1024 ** 3:.2f} GB")
+            shutil.rmtree(_CACHE_DIR, ignore_errors=True)
+            os.makedirs(_CACHE_DIR, exist_ok=True)
+            fastf1.Cache.enable_cache(_CACHE_DIR)
+
+        with open(_CACHE_PRUNE_STAMP, 'w', encoding='utf-8') as stamp:
+            stamp.write(str(int(now)))
+    finally:
+        if lock_handle is not None and fcntl is not None:
+            try:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        if lock_handle is not None:
+            lock_handle.close()
+
+
+# --- 6. CACHE MANAGEMENT ---
+def clear_old_cache(max_size_gb=1.0):
+    """Backward-compatible cache pruning entry point."""
+    maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)
