@@ -804,6 +804,40 @@ def register_callbacks(app):
             page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
             return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
 
+    @app.callback(
+        [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),
+         Output('d2-lap-number', 'min'), Output('d2-lap-number', 'max')],
+        Input('dashboard-params-store', 'data')
+    )
+    def update_lap_input_constraints(params):
+        if not params:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        
+        year, race, session_type = params['year'], params['race'], params['session_type']
+        
+        try:
+            import pandas as pd
+            # Load lightweight session with laps to determine bounds
+            session = load_session_summary(year, race, session_type, include_laps=True)
+            
+            # Default to whoever completed the most laps
+            max_lap = 1
+            if not session.laps.empty:
+                max_lap = int(session.laps['LapNumber'].max())
+
+            # For Races/Sprints, use official length if available (often matches or exceeds completed)
+            if is_race(session_type):
+                official_total = getattr(session, 'total_laps', None)
+                if official_total is not None and pd.notna(official_total):
+                    # Use official total but ensure it's at least as much as completed
+                    max_lap = max(max_lap, int(official_total))
+
+            if max_lap < 1: max_lap = 1
+            
+            return 1, max_lap, 1, max_lap
+        except Exception:
+            return 1, 100, 1, 100
+
 
 def _render_ai_state(history, index, empty_state=None):
     """Return the AI body plus nav UI state for the current history page."""

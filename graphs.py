@@ -629,13 +629,29 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     title = 'Pit Stop Durations (Time spent in pit lane)'
     hover_label = 'Stop Time'
 
+    session_name = getattr(session, 'name', '')
+    max_lap = 999
     try:
-        pit_stops = get_pit_stop_data(session.event.year, session.event.RoundNumber)
+        if not session.laps.empty:
+            max_lap = int(session.laps['LapNumber'].max())
+    except Exception:
+        pass
+
+    try:
+        # Only use official Ergast data for the main Race; Sprints use the robust fallback below
+        if session_name == 'Race':
+            pit_stops = get_pit_stop_data(session.event.year, session.event.RoundNumber)
+        else:
+            pit_stops = pd.DataFrame()
     except Exception:
         pit_stops = pd.DataFrame()
 
     if pit_stops is not None and not pit_stops.empty:
         for _, stop in pit_stops.iterrows():
+            lap_num = int(stop['lap'])
+            if lap_num > max_lap:
+                continue
+
             duration = stop.get('duration')
             if pd.isna(duration):
                 continue
@@ -659,7 +675,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             })
 
     if not pit_data:
-        title = 'Pit Stop Durations (Pit Lane Time Fallback)'
+        title = 'Pit Stop Durations (Time Spent in Pit Lane)'
         hover_label = 'Pit Lane Time'
 
         all_drivers = []
