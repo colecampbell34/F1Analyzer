@@ -26,7 +26,8 @@ from graphs import (
 )
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS,
-    get_cached_response, store_cached_response, build_ai_prompt
+    get_cached_response, store_cached_response, build_ai_prompt,
+    check_user_limit, USER_DAILY_LIMIT
 )
 from ui_utils import (
     _friendly_error, _feedback_admin_authorized,
@@ -752,6 +753,18 @@ def register_callbacks(app):
             return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
         if len(question) > 300:
             err = "⚠️ Question is too long. Please keep it under 300 characters."
+            new_history = _trim_history(history + [{'question': question, 'answer': err}])
+            new_idx = len(new_history) - 1
+            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
+            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+
+        # --- Guard: Rate Limiting ---
+        forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
+        raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
+        
+        allowed, current_count = check_user_limit(raw_ip)
+        if not allowed:
+            err = f"🛑 **Daily Limit Reached.** You have used your {USER_DAILY_LIMIT} AI analysis requests for today. Please come back tomorrow for more requests!"
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             new_idx = len(new_history) - 1
             page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)

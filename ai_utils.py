@@ -142,10 +142,14 @@ def build_ai_prompt(session_context, question, history=None):
         
         "=== ANALYSIS GUIDELINES ===\n"
         "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
+        "Data Usage: You have access to detailed lap-by-lap data. Use the 'Sector times' (S1, S2, S3) to identify exactly where a driver is losing or gaining time. "
+        "Use 'Tyre Life' to track degradation — higher life numbers correlate with older tyres. "
+        "Use 'LeaderGap' to understand the pace relative to the front of the field, not just the compared driver.\n"
         "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "
+        "Check the 'Pace context' in the stint summaries for top-speed and throttle data to detect engine mode changes or aero deficits. "
         "Exclude laps affected by Safety Cars, VSCs, or Red Flags from pure performance comparisons, as they artificially inflate times. \n"
         "Never compare first laps to regular race laps, they are always slower. You can however compare the first laps of all drivers to each other."
-        "Use the 'Teammate Benchmarks' to distinguish between a driver's individual performance and the car's inherent pace.\n"
+        "Use the 'Teammate Benchmarks' and 'Track Temperature Evolution' to distinguish between a driver's individual performance, the car's inherent pace, and thermal track evolution.\n"
         "Contextual Awareness: Consult the 'Session Narrative' to explain sudden pace changes or strategic shifts (e.g., 'the pace dropped after the incident at [00:45]'). "
         "Use the 'Full Field Classification' to provide context on where the drivers finished relative to the winner and the rest of the field.\n"
         "Weather: If rain is detected, explicitly account for it when analyzing sudden drops in pace or strategies (like switching to Inters/Wets).\n"
@@ -252,7 +256,12 @@ def _get_field_tyre_strategy(session):
                         comp = subset['Compound'].iloc[0]
                         start = int(subset['LapNumber'].min())
                         end = int(subset['LapNumber'].max())
-                        stint_summary.append(f"{comp} ({start}-{end})")
+                        
+                        # Added TyreLife for better degradation context
+                        life_start = int(subset['TyreLife'].min()) if 'TyreLife' in subset.columns else 1
+                        life_end = int(subset['TyreLife'].max()) if 'TyreLife' in subset.columns else (life_start + (end - start))
+                        
+                        stint_summary.append(f"{comp} ({start}-{end}, life {life_start}-{life_end})")
                     
                     if stint_summary:
                         lines.append(f"{abbr}: {', '.join(stint_summary)}")
@@ -351,6 +360,60 @@ def _get_session_narrative(session):
     return "\n".join(lines)
 
 
+def _get_stint_telemetry_summary(session, driver, stint):
+    """Returns a high-level summary of telemetry metrics for a specific driver stint."""
+    try:
+        laps = session.laps.pick_drivers(driver).pick_stint(stint).pick_wo_box().pick_track_status('1')
+        if laps.empty:
+            return "N/A"
+        
+        # We sample a few laps to get representative data without loading every byte
+        # But since we have the full session loaded in memory usually, we can just aggregate
+        tel = laps.get_telemetry()
+        if tel.empty:
+            return "N/A"
+        
+        max_spd = tel['Speed'].max()
+        avg_spd = tel['Speed'].mean()
+        full_thr = (tel['Throttle'] == 100).mean() * 100
+        avg_brk = (tel['Brake'] > 0).mean() * 100
+        
+        return f"Max Speed {max_spd:.0f}km/h, Avg Speed {avg_spd:.1f}km/h, Full Throttle {full_thr:.1f}%, Braking {avg_brk:.1f}%"
+    except Exception:
+        return "N/A"
+
+
+def _get_track_temp_evolution(session):
+    """Returns track temperature samples across the session to show thermal evolution."""
+    import pandas as pd
+    lines = ["=== TRACK TEMPERATURE EVOLUTION ==="]
+    try:
+        wd = session.weather_data
+        if wd.empty:
+            return ""
+        
+        # Sample ~10 points or every 10 minutes
+        total = len(wd)
+        if total <= 1:
+            return f"Track Temp: {wd['TrackTemp'].iloc[0]:.1f}°C (Constant)"
+        
+        step = max(1, total // 10)
+        samples = wd.iloc[::step]
+        
+        for _, row in samples.iterrows():
+            time_val = row.get('Time')
+            t_str = ""
+            if pd.notna(time_val):
+                total_secs = time_val.total_seconds()
+                mins = int(total_secs // 60)
+                t_str = f"[{mins:02d}m] "
+            lines.append(f"{t_str}{row['TrackTemp']:.1f}°C")
+            
+    except Exception:
+        return ""
+    return "\n".join(lines)
+
+
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
     import pandas as pd
@@ -401,6 +464,12 @@ def _gather_session_context(session, session_type, driver1, driver2):
     narrative = _get_session_narrative(session)
     if narrative:
         lines.append(narrative)
+        lines.append("")
+
+    # Track Temperature Evolution
+    track_evolution = _get_track_temp_evolution(session)
+    if track_evolution:
+        lines.append(track_evolution)
         lines.append("")
 
     # Fastest lap comparison
@@ -500,6 +569,9 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         comp = stint_all['Compound'].iloc[0] if 'Compound' in stint_all.columns else '?'
                         total_stint_laps = len(stint_all)
 
+                        # Stint Telemetry Summary
+                        tel_summary = _get_stint_telemetry_summary(session, drv, stint)
+
                         stint_racing = rl[rl['Stint'] == stint].sort_values('LapNumber').reset_index(drop=True)
                         if len(stint_racing) >= 3:
                             stint_racing['StintLap'] = range(1, len(stint_racing) + 1)
@@ -509,9 +581,11 @@ def _gather_session_context(session, session_type, driver1, driver2):
                                                stint_racing['CorrectedTime'].values, 1)[0]
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
                                          f"({total_stint_laps} laps), deg rate: {slope:+.3f}s/lap (fuel-corrected)")
+                            lines.append(f"      Pace context: {tel_summary}")
                         else:
                             lines.append(f"    Stint {int(stint)}: {comp} tyres, laps {lap_start}-{lap_end} "
                                          f"({total_stint_laps} laps)")
+                            lines.append(f"      Pace context: {tel_summary}")
 
                 # Position changes
                 if 'Position' in all_laps.columns and not all_laps.empty:
@@ -551,39 +625,70 @@ def _gather_session_context(session, session_type, driver1, driver2):
 
         try:
             lines.append("\n=== Detailed Head-to-Head Lap Data (Comparing Selected Drivers) ===")
-            lines.append(f"Lap, Gap ({driver1} minus {driver2}), {driver1}_Pos, {driver2}_Pos, {driver1}_LapTime, {driver2}_LapTime, {driver1}_Tyres, {driver2}_Tyres, Status")
-            lines.append(f"(Note: A negative Gap means {driver1} is AHEAD by that margin. A positive Gap means {driver2} is AHEAD. Gap < 1.5s implies dirty air trailing.)")
+            lines.append(
+                f"Lap, Gap ({driver1} to {driver2}), LeaderGap_{driver1}, LeaderGap_{driver2}, "
+                f"{driver1}_Pos, {driver2}_Pos, {driver1}_Time, {driver2}_Time, "
+                f"{driver1}_S1, {driver1}_S2, {driver1}_S3, {driver2}_S1, {driver2}_S2, {driver2}_S3, "
+                f"{driver1}_Tyres, {driver2}_Tyres, {driver1}_Life, {driver2}_Life, Status"
+            )
+            lines.append(f"(Note: Gap is {driver1} minus {driver2}. Negative means {driver1} is ahead. Gap < 1.0s implies dirty air.)")
             
             laps1 = session.laps.pick_drivers(driver1).dropna(subset=['Time']).set_index('LapNumber')
             laps2 = session.laps.pick_drivers(driver2).dropna(subset=['Time']).set_index('LapNumber')
             
+            # Leader data for context
+            leader = session.results.sort_values('Position').iloc[0]['Abbreviation'] if not session.results.empty else None
+            leader_laps = session.laps.pick_drivers(leader).dropna(subset=['Time']).set_index('LapNumber') if leader else None
+
             all_lap_nums = sorted(set(laps1.index).union(set(laps2.index)))
             
             for ln in all_lap_nums:
                 has_1 = ln in laps1.index
                 has_2 = ln in laps2.index
+                has_L = leader_laps is not None and ln in leader_laps.index
                 
                 lt1 = f"{laps1.loc[ln, 'LapTime'].total_seconds():.3f}s" if has_1 and pd.notna(laps1.loc[ln, 'LapTime']) else "N/A"
                 lt2 = f"{laps2.loc[ln, 'LapTime'].total_seconds():.3f}s" if has_2 and pd.notna(laps2.loc[ln, 'LapTime']) else "N/A"
                 
+                s1_1 = f"{laps1.loc[ln, 'Sector1Time'].total_seconds():.1f}" if has_1 and pd.notna(laps1.loc[ln, 'Sector1Time']) else "N/A"
+                s2_1 = f"{laps1.loc[ln, 'Sector2Time'].total_seconds():.1f}" if has_1 and pd.notna(laps1.loc[ln, 'Sector2Time']) else "N/A"
+                s3_1 = f"{laps1.loc[ln, 'Sector3Time'].total_seconds():.1f}" if has_1 and pd.notna(laps1.loc[ln, 'Sector3Time']) else "N/A"
+                
+                s1_2 = f"{laps2.loc[ln, 'Sector1Time'].total_seconds():.1f}" if has_2 and pd.notna(laps2.loc[ln, 'Sector1Time']) else "N/A"
+                s2_2 = f"{laps2.loc[ln, 'Sector2Time'].total_seconds():.1f}" if has_2 and pd.notna(laps2.loc[ln, 'Sector2Time']) else "N/A"
+                s3_2 = f"{laps2.loc[ln, 'Sector3Time'].total_seconds():.1f}" if has_2 and pd.notna(laps2.loc[ln, 'Sector3Time']) else "N/A"
+
                 pos1 = f"P{int(laps1.loc[ln, 'Position'])}" if has_1 and pd.notna(laps1.loc[ln, 'Position']) else "N/A"
                 pos2 = f"P{int(laps2.loc[ln, 'Position'])}" if has_2 and pd.notna(laps2.loc[ln, 'Position']) else "N/A"
                 
                 gap = "N/A"
+                gl1 = "N/A"
+                gl2 = "N/A"
+                
                 if has_1 and has_2:
                     t1 = laps1.loc[ln, 'Time']
                     t2 = laps2.loc[ln, 'Time']
                     if pd.notna(t1) and pd.notna(t2):
                         gap = f"{(t1 - t2).total_seconds():.3f}s"
                 
+                if has_L:
+                    tl = leader_laps.loc[ln, 'Time']
+                    if has_1 and pd.notna(laps1.loc[ln, 'Time']):
+                        gl1 = f"{(laps1.loc[ln, 'Time'] - tl).total_seconds():.1f}s"
+                    if has_2 and pd.notna(laps2.loc[ln, 'Time']):
+                        gl2 = f"{(laps2.loc[ln, 'Time'] - tl).total_seconds():.1f}s"
+
                 comp1 = str(laps1.loc[ln, 'Compound']) if has_1 else "N/A"
                 comp2 = str(laps2.loc[ln, 'Compound']) if has_2 else "N/A"
                 
+                life1 = int(laps1.loc[ln, 'TyreLife']) if has_1 and pd.notna(laps1.loc[ln, 'TyreLife']) else "N/A"
+                life2 = int(laps2.loc[ln, 'TyreLife']) if has_2 and pd.notna(laps2.loc[ln, 'TyreLife']) else "N/A"
+
                 stat = "1"
                 if has_1: stat = laps1.loc[ln, 'TrackStatus']
                 elif has_2: stat = laps2.loc[ln, 'TrackStatus']
                 
-                lines.append(f"{int(ln)}, {gap}, {pos1}, {pos2}, {lt1}, {lt2}, {comp1}, {comp2}, {stat}")
+                lines.append(f"{ln}, {gap}, {gl1}, {gl2}, {pos1}, {pos2}, {lt1}, {lt2}, {s1_1}, {s2_1}, {s3_1}, {s1_2}, {s2_2}, {s3_2}, {comp1}, {comp2}, {life1}, {life2}, {stat}")
         except Exception:
             pass
 
