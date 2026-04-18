@@ -5,6 +5,7 @@ from callbacks import register_callbacks
 import data
 from feedback import setup_feedback_storage
 from flask_compress import Compress
+import threading
 
 app = dash.Dash(
     __name__,
@@ -18,7 +19,7 @@ Compress(app.server)
 server = app.server
 
 data.setup_cache()
-data.maybe_prune_cache()
+threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
 setup_feedback_storage()
 app.layout = app_layout
 register_callbacks(app)

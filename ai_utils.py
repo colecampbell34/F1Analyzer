@@ -143,6 +143,7 @@ def build_ai_prompt(session_context, question, history=None):
         "=== ANALYSIS GUIDELINES ===\n"
         "Terminology: Use proper F1 terms like 'undercut', 'overcut', 'tyre delta', 'drop-off', 'cliff', and 'track evolution'.\n"
         "Data Usage: You have access to detailed lap-by-lap data. Use the 'Sector times' (S1, S2, S3) to identify exactly where a driver is losing or gaining time. "
+        "When the question is asking about specific analysis for a certain sector of the track or period in the race, only analyze the data for the applicable sections"
         "Use 'Tyre Life' to track degradation — higher life numbers correlate with older tyres. "
         "Use 'LeaderGap' to understand the pace relative to the front of the field, not just the compared driver.\n"
         "Strategy & Pace: Note that tyre degradation rates provided are already fuel-corrected (0.06s/lap factor implies positive numbers mean degradation). "

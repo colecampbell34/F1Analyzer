@@ -197,7 +197,7 @@ content = html.Div([
                 html.Div([
                     dbc.InputGroup([
                         dbc.Input(id='ai-question-input', type='text',
-                                  placeholder='Ask about this session... (e.g. "Why was NOR faster in sector 2?")',
+                                  placeholder='Ask about this session... (e.g. "What was the optimal strategy in this race?")',
                                   n_submit=0,
                                   style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444',
                                          'fontSize': '0.95rem'},
