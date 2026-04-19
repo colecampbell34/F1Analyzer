@@ -8,3 +8,5 @@ google-genai>=1.0
 python-dotenv>=1.0
 gunicorn
 Flask-Compress
+flask
+flask-compress
