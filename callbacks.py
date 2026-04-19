@@ -16,7 +16,6 @@ from data import (
     get_event_sessions_cached,
     load_session_summary, load_session_with_preload, preload_session,
     get_best_lap, get_shared_data, is_qualifying, is_race, is_practice,
-    ensure_telemetry_loaded
 )
 from feedback import store_feedback_entry, load_feedback_entries
 from graphs import (
