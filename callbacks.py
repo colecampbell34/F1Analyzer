@@ -370,7 +370,6 @@ def register_callbacks(app):
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
                 session = load_session_with_preload(year, race, session_type)
-                ensure_telemetry_loaded(session)
                 context = _gather_session_context(session, session_type, driver1, driver2)
                 return f"{context_header}\n\n{context}"
             except Exception as e:
@@ -409,7 +408,6 @@ def register_callbacks(app):
             try:
                 import pandas as pd
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
-                ensure_telemetry_loaded(session)
 
                 def get_lap(driver, mode, lap_num):
                     drv_laps = session.laps.pick_drivers(driver)
@@ -450,7 +448,6 @@ def register_callbacks(app):
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
-                ensure_telemetry_loaded(session)
                 lap1 = get_best_lap(session, d1)
                 lap2 = get_best_lap(session, d2)
 

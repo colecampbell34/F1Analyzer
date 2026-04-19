@@ -93,19 +93,10 @@ def get_event_sessions_cached(year, race):
 # --- 2. SESSION CACHE (always loads full data) ---
 @lru_cache(maxsize=3)
 def _load_session_cached(year, race, session_name):
-    """LRU-cached session loader. Loads laps, weather, and messages (fast).
-    Telemetry is NOT loaded here to improve initial responsiveness.
-    """
+    """LRU-cached session loader. Always loads full telemetry/weather/messages."""
     import fastf1
     session = fastf1.get_session(year, race, session_name)
-    session.load(laps=True, telemetry=False, weather=True, messages=True)
-    return session
-
-
-def ensure_telemetry_loaded(session):
-    """Ensures telemetry data is loaded for the session. Blocking if not cached."""
-    if session is not None:
-        session.load(telemetry=True)
+    session.load(telemetry=True, weather=True, messages=True)
     return session
 
 
