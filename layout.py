@@ -15,6 +15,12 @@ TAB_HEIGHTS = {
     'race_bot':     '33vh',
 }
 
+# --- Shared Disclaimer ---
+DISCLAIMER = html.Div([
+    html.Span("Note: F1 data can occasionally be missing or incomplete for specific stints/laps due to session recording issues.",
+              style={'fontSize': '0.75rem', 'color': '#888', 'fontStyle': 'italic'})
+], style={'textAlign': 'center', 'marginBottom': '0.5rem'})
+
 # --- Tab / style constants ---
 TAB_STYLE          = {'backgroundColor': '#222', 'color': 'white'}
 TAB_SELECTED_STYLE = {'backgroundColor': '#ff0000', 'color': 'white'}
@@ -156,6 +162,7 @@ content = html.Div([
 
     dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
         dcc.Tab(label='Telemetry', value='tab-telemetry', children=[
+            DISCLAIMER,
             telemetry_controls,
             dcc.Loading(type='circle', color='#ff0000', children=[
                 _empty_state('speed-graph', TAB_HEIGHTS['telemetry'])
@@ -163,12 +170,14 @@ content = html.Div([
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Track Map', value='tab-trackmap', children=[
+            DISCLAIMER,
             dcc.Loading(type='circle', color='#ff0000', children=[
                 _empty_state('2d-dominance-graph', TAB_HEIGHTS['single'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Strategy', value='tab-strategy', children=[
+            DISCLAIMER,
             dcc.Loading(type='circle', color='#ff0000', children=[
                 _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
             ]),
@@ -178,6 +187,7 @@ content = html.Div([
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Race', value='tab-race', children=[
+            DISCLAIMER,
             dcc.Loading(type='circle', color='#ff0000', children=[
                 _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
             ]),
@@ -187,6 +197,7 @@ content = html.Div([
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Grid Pace', value='tab-gridpace', children=[
+            DISCLAIMER,
             dcc.Loading(type='circle', color='#ff0000', children=[
                 _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
             ])
