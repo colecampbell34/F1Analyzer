@@ -73,7 +73,7 @@ def _load_session_cached(year, race, session_name):
     """LRU-cached session loader. Always loads full telemetry/weather/messages."""
     import fastf1
     session = fastf1.get_session(year, race, session_name)
-    session.load(telemetry=True, weather=True, messages=True)
+    session.load(laps=True, telemetry=True, weather=True, messages=True)
     return session
 
 
