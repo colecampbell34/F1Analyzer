@@ -19,24 +19,6 @@ _CACHE_DIR = 'f1_cache'
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
 _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 
-def _compressed_cache_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
-    """Monkey-patched open() to compress/decompress FastF1 cache files on the fly."""
-    file_str = str(file)
-    if file_str.endswith('.ff1pkl'):
-        if 'w' in mode:
-            return gzip.open(file_str, mode, compresslevel=1)
-        elif 'r' in mode:
-            try:
-                # Check for gzip magic number
-                with builtins.open(file_str, 'rb') as f:
-                    magic = f.read(2)
-                if magic == b'\x1f\x8b':
-                    return gzip.open(file_str, mode)
-                else:
-                    return builtins.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
-            except FileNotFoundError:
-                pass
-    return builtins.open(file, mode, buffering, encoding, errors, newline, closefd, opener)
 
 
 # --- SESSION TYPE HELPERS ---
@@ -58,9 +40,6 @@ def is_practice(session_type):
 # --- 1. SETUP F1 CACHE ---
 def setup_cache():
     import fastf1
-    import fastf1.req
-    # Inject the compressed open into FastF1's caching module
-    fastf1.req.open = _compressed_cache_open
 
     if not os.path.exists(_CACHE_DIR):
         os.makedirs(_CACHE_DIR)
@@ -127,12 +106,16 @@ def preload_session(year, race, session_name):
         return future
 
 
-def load_session_with_preload(year, race, session_name):
+def load_session_with_preload(year, race, session_name, telemetry=True):
     """Return a session, reusing any in-flight background preload when possible."""
-    future = preload_session(year, race, session_name)
-    if future is not None:
-        return future.result()
-    return _load_session_cached(year, race, session_name)
+    if telemetry:
+        future = preload_session(year, race, session_name)
+        if future is not None:
+            return future.result()
+        return _load_session_cached(year, race, session_name)
+    else:
+        # For non-telemetry loads, just get the summary (fast)
+        return load_session_summary(year, race, session_name, include_laps=True)
 
 
 def load_session_summary(year, race, session_name, include_laps=False):
@@ -281,21 +264,21 @@ def get_single_driver_color(driver_abbr, session):
 
 
 # --- 5c. SHARED DATA (session + labels + colors) ---
-def get_shared_data(params):
+def get_shared_data(params, telemetry=True):
     """Loads session and computes shared labels/colors from stored params."""
     import pandas as pd
-    session = load_session_with_preload(params['year'], params['race'], params['session_type'])
+    session = load_session_with_preload(params['year'], params['race'], params['session_type'], telemetry=telemetry)
     d1, d2 = params['driver1'], params['driver2']
 
     try:
         p1 = session.results.loc[session.results['Abbreviation'] == d1, 'Position'].values[0]
         lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
-    except (IndexError, KeyError):
+    except (IndexError, KeyError, AttributeError):
         lbl1 = d1
     try:
         p2 = session.results.loc[session.results['Abbreviation'] == d2, 'Position'].values[0]
         lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
-    except (IndexError, KeyError):
+    except (IndexError, KeyError, AttributeError):
         lbl2 = d2
 
     from graphs import _get_driver_colors
@@ -331,7 +314,7 @@ def _cache_size_bytes(cache_path):
     return total_size
 
 
-def maybe_prune_cache(max_size_gb=1.0, min_interval_seconds=3600):
+def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
     """Production-safe cache pruning with a best-effort cross-worker file lock."""
     import fastf1
 
@@ -381,6 +364,6 @@ def maybe_prune_cache(max_size_gb=1.0, min_interval_seconds=3600):
 
 
 # --- 6. CACHE MANAGEMENT ---
-def clear_old_cache(max_size_gb=1.0):
+def clear_old_cache(max_size_gb=2.0):
     """Backward-compatible cache pruning entry point."""
     maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)

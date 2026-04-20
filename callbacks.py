@@ -301,15 +301,21 @@ def register_callbacks(app):
          Output('error-dialog', 'message')],
         [Input('update-dashboard-btn', 'n_clicks')],
         [State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
-         State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
+         State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value'),
+         State('main-tabs', 'value')]
     )
-    def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year):
+    def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year, active_tab):
         if not n_clicks:
             return dash.no_update, False, ""
         if not all([year, race, session_type, driver1, driver2]):
             return dash.no_update, True, "Please select Year, Race, Session, and both Drivers before updating."
 
-        preload_session(year, race, session_type)
+        # Only preload full telemetry if the user is currently on a telemetry-heavy tab.
+        # Otherwise, the telemetry load will happen lazily when they switch to those tabs.
+        # This keeps the initial "Update Dashboard" response very snappy for other views.
+        if active_tab in {'tab-telemetry', 'tab-trackmap'}:
+            preload_session(year, race, session_type)
+        
         params = {'year': year, 'race': race, 'session_type': session_type,
                   'driver1': driver1, 'driver2': driver2}
         return params, False, ""
@@ -368,7 +374,7 @@ def register_callbacks(app):
 
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
-                session = load_session_with_preload(year, race, session_type)
+                session = load_session_with_preload(year, race, session_type, telemetry=False)
                 context = _gather_session_context(session, session_type, driver1, driver2)
                 return f"{context_header}\n\n{context}"
             except Exception as e:
@@ -406,7 +412,7 @@ def register_callbacks(app):
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 import pandas as pd
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, telemetry=True)
 
                 def get_lap(driver, mode, lap_num):
                     drv_laps = session.laps.pick_drivers(driver)
@@ -446,7 +452,7 @@ def register_callbacks(app):
             return dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, telemetry=True)
                 lap1 = get_best_lap(session, d1)
                 lap2 = get_best_lap(session, d2)
 
@@ -473,7 +479,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, telemetry=False)
                 session_type = params['session_type']
 
                 if is_qualifying(session_type):
@@ -506,7 +512,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, telemetry=False)
                 session_type = params['session_type']
 
                 if is_race(session_type):
@@ -533,7 +539,7 @@ def register_callbacks(app):
             return dash.no_update
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session = load_session_with_preload(params['year'], params['race'], params['session_type'])
+                session = load_session_with_preload(params['year'], params['race'], params['session_type'], telemetry=False)
                 return _build_grid_pace_fig(session, params['session_type'])
             except Exception as e:
                 print(f"Grid Pace Error: {e}")
