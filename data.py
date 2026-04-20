@@ -1,8 +1,6 @@
 import os
 import shutil
 import threading
-import gzip
-import builtins
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -106,16 +104,12 @@ def preload_session(year, race, session_name):
         return future
 
 
-def load_session_with_preload(year, race, session_name, telemetry=True):
+def load_session_with_preload(year, race, session_name):
     """Return a session, reusing any in-flight background preload when possible."""
-    if telemetry:
-        future = preload_session(year, race, session_name)
-        if future is not None:
-            return future.result()
-        return _load_session_cached(year, race, session_name)
-    else:
-        # For non-telemetry loads, just get the summary (fast)
-        return load_session_summary(year, race, session_name, include_laps=True)
+    future = preload_session(year, race, session_name)
+    if future is not None:
+        return future.result()
+    return _load_session_cached(year, race, session_name)
 
 
 def load_session_summary(year, race, session_name, include_laps=False):
@@ -264,21 +258,21 @@ def get_single_driver_color(driver_abbr, session):
 
 
 # --- 5c. SHARED DATA (session + labels + colors) ---
-def get_shared_data(params, telemetry=True):
+def get_shared_data(params):
     """Loads session and computes shared labels/colors from stored params."""
     import pandas as pd
-    session = load_session_with_preload(params['year'], params['race'], params['session_type'], telemetry=telemetry)
+    session = load_session_with_preload(params['year'], params['race'], params['session_type'])
     d1, d2 = params['driver1'], params['driver2']
 
     try:
         p1 = session.results.loc[session.results['Abbreviation'] == d1, 'Position'].values[0]
         lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
-    except (IndexError, KeyError, AttributeError):
+    except (IndexError, KeyError):
         lbl1 = d1
     try:
         p2 = session.results.loc[session.results['Abbreviation'] == d2, 'Position'].values[0]
         lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
-    except (IndexError, KeyError, AttributeError):
+    except (IndexError, KeyError):
         lbl2 = d2
 
     from graphs import _get_driver_colors
