@@ -57,6 +57,7 @@ def _driver_selector(label, dropdown_id, btn_id):
         html.Div([
             html.Div(
                 dcc.Dropdown(id=dropdown_id, persistence=True, persistence_type='session',
+                             searchable=True,
                              style={'color': 'black', 'fontSize': '0.9rem'}),
                 style={'flex': '1'}
             ),
@@ -81,17 +82,20 @@ sidebar = html.Div([
                  options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
                  value=datetime.now().year,
                  persistence=True, persistence_type='session',
+                 searchable=True,
                  style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
 
     dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
     dcc.Loading(type='dot', color='#ff0000', children=[
         dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
+                     searchable=True,
                      style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
     ]),
 
     dbc.Label("Session", style={"fontSize": "0.9rem"}),
     dcc.Loading(type='dot', color='#ff0000', children=[
         dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
+                     searchable=True,
                      style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
     ]),
 

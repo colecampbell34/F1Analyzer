@@ -312,14 +312,17 @@ def get_single_driver_color(driver_abbr, session):
 
 
 # --- 5c. SHARED DATA (session + labels + colors) ---
-def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False):
-    """Loads session with granular control and computes shared labels/colors."""
+@lru_cache(maxsize=32)
+def _get_shared_data_cached(year, race, session_type, d1, d2, laps, telemetry, weather, messages):
+    """Internal LRU-cached helper for shared data.
+    
+    Since dicts (params) aren't hashable, we decompose them here.
+    """
     import pandas as pd
     session = load_session_with_preload(
-        params['year'], params['race'], params['session_type'],
+        year, race, session_type,
         laps=laps, telemetry=telemetry, weather=weather, messages=messages
     )
-    d1, d2 = params['driver1'], params['driver2']
 
     try:
         if session.results is not None and not session.results.empty:
@@ -339,6 +342,15 @@ def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=
     from graphs import _get_driver_colors
     c1, c2 = _get_driver_colors(d1, d2, session)
     return session, d1, d2, lbl1, lbl2, c1, c2
+
+
+def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False):
+    """Loads session with granular control and computes shared labels/colors."""
+    return _get_shared_data_cached(
+        params['year'], params['race'], params['session_type'],
+        params['driver1'], params['driver2'],
+        bool(laps), bool(telemetry), bool(weather), bool(messages)
+    )
 
 
 @lru_cache(maxsize=10)

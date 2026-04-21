@@ -557,9 +557,17 @@ def register_callbacks(app):
 
 
     # =============================================
-    # 13. FEEDBACK MODAL / INBOX
+    # 13. FEEDBACK MODAL (client-side toggle)
     # =============================================
-    @app.callback(
+    app.clientside_callback(
+        """
+        function(open_clicks, cancel_clicks, refresh_data, is_open) {
+            const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
+            if (trigger.includes('open-feedback-modal-btn')) return true;
+            if (trigger.includes('cancel-feedback-btn') || trigger.includes('feedback-refresh-store')) return false;
+            return is_open;
+        }
+        """,
         Output('feedback-modal', 'is_open'),
         [Input('open-feedback-modal-btn', 'n_clicks'),
          Input('cancel-feedback-btn', 'n_clicks'),
@@ -567,13 +575,6 @@ def register_callbacks(app):
         State('feedback-modal', 'is_open'),
         prevent_initial_call=True
     )
-    def toggle_feedback_modal(open_clicks, cancel_clicks, refresh_data, is_open):
-        trigger = dash.ctx.triggered_id
-        if trigger == 'open-feedback-modal-btn':
-            return True
-        if trigger in {'cancel-feedback-btn', 'feedback-refresh-store'}:
-            return False
-        return is_open
 
     @app.callback(
         [Output('feedback-submit-alert', 'children'),
