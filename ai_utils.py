@@ -35,6 +35,10 @@ _AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
 _AI_CACHE_LOCK = threading.Lock()
 _AI_RESPONSE_CACHE = {}  # cache_key → response_text
 MAX_CACHE_SIZE = 100
+_AI_CACHE_FLUSH_SECONDS = 30
+_AI_CACHE_RETENTION_DAYS = 10
+_AI_CACHE_DIRTY = False
+_AI_CACHE_LAST_FLUSH = 0.0
 
 
 def _load_cache_from_disk():
@@ -43,12 +47,23 @@ def _load_cache_from_disk():
     try:
         if os.path.exists(_AI_CACHE_FILE):
             with open(_AI_CACHE_FILE, 'r', encoding='utf-8') as f:
-                _AI_RESPONSE_CACHE = json.load(f)
-            # Enforce max size
-            if len(_AI_RESPONSE_CACHE) > MAX_CACHE_SIZE:
-                keys = list(_AI_RESPONSE_CACHE.keys())
-                for k in keys[:len(keys) - MAX_CACHE_SIZE]:
-                    del _AI_RESPONSE_CACHE[k]
+                raw = json.load(f)
+
+            if isinstance(raw, dict):
+                # Backward compatibility: legacy payload was {cache_key: response_text}
+                if raw and all(isinstance(v, str) for v in raw.values()):
+                    now_ts = time.time()
+                    _AI_RESPONSE_CACHE = {
+                        key: {'response': val, 'stored_at': now_ts}
+                        for key, val in raw.items()
+                    }
+                else:
+                    _AI_RESPONSE_CACHE = raw
+            else:
+                _AI_RESPONSE_CACHE = {}
+
+            # Drop stale entries, then enforce max size by oldest timestamp.
+            _prune_ai_cache_unlocked()
     except (json.JSONDecodeError, IOError):
         _AI_RESPONSE_CACHE = {}
 
@@ -63,8 +78,49 @@ def _save_cache_to_disk():
         pass
 
 
+def _prune_ai_cache_unlocked():
+    """Prune stale and overflow cache entries. Caller must hold _AI_CACHE_LOCK."""
+    now_ts = time.time()
+    if _AI_CACHE_RETENTION_DAYS > 0:
+        cutoff = now_ts - (_AI_CACHE_RETENTION_DAYS * 86400)
+        stale_keys = [
+            k for k, v in _AI_RESPONSE_CACHE.items()
+            if isinstance(v, dict) and float(v.get('stored_at', 0)) < cutoff
+        ]
+        for key in stale_keys:
+            del _AI_RESPONSE_CACHE[key]
+
+    if len(_AI_RESPONSE_CACHE) > MAX_CACHE_SIZE:
+        keys_by_age = sorted(
+            _AI_RESPONSE_CACHE.keys(),
+            key=lambda k: float(_AI_RESPONSE_CACHE.get(k, {}).get('stored_at', 0))
+        )
+        overflow = len(_AI_RESPONSE_CACHE) - MAX_CACHE_SIZE
+        for key in keys_by_age[:overflow]:
+            del _AI_RESPONSE_CACHE[key]
+
+
+def _maybe_flush_cache_unlocked(force=False):
+    """Flush cache to disk at most once per interval unless forced."""
+    global _AI_CACHE_DIRTY, _AI_CACHE_LAST_FLUSH
+    now_ts = time.time()
+    if not _AI_CACHE_DIRTY:
+        return
+    if not force and (now_ts - _AI_CACHE_LAST_FLUSH) < _AI_CACHE_FLUSH_SECONDS:
+        return
+    _save_cache_to_disk()
+    _AI_CACHE_LAST_FLUSH = now_ts
+    _AI_CACHE_DIRTY = False
+
+
 # Load cache from disk on module import
 _load_cache_from_disk()
+
+
+def flush_ai_cache():
+    """Best-effort public flush hook for graceful shutdown paths."""
+    with _AI_CACHE_LOCK:
+        _maybe_flush_cache_unlocked(force=True)
 
 
 def check_user_limit(ip):
@@ -104,19 +160,26 @@ def get_cached_response(session_context, question):
     """Returns cached response if an exact normalized match exists, else None."""
     key = _cache_key(session_context, question)
     with _AI_CACHE_LOCK:
-        return _AI_RESPONSE_CACHE.get(key)
+        item = _AI_RESPONSE_CACHE.get(key)
+        if isinstance(item, dict):
+            return item.get('response')
+        if isinstance(item, str):
+            return item
+        return None
 
 
 def store_cached_response(session_context, question, response):
     """Store a response in the cache and persist to disk. Evicts oldest entries if cache is full."""
+    global _AI_CACHE_DIRTY
     with _AI_CACHE_LOCK:
-        if len(_AI_RESPONSE_CACHE) >= MAX_CACHE_SIZE:
-            # Evict the oldest entry (first inserted key)
-            oldest_key = next(iter(_AI_RESPONSE_CACHE))
-            del _AI_RESPONSE_CACHE[oldest_key]
         key = _cache_key(session_context, question)
-        _AI_RESPONSE_CACHE[key] = response
-        _save_cache_to_disk()
+        _AI_RESPONSE_CACHE[key] = {
+            'response': response,
+            'stored_at': time.time()
+        }
+        _prune_ai_cache_unlocked()
+        _AI_CACHE_DIRTY = True
+        _maybe_flush_cache_unlocked()
 
 
 def build_ai_prompt(session_context, question, history=None):
@@ -521,7 +584,8 @@ def _gather_session_context(session, session_type, driver1, driver2):
                 all_laps = session.laps.pick_drivers(drv).reset_index(drop=True)
                 total_laps = int(all_laps['LapNumber'].max()) if not all_laps.empty else 0
 
-                rl = all_laps.pick_wo_box().pick_track_status('1').loc[all_laps['LapNumber'] > 1].reset_index(drop=True)
+                rl = all_laps.pick_wo_box().pick_track_status('1')
+                rl = rl[rl['LapNumber'] > 1].reset_index(drop=True)
                 rl['LapTime_Sec'] = rl['LapTime'].dt.total_seconds()
                 rl = rl.dropna(subset=['LapTime_Sec'])
 
