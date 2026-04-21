@@ -13,9 +13,15 @@ except ImportError:  # pragma: no cover - non-POSIX fallback
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
+_MAX_TRACKED_PRELOAD_FUTURES = 24
 _CACHE_DIR = 'f1_cache'
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
 _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
+LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
+SESSION_CACHE_MAXSIZE = 8
+SESSION_SUMMARY_CACHE_MAXSIZE = 8
+EVENT_SCHEDULE_CACHE_MAXSIZE = 20
+EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
 
 
@@ -45,14 +51,14 @@ def setup_cache():
 
 
 # --- 1b. EVENT SCHEDULE CACHE ---
-@lru_cache(maxsize=20)
+@lru_cache(maxsize=EVENT_SCHEDULE_CACHE_MAXSIZE)
 def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
     import fastf1
     return fastf1.get_event_schedule(year)
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=EVENT_SESSIONS_CACHE_MAXSIZE)
 def get_event_sessions_cached(year, race):
     """LRU-cached session names for a specific event."""
     import fastf1
@@ -67,17 +73,35 @@ def get_event_sessions_cached(year, race):
     return tuple(sessions)
 
 
-# --- 2. SESSION CACHE (always loads full data) ---
-@lru_cache(maxsize=3)
-def _load_session_cached(year, race, session_name):
-    """LRU-cached session loader. Always loads full telemetry/weather/messages."""
+# --- 2. SESSION CACHE ---
+@lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
+def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
+    """LRU-cached session loader with granular control.
+    Uses the same keys but allows loading specific data streams.
+    Note: FastF1 handles repeated .load() calls efficiently if data is already loaded.
+    """
     import fastf1
-    session = fastf1.get_session(year, race, session_name)
-    session.load(laps=True, telemetry=True, weather=True, messages=True)
+    # Tip: Use load=False (or skip immediate loading) for lazy initialization
+    session = fastf1.get_session(int(year), str(race), str(session_name))
+    
+    # Selective Loading: Only load what we need
+    session.load(
+        laps=bool(laps), 
+        telemetry=bool(telemetry), 
+        weather=bool(weather), 
+        messages=bool(messages)
+    )
     return session
 
 
-@lru_cache(maxsize=6)
+@lru_cache(maxsize=3)
+def _load_session_cached(year, race, session_name):
+    """Backward compatibility for full loading."""
+    return _load_session_granular_cached(year, race, session_name, 
+                                        laps=True, telemetry=True, weather=True, messages=True)
+
+
+@lru_cache(maxsize=SESSION_SUMMARY_CACHE_MAXSIZE)
 def _load_session_summary_cached(year, race, session_name, include_laps):
     """LRU-cached lightweight session loader for sidebar data and labels."""
     import fastf1
@@ -91,25 +115,55 @@ def _session_cache_key(year, race, session_name):
 
 
 def preload_session(year, race, session_name):
-    """Start loading a full session in the background and deduplicate requests."""
+    """Start loading a lightweight session in the background (laps only).
+    The expensive telemetry/weather is deferred to tab switching.
+    """
     if not all([year, race, session_name]):
         return None
 
     key = _session_cache_key(year, race, session_name)
     with _SESSION_PRELOAD_LOCK:
+        if len(_SESSION_PRELOAD_FUTURES) > _MAX_TRACKED_PRELOAD_FUTURES:
+            done_keys = [k for k, fut in _SESSION_PRELOAD_FUTURES.items() if fut.done()]
+            for old_key in done_keys[: len(_SESSION_PRELOAD_FUTURES) - _MAX_TRACKED_PRELOAD_FUTURES]:
+                _SESSION_PRELOAD_FUTURES.pop(old_key, None)
         future = _SESSION_PRELOAD_FUTURES.get(key)
+        # If no future or previous failed, start a light load (laps=True, others=False)
         if future is None or (future.done() and future.exception() is not None):
-            future = _SESSION_PRELOAD_EXECUTOR.submit(_load_session_cached, *key)
+            future = _SESSION_PRELOAD_EXECUTOR.submit(
+                _load_session_granular_cached, *key, True, False, False, False
+            )
             _SESSION_PRELOAD_FUTURES[key] = future
+            if LOG_SESSION_LOADING:
+                print(f"[session] preload started year={key[0]} race={key[1]} session={key[2]}")
+        elif LOG_SESSION_LOADING:
+            print(f"[session] preload reused year={key[0]} race={key[1]} session={key[2]}")
         return future
 
 
-def load_session_with_preload(year, race, session_name):
-    """Return a session, reusing any in-flight background preload when possible."""
-    future = preload_session(year, race, session_name)
-    if future is not None:
+def load_session_with_preload(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
+    """Return a session with specific data streams, reusing preloaded object when possible."""
+    key = _session_cache_key(year, race, session_name)
+    with _SESSION_PRELOAD_LOCK:
+        future = _SESSION_PRELOAD_FUTURES.get(key)
+
+    # If caller only needs the preload profile, return the in-flight preload result.
+    if bool(laps) and not any([telemetry, weather, messages]) and future is not None:
+        if LOG_SESSION_LOADING:
+            print(f"[session] waiting on preload year={key[0]} race={key[1]} session={key[2]}")
         return future.result()
-    return _load_session_cached(year, race, session_name)
+
+    # For richer requests, keep preload behavior and escalate requested streams.
+    if future is None and bool(laps):
+        preload_session(*key)
+
+    if LOG_SESSION_LOADING:
+        print(
+            "[session] granular load "
+            f"year={key[0]} race={key[1]} session={key[2]} "
+            f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
+        )
+    return _load_session_granular_cached(key[0], key[1], key[2], laps, telemetry, weather, messages)
 
 
 def load_session_summary(year, race, session_name, include_laps=False):
@@ -258,22 +312,29 @@ def get_single_driver_color(driver_abbr, session):
 
 
 # --- 5c. SHARED DATA (session + labels + colors) ---
-def get_shared_data(params):
-    """Loads session and computes shared labels/colors from stored params."""
+def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False):
+    """Loads session with granular control and computes shared labels/colors."""
     import pandas as pd
-    session = load_session_with_preload(params['year'], params['race'], params['session_type'])
+    session = load_session_with_preload(
+        params['year'], params['race'], params['session_type'],
+        laps=laps, telemetry=telemetry, weather=weather, messages=messages
+    )
     d1, d2 = params['driver1'], params['driver2']
 
     try:
-        p1 = session.results.loc[session.results['Abbreviation'] == d1, 'Position'].values[0]
-        lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
+        if session.results is not None and not session.results.empty:
+            # Narrow down to just the drivers we care about early
+            res1 = session.results[session.results['Abbreviation'] == d1]
+            p1 = res1['Position'].values[0] if not res1.empty else None
+            lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
+
+            res2 = session.results[session.results['Abbreviation'] == d2]
+            p2 = res2['Position'].values[0] if not res2.empty else None
+            lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
+        else:
+            lbl1, lbl2 = d1, d2
     except (IndexError, KeyError):
-        lbl1 = d1
-    try:
-        p2 = session.results.loc[session.results['Abbreviation'] == d2, 'Position'].values[0]
-        lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
-    except (IndexError, KeyError):
-        lbl2 = d2
+        lbl1, lbl2 = d1, d2
 
     from graphs import _get_driver_colors
     c1, c2 = _get_driver_colors(d1, d2, session)

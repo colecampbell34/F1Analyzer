@@ -4,8 +4,10 @@ from layout import app_layout
 from callbacks import register_callbacks
 import data
 from feedback import setup_feedback_storage
+from ai_utils import flush_ai_cache
 from flask_compress import Compress
 import threading
+import atexit
 
 app = dash.Dash(
     __name__,
@@ -21,6 +23,7 @@ server = app.server
 data.setup_cache()
 threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
 setup_feedback_storage()
+atexit.register(flush_ai_cache)
 app.layout = app_layout
 register_callbacks(app)
 
