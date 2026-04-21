@@ -369,7 +369,9 @@ def register_callbacks(app):
 
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
-                session = load_session_with_preload(year, race, session_type)
+                # AI needs everything for deep analysis
+                session = load_session_with_preload(year, race, session_type, 
+                                                   laps=True, telemetry=True, weather=True, messages=True)
                 context = _gather_session_context(session, session_type, driver1, driver2)
                 return f"{context_header}\n\n{context}"
             except Exception as e:
@@ -407,7 +409,8 @@ def register_callbacks(app):
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 import pandas as pd
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                # Telemetry tab needs Laps and Telemetry
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
 
                 def get_lap(driver, mode, lap_num):
                     drv_laps = session.laps.pick_drivers(driver)
@@ -447,7 +450,8 @@ def register_callbacks(app):
             return dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                # Dominance tab needs Laps and Telemetry
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
                 lap1 = get_best_lap(session, d1)
                 lap2 = get_best_lap(session, d2)
 
@@ -457,7 +461,7 @@ def register_callbacks(app):
                 if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
 
                 fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
-                return _build_dominance_fig(d1, d2, c1, c2, tel1.copy(), tel2.copy(), fast_data, slow_data)
+                return _build_dominance_fig(d1, d2, c1, c2, tel1, tel2, fast_data, slow_data)
             except Exception as e:
                 print(f"Dominance Error: {e}")
                 return _error_figure(_friendly_error(e))
@@ -474,7 +478,8 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                # Strategy tab needs Laps and Weather (for Temp), but NO Telemetry
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
                 session_type = params['session_type']
 
                 if is_qualifying(session_type):
@@ -507,7 +512,8 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params)
+                # Race Analysis needs Laps, but NO Telemetry or Weather
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False)
                 session_type = params['session_type']
 
                 if is_race(session_type):
@@ -534,7 +540,16 @@ def register_callbacks(app):
             return dash.no_update
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session = load_session_with_preload(params['year'], params['race'], params['session_type'])
+                # Grid Pace uses weather to detect wet sessions for pace filtering.
+                session = load_session_with_preload(
+                    params['year'],
+                    params['race'],
+                    params['session_type'],
+                    laps=True,
+                    telemetry=False,
+                    weather=True,
+                    messages=True
+                )
                 return _build_grid_pace_fig(session, params['session_type'])
             except Exception as e:
                 print(f"Grid Pace Error: {e}")
