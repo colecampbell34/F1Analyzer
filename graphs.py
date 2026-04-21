@@ -9,6 +9,26 @@ def _downsample(df, max_points=2000):
     step = max(1, len(df) // max_points)
     return df.iloc[::step].reset_index(drop=True)
 
+
+def _collapse_lap_ranges(laps):
+    """Collapse a set/list of lap numbers into contiguous [start, end] ranges."""
+    if not laps:
+        return []
+    ordered = sorted(int(l) for l in laps)
+    ranges = []
+    start = ordered[0]
+    prev = ordered[0]
+    for lap in ordered[1:]:
+        if lap == prev + 1:
+            prev = lap
+            continue
+        ranges.append((start, prev))
+        start = lap
+        prev = lap
+    ranges.append((start, prev))
+    return ranges
+
+
 # Shared tyre compound color map
 COMPOUND_COLORS = {
     'SOFT': '#ff3333', 'MEDIUM': '#ffff00', 'HARD': '#ffffff',
@@ -207,11 +227,11 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
             winner = winner_list[group_start]
             color = c1 if winner == driver1 else c2
 
-            hover_texts = []
-            for _, row in sector_data.iterrows():
-                sec = int(row['MiniSector'])
-                delta_km = speed_deltas.get(sec, 0)
-                hover_texts.append(f'Sector {sec+1}<br>{winner} faster by {delta_km:.1f} km/h')
+            sector_ids = sector_data['MiniSector'].astype(int).tolist()
+            hover_texts = [
+                f"Sector {sec + 1}<br>{winner} faster by {speed_deltas.get(sec, 0):.1f} km/h"
+                for sec in sector_ids
+            ]
 
             fig.add_trace(go.Scatter(
                 x=sector_data['X'], y=sector_data['Y'], mode='lines',
@@ -289,8 +309,8 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
     for laps, color, name in lines:
-        for lap in laps:
-            fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor=color, opacity=0.15,
+        for start_lap, end_lap in _collapse_lap_ranges(laps):
+            fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.15,
                           layer="below", line_width=0, row='all', col='all')
         if laps:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
@@ -500,9 +520,9 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
         sc_laps, vsc_laps, red_laps = get_track_status_events(session)
         for laps_set, color, name in [(sc_laps, 'orange', 'SC'), (vsc_laps, 'yellow', 'VSC'),
-                                       (red_laps, 'red', 'Red Flag')]:
-            for lap in laps_set:
-                fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor=color, opacity=0.1,
+                                      (red_laps, 'red', 'Red Flag')]:
+            for start_lap, end_lap in _collapse_lap_ranges(laps_set):
+                fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.1,
                               layer="below", line_width=0, row='all', col='all')
 
     except Exception as e:
@@ -530,50 +550,71 @@ def _build_grid_pace_fig(session, session_type):
     fig = go.Figure()
     drivers_data = []
 
-    all_drivers = []
     if getattr(session, 'results', None) is not None and not session.results.empty:
-        all_drivers = session.results['Abbreviation'].dropna().tolist()
+        results_df = session.results.copy()
+        results_df['Position_Num'] = pd.to_numeric(results_df['Position'], errors='coerce')
+        results_df = results_df.sort_values(by='Position_Num')
+        sorted_result_drivers = [
+            d for d in results_df['Abbreviation'].dropna().tolist()
+            if isinstance(d, str) and len(d) == 3
+        ]
+        all_drivers = sorted_result_drivers
     else:
         all_drivers = session.laps['Driver'].unique().tolist()
 
     has_results = getattr(session, 'results', None) is not None and not session.results.empty
     _is_race = is_race(session_type)
     _is_quali = is_qualifying(session_type)
+    position_map = {}
+    if has_results:
+        position_map = {
+            str(row.get('Abbreviation', '')): pd.to_numeric(row.get('Position'), errors='coerce')
+            for _, row in session.results.iterrows()
+        }
+    # Calculate session-wide fastest lap for 107% filtering.
+    lap_seconds_all = session.laps['LapTime'].dt.total_seconds().dropna()
+    session_fastest = lap_seconds_all.min() if not lap_seconds_all.empty else float('nan')
+    rain_ratio = 0
+    weather_data = getattr(session, 'weather_data', None)
+    if weather_data is not None and not weather_data.empty and 'Rainfall' in weather_data.columns:
+        rain_ratio = weather_data['Rainfall'].astype(bool).mean()
+    is_dry_session = rain_ratio < 0.02
 
     for drv in all_drivers:
         if not isinstance(drv, str) or len(drv) != 3:
             continue
         try:
             drv_laps = session.laps.pick_drivers(drv)
+            if drv_laps.empty:
+                continue
 
             if _is_race:
                 clean_laps = drv_laps.pick_wo_box().pick_track_status('1')
                 laps = clean_laps[clean_laps['LapNumber'] > 1]
             else:
-                laps = drv_laps.pick_wo_box()
-                if not laps.empty and 'IsAccurate' in laps.columns:
-                    laps = laps[laps['IsAccurate']]
-                if not laps.empty:
-                    fastest_lap_time = laps['LapTime'].dt.total_seconds().min()
-                    if pd.notna(fastest_lap_time):
-                        laps = laps[laps['LapTime'].dt.total_seconds() <= fastest_lap_time * 1.07]
+                laps = drv_laps.pick_quicklaps()
+
+            if laps.empty:
+                continue
 
             lap_times = laps['LapTime'].dt.total_seconds().dropna()
+            
+            if is_dry_session and pd.notna(session_fastest) and not lap_times.empty:
+                lap_times = lap_times[lap_times <= session_fastest * 1.07]
+
             if lap_times.empty:
                 continue
 
             color = get_single_driver_color(drv, session)
 
-            best_lap = get_best_lap(session, drv)
-            best_time = best_lap['LapTime'].total_seconds() if best_lap is not None and pd.notna(
-                best_lap['LapTime']) else lap_times.min()
+            # For ordering/tie-break purposes in this chart, the filtered lap minimum is sufficient
+            # and avoids an extra per-driver best-lap lookup.
+            best_time = float(lap_times.min())
 
             pos = 999
-            if has_results:
-                res_row = session.results[session.results['Abbreviation'] == drv]
-                if not res_row.empty:
-                    pos_val = res_row.iloc[0].get('Position')
-                    pos = int(pos_val) if pd.notna(pos_val) else 999
+            pos_num = position_map.get(drv)
+            if pd.notna(pos_num):
+                pos = int(pos_num)
 
             drivers_data.append({
                 'driver': drv,
@@ -587,11 +628,13 @@ def _build_grid_pace_fig(session, session_type):
         except Exception:
             continue
 
-    if has_results:
-        drivers_data.sort(key=lambda x: (x['position'], x['fastest']))
-    else:
+    if not has_results:
         sort_key = 'fastest' if _is_quali else 'median'
         drivers_data.sort(key=lambda x: x[sort_key])
+        category_array = [d['driver'] for d in drivers_data]
+    else:
+        # Use the exact same official ordering basis as leaderboard.
+        category_array = sorted_result_drivers
 
     for d in drivers_data:
         fig.add_trace(go.Box(
@@ -609,6 +652,10 @@ def _build_grid_pace_fig(session, session_type):
         showlegend=False,
         hovermode='closest',
         yaxis_title='Lap Time (s)',
+        xaxis=dict(
+            categoryorder='array',
+            categoryarray=category_array
+        ),
         yaxis=dict(autorange='reversed'),
         uirevision='gridpace'
     )
@@ -647,32 +694,34 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         pit_stops = pd.DataFrame()
 
     if pit_stops is not None and not pit_stops.empty:
-        for _, stop in pit_stops.iterrows():
-            lap_num = int(stop['lap'])
-            if lap_num > max_lap:
-                continue
-
-            duration = stop.get('duration')
-            if pd.isna(duration):
-                continue
-
-            duration_seconds = duration.total_seconds()
-            if not 0 < duration_seconds < 120:
-                continue
-
-            drv = stop.get('driverCode') or str(stop.get('driverId', '')).upper()[:3]
-            if not isinstance(drv, str) or len(drv) != 3:
-                continue
-
-            color = get_single_driver_color(drv, session)
-
-            pit_data.append({
-                'driver': drv,
-                'lap': int(stop['lap']),
-                'duration': duration_seconds,
-                'color': color,
-                'highlight': drv in [driver1, driver2]
-            })
+        if 'duration' in pit_stops.columns:
+            pit_stops = pit_stops.copy()
+            pit_stops['duration_seconds'] = pit_stops['duration'].apply(
+                lambda x: x.total_seconds() if pd.notna(x) else None
+            )
+            valid = pit_stops[
+                pit_stops['lap'].notna()
+                & pit_stops['duration_seconds'].notna()
+                & (pit_stops['lap'].astype(int) <= max_lap)
+                & (pit_stops['duration_seconds'] > 0)
+                & (pit_stops['duration_seconds'] < 120)
+            ].copy()
+            if not valid.empty:
+                valid['driver_code'] = valid.apply(
+                    lambda r: r.get('driverCode') or str(r.get('driverId', '')).upper()[:3],
+                    axis=1
+                )
+                valid = valid[valid['driver_code'].astype(str).str.len() == 3]
+                for stop in valid.to_dict('records'):
+                    drv = stop['driver_code']
+                    color = get_single_driver_color(drv, session)
+                    pit_data.append({
+                        'driver': drv,
+                        'lap': int(stop['lap']),
+                        'duration': float(stop['duration_seconds']),
+                        'color': color,
+                        'highlight': drv in [driver1, driver2]
+                    })
 
     if not pit_data:
         title = 'Pit Stop Durations (Time Spent in Pit Lane)'
@@ -686,22 +735,19 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         for drv in all_drivers:
             try:
                 drv_laps = session.laps.pick_drivers(drv).sort_values('LapNumber')
-                pit_in = drv_laps[drv_laps['PitInTime'].notna()]
-
-                for _, pit_lap in pit_in.iterrows():
-                    pit_in_time = pit_lap['PitInTime']
-                    next_lap_num = pit_lap['LapNumber'] + 1
-                    next_lap = drv_laps[drv_laps['LapNumber'] == next_lap_num]
-
-                    if not next_lap.empty and pd.notna(next_lap.iloc[0].get('PitOutTime')):
-                        pit_out_time = next_lap.iloc[0]['PitOutTime']
+                pit_in = drv_laps[drv_laps['PitInTime'].notna()][['LapNumber', 'PitInTime']]
+                if pit_in.empty:
+                    continue
+                pit_out_map = drv_laps.set_index('LapNumber')['PitOutTime'].to_dict()
+                color = get_single_driver_color(drv, session)
+                for lap_num, pit_in_time in pit_in.itertuples(index=False):
+                    pit_out_time = pit_out_map.get(lap_num + 1)
+                    if pd.notna(pit_out_time):
                         duration = (pit_out_time - pit_in_time).total_seconds()
                         if 10 < duration < 120:
-                            color = get_single_driver_color(drv, session)
-
                             pit_data.append({
                                 'driver': drv,
-                                'lap': int(pit_lap['LapNumber']),
+                                'lap': int(lap_num),
                                 'duration': duration,
                                 'color': color,
                                 'highlight': drv in [driver1, driver2]
