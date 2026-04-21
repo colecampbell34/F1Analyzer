@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 from urllib.parse import parse_qs
+import flask
 from dash import html
 import dash_bootstrap_components as dbc
 from data import get_best_lap, is_practice
@@ -38,6 +39,17 @@ def _feedback_admin_authorized(url_search):
     token = os.getenv('FEEDBACK_ADMIN_TOKEN')
     if not token:
         return False
+
+    # Preferred auth channel: request header or cookie (not URL).
+    supplied_header = flask.request.headers.get('X-Feedback-Admin-Token', '')
+    if supplied_header == token:
+        return True
+
+    supplied_cookie = flask.request.cookies.get('feedback_admin_token', '')
+    if supplied_cookie == token:
+        return True
+
+    # Backward-compatibility fallback for existing workflows.
     query_params = parse_qs((url_search or '').lstrip('?'))
     supplied = (query_params.get('feedback_admin') or [''])[0]
     return supplied == token
