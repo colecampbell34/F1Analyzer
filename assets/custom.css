@@ -42,6 +42,42 @@ div[style*="rgba(255, 255, 255"] {
     .teammate-label {
         display: inline !important;
     }
+
+    /* Let the page scroll naturally when columns stack on mobile. */
+    html, body, #react-entry-point {
+        height: auto !important;
+        min-height: 100%;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+    }
+
+    /* Override the app container's fixed viewport lock. */
+    .container-fluid {
+        height: auto !important;
+        min-height: 100dvh !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+    }
+
+    /* Stacked sidebar/content should size to content, not fixed viewport. */
+    .sidebar-col,
+    .content-col {
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        overflow: visible !important;
+        border-right: none !important;
+    }
+
+    /* Avoid the left-panel card forcing full viewport height on phones. */
+    .sidebar-col > div {
+        min-height: auto !important;
+    }
+
+    /* Keep content clear of the floating feedback button. */
+    .content-col {
+        padding-bottom: 4rem !important;
+    }
 }
 
 /* Tabs: horizontal scroll on narrow screens instead of truncation */
@@ -164,9 +200,12 @@ div[class*="tab-container"] {
 
 @media (max-width: 768px) {
     .feedback-fab {
-        right: 16px;
-        bottom: 16px;
-        width: calc(100% - 32px);
-        border-radius: 14px;
+        right: 12px;
+        bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+        width: auto;
+        border-radius: 999px;
+        padding: 0.5rem 0.85rem;
+        font-size: 0.8rem;
+        opacity: 0.92;
     }
 }
