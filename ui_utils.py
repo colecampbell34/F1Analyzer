@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 from urllib.parse import parse_qs
 import flask
+import fastf1
+import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
 from data import get_best_lap, is_practice
@@ -147,13 +149,11 @@ def _build_feedback_review_panel(entries):
     ])
 
 def _build_leaderboard_children(session, session_name):
-    import fastf1.plotting
-    import pandas as pd
+    _is_practice = is_practice(session_name)
+    _is_shootout = 'Shootout' in session_name
     leaderboard_children = []
 
-    _is_practice = is_practice(session_name)
-
-    if _is_practice and getattr(session, 'laps', None) is not None and not session.laps.empty:
+    if (_is_practice or _is_shootout) and getattr(session, 'laps', None) is not None and not session.laps.empty:
         drivers_data = []
         all_drivers = (session.results['Abbreviation'].dropna().unique()
                        if getattr(session, 'results', None) is not None and not session.results.empty
