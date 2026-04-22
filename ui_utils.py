@@ -275,3 +275,30 @@ def _build_leaderboard_children(session, session_name):
                 leaderboard_children.append(row_div)
 
     return leaderboard_children
+
+
+def _downsample(df, max_points=2000):
+    """Downsample a DataFrame to max_points rows via even spacing. Visually identical at chart resolution."""
+    if len(df) <= max_points:
+        return df
+    step = max(1, len(df) // max_points)
+    return df.iloc[::step].reset_index(drop=True)
+
+
+def _hex_to_rgba(hex_val, opacity):
+    h = hex_val.lstrip('#')
+    rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+    return f'rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {opacity})'
+
+
+BASE_LAYOUT = dict(
+    template='plotly_dark',
+    margin=dict(l=40, r=40, t=60, b=40),
+    hovermode='x unified'
+)
+
+def _apply_base_layout(fig, **kwargs):
+    """Applies the base F1 analyzer layout, allowing kwargs to override specifics."""
+    fig.update_layout(**BASE_LAYOUT)
+    fig.update_layout(**kwargs)
+    return fig
