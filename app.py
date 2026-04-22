@@ -48,7 +48,8 @@ def _ensure_runtime_initialized():
     threading.Thread(target=_init_runtime_background, daemon=True).start()
 
 
-@server.route('/healthz')
+@server.route('/health', strict_slashes=False)
+@server.route('/healthz', strict_slashes=False)
 def healthz():
     """Cheap liveness endpoint for host health checks."""
     return jsonify({'status': 'ok'}), 200

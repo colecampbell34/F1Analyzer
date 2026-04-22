@@ -246,9 +246,10 @@ def register_callbacks(app):
          Output('error-dialog', 'message')],
         [Input('update-dashboard-btn', 'n_clicks')],
         [State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
-         State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
+         State('session-dropdown', 'value'), State('race-dropdown', 'value'),
+         State('year-dropdown', 'value'), State('main-tabs', 'value')]
     )
-    def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year):
+    def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year, active_tab):
         if not n_clicks:
             return dash.no_update, False, ""
         missing = _missing_required_fields({
@@ -270,7 +271,14 @@ def register_callbacks(app):
                   f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
             return dash.no_update, True, msg
 
-        preload_session(year, race, session_type)
+        preload_kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
+        if active_tab in ('tab-telemetry', 'tab-trackmap'):
+            preload_kwargs['telemetry'] = True
+        elif active_tab in ('tab-strategy', 'tab-gridpace'):
+            preload_kwargs['weather'] = True
+        elif active_tab == 'tab-ai':
+            preload_kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
+        preload_session(year, race, session_type, **preload_kwargs)
         
         params = {'year': year, 'race': race, 'session_type': session_type,
                   'driver1': driver1, 'driver2': driver2}

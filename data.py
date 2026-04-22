@@ -131,48 +131,65 @@ def _session_cache_key(year, race, session_name):
     return int(year), str(race), str(session_name)
 
 
-def preload_session(year, race, session_name):
-    """Start loading a lightweight session in the background (laps only).
-    The expensive telemetry/weather is deferred to tab switching.
-    """
+def _session_preload_key(year, race, session_name, laps, telemetry, weather, messages):
+    return (
+        int(year), str(race), str(session_name),
+        bool(laps), bool(telemetry), bool(weather), bool(messages)
+    )
+
+
+def preload_session(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
+    """Start loading a session profile in the background."""
     if not all([year, race, session_name]):
         return None
 
-    key = _session_cache_key(year, race, session_name)
+    key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
     with _SESSION_PRELOAD_LOCK:
         if len(_SESSION_PRELOAD_FUTURES) > _MAX_TRACKED_PRELOAD_FUTURES:
             done_keys = [k for k, fut in _SESSION_PRELOAD_FUTURES.items() if fut.done()]
             for old_key in done_keys[: len(_SESSION_PRELOAD_FUTURES) - _MAX_TRACKED_PRELOAD_FUTURES]:
                 _SESSION_PRELOAD_FUTURES.pop(old_key, None)
         future = _SESSION_PRELOAD_FUTURES.get(key)
-        # If no future or previous failed, start a light load (laps=True, others=False)
+        # If no future or previous failed, start requested profile preload.
         if future is None or (future.done() and future.exception() is not None):
             future = _SESSION_PRELOAD_EXECUTOR.submit(
-                _load_session_granular_cached, *key, True, False, False, False
+                _load_session_granular_cached, key[0], key[1], key[2], key[3], key[4], key[5], key[6]
             )
             _SESSION_PRELOAD_FUTURES[key] = future
             if LOG_SESSION_LOADING:
-                print(f"[session] preload started year={key[0]} race={key[1]} session={key[2]}")
+                print(
+                    "[session] preload started "
+                    f"year={key[0]} race={key[1]} session={key[2]} "
+                    f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
+                )
         elif LOG_SESSION_LOADING:
-            print(f"[session] preload reused year={key[0]} race={key[1]} session={key[2]}")
+            print(
+                "[session] preload reused "
+                f"year={key[0]} race={key[1]} session={key[2]} "
+                f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
+            )
         return future
 
 
 def load_session_with_preload(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """Return a session with specific data streams, reusing preloaded object when possible."""
     key = _session_cache_key(year, race, session_name)
+    preload_key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
     with _SESSION_PRELOAD_LOCK:
-        future = _SESSION_PRELOAD_FUTURES.get(key)
+        exact_future = _SESSION_PRELOAD_FUTURES.get(preload_key)
 
-    # If caller only needs the preload profile, return the in-flight preload result.
-    if bool(laps) and not any([telemetry, weather, messages]) and future is not None:
+    # If matching preload is in-flight, reuse it directly.
+    if exact_future is not None:
         if LOG_SESSION_LOADING:
-            print(f"[session] waiting on preload year={key[0]} race={key[1]} session={key[2]}")
-        return future.result()
+            print(
+                "[session] waiting on exact preload "
+                f"year={key[0]} race={key[1]} session={key[2]} "
+                f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
+            )
+        return exact_future.result()
 
-    # For richer requests, keep preload behavior and escalate requested streams.
-    if future is None and bool(laps):
-        preload_session(*key)
+    if bool(laps):
+        preload_session(*key, bool(laps), bool(telemetry), bool(weather), bool(messages))
 
     if LOG_SESSION_LOADING:
         print(
