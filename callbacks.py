@@ -34,7 +34,7 @@ from ui_utils import (
 )
 
 
-# Max number of AI Q&A exchanges stored in browser sessionStorage
+# Max AI Q&A exchanges kept in browser session storage.
 MAX_AI_HISTORY = 20
 VALID_TABS = {
     'tab-telemetry', 'tab-trackmap', 'tab-strategy',
@@ -42,6 +42,26 @@ VALID_TABS = {
 }
 CALLBACK_TIMING_THRESHOLD_MS = float(os.getenv('CALLBACK_TIMING_THRESHOLD_MS', '400'))
 LOG_ALL_CALLBACKS = os.getenv('LOG_ALL_CALLBACKS') == '1'
+
+
+def _missing_required_fields(field_map):
+    """Return labels for required fields that are empty."""
+    return [label for label, value in field_map.items() if value in (None, '')]
+
+
+def _has_valid_lap(lap, pd):
+    """Return True when lap exists and contains a valid lap time."""
+    return not (getattr(lap, "empty", True) or (pd.isna(lap.get("LapTime")) if lap is not None else True))
+
+
+def _pick_driver_lap(session, driver, mode, lap_num):
+    """Return specific lap when requested, otherwise driver fastest lap."""
+    drv_laps = session.laps.pick_drivers(driver)
+    if mode == 'specific' and lap_num is not None:
+        specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
+        if not specific.empty:
+            return specific.iloc[0]
+    return get_best_lap(session, driver)
 
 
 def _trim_history(history):
@@ -130,9 +150,7 @@ def register_callbacks(app):
             return url_state['tab']
         return dash.no_update
 
-    # =============================================
-    # 1. YEAR → RACE DROPDOWN
-    # =============================================
+    # Year -> race dropdown.
     @app.callback(
         [Output('race-dropdown', 'options'), Output('race-dropdown', 'value')],
         [Input('year-dropdown', 'value')],
@@ -153,12 +171,10 @@ def register_callbacks(app):
             elif url_race in races:
                 val = url_race
             else:
-                # Always pick a valid race once options exist. This prevents the app from getting
-                # "stuck" in a state where clicking Update Dashboard/Leaderboard claims nothing
-                # is selected even though the dropdowns are populated.
+                # Keep a valid selected race once options are loaded.
                 val = races[0] if races else None
                 try:
-                    # Prefer the latest completed event when dates are available.
+                    # Prefer the latest completed event when event dates exist.
                     event_dates = schedule.get('EventDate')
                     if event_dates is not None and len(schedule) == len(event_dates):
                         now = datetime.now()
@@ -170,9 +186,7 @@ def register_callbacks(app):
 
             return options, val
 
-    # =============================================
-    # 2. RACE → SESSION DROPDOWN
-    # =============================================
+    # Race -> session dropdown.
     @app.callback(
         [Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
         [Input('race-dropdown', 'value')],
@@ -192,7 +206,7 @@ def register_callbacks(app):
             elif url_session in valid_sessions:
                 val = url_session
             else:
-                # Prefer Race when available; otherwise fall back to the first listed session.
+                # Prefer Race when available, else use the first session.
                 val = None
                 if options:
                     val = options[0]['value']
@@ -202,9 +216,7 @@ def register_callbacks(app):
                             break
             return options, val
 
-    # =============================================
-    # 3. SESSION → DRIVER DROPDOWNS (with full labels)
-    # =============================================
+    # Session -> driver dropdowns.
     @app.callback(
         [Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'),
          Output('driver2-dropdown', 'options'), Output('driver2-dropdown', 'value')],
@@ -221,7 +233,7 @@ def register_callbacks(app):
                 driver_info = _load_drivers_fast(year, race, session_name)
                 url_state = _parse_url_state(url_search)
 
-                # Build rich labels: "VER - Verstappen (Red Bull)"
+                # Build labels like "VER - Verstappen (Red Bull)".
                 options = []
                 valid_abbrs = []
                 for d in driver_info:
@@ -247,9 +259,7 @@ def register_callbacks(app):
                 print(f"Drivers Error: {e}")
                 return [], None, [], None
 
-    # =============================================
-    # 4. TEAMMATE AUTO-SELECT BUTTONS
-    # =============================================
+    # Teammate auto-select buttons.
     @app.callback(
         Output('driver2-dropdown', 'value', allow_duplicate=True),
         Input('teammate1-btn', 'n_clicks'),
@@ -284,9 +294,7 @@ def register_callbacks(app):
         except Exception:
             return dash.no_update
 
-    # =============================================
-    # 5. LEADERBOARD (with gaps to leader)
-    # =============================================
+    # Leaderboard with gap display.
     @app.callback(
         Output('leaderboard-container', 'children'),
         [Input('update-leaderboard-btn', 'n_clicks')],
@@ -320,9 +328,7 @@ def register_callbacks(app):
                 print(f"Leaderboard Error: {e}")
                 return html.Div(_friendly_error(e), style={'color': 'red', 'fontSize': '0.9rem'})
 
-    # =============================================
-    # 6. MASTER: Update Dashboard → Store params + Title
-    # =============================================
+    # Update dashboard params and metadata.
     @app.callback(
         [Output('dashboard-params-store', 'data'), Output('error-dialog', 'displayed'),
          Output('error-dialog', 'message')],
@@ -333,20 +339,16 @@ def register_callbacks(app):
     def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year):
         if not n_clicks:
             return dash.no_update, False, ""
-        missing = []
-        if year in (None, ''):
-            missing.append('Year')
-        if race in (None, ''):
-            missing.append('Race')
-        if session_type in (None, ''):
-            missing.append('Session')
-        if driver1 in (None, ''):
-            missing.append('Driver 1')
-        if driver2 in (None, ''):
-            missing.append('Driver 2')
+        missing = _missing_required_fields({
+            'Year': year,
+            'Race': race,
+            'Session': session_type,
+            'Driver 1': driver1,
+            'Driver 2': driver2
+        })
 
         if missing:
-            # Include raw values to make debugging user reports straightforward.
+            # Include raw values to simplify production issue triage.
             msg = (
                 "Please select: " + ", ".join(missing) + " before updating.\n\n"
                 f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
@@ -378,7 +380,7 @@ def register_callbacks(app):
                 import pandas as pd
                 session = load_session_summary(year, race, session_type, include_laps=False)
 
-                # Build labels for the title
+                # Include finishing position in title when available.
                 try:
                     p1 = session.results.loc[session.results['Abbreviation'] == driver1, 'Position'].values[0]
                     lbl1 = f"{driver1} (P{int(p1)})" if pd.notna(p1) else driver1
@@ -416,7 +418,7 @@ def register_callbacks(app):
 
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
-                # AI needs everything for deep analysis
+                # AI analysis uses full context streams.
                 session = load_session_with_preload(year, race, session_type, 
                                                    laps=True, telemetry=True, weather=True, messages=True)
                 context = _gather_session_context(session, session_type, driver1, driver2)
@@ -440,9 +442,7 @@ def register_callbacks(app):
         return new_search
 
 
-    # =============================================
-    # 7. TAB: Telemetry (lazy)
-    # =============================================
+    # Telemetry tab.
     @app.callback(
         Output('speed-graph', 'figure'),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
@@ -456,22 +456,14 @@ def register_callbacks(app):
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 import pandas as pd
-                # Telemetry tab needs Laps and Telemetry
+                # Telemetry view needs lap + telemetry data.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
+                lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
+                lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num)
 
-                def get_lap(driver, mode, lap_num):
-                    drv_laps = session.laps.pick_drivers(driver)
-                    if mode == 'specific' and lap_num is not None:
-                        specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
-                        if not specific.empty:
-                            return specific.iloc[0]
-                    return get_best_lap(session, driver)
-
-                lap1, lap2 = get_lap(d1, d1_mode, d1_lap_num), get_lap(d2, d2_mode, d2_lap_num)
-
-                if getattr(lap1, "empty", True) or pd.isna(lap1.get("LapTime")) if lap1 is not None else True:
+                if not _has_valid_lap(lap1, pd):
                     raise ValueError(f"{d1} did not set a valid lap.")
-                if getattr(lap2, "empty", True) or pd.isna(lap2.get("LapTime")) if lap2 is not None else True:
+                if not _has_valid_lap(lap2, pd):
                     raise ValueError(f"{d2} did not set a valid lap.")
 
                 tel1 = lap1.get_telemetry().add_distance()
@@ -493,7 +485,7 @@ def register_callbacks(app):
         prevent_initial_call=True
     )
     def update_mini_map_base(params, active_tab, n_laps, d1_mode, d1_lap_num):
-        """Precompute the track polyline once; hover only moves a marker."""
+        """Precompute track polyline once; hover only moves marker."""
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update, dash.no_update
         try:
@@ -502,12 +494,7 @@ def register_callbacks(app):
             import pandas as pd
 
             session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-            drv_laps = session.laps.pick_drivers(d1)
-            if d1_mode == 'specific' and d1_lap_num is not None:
-                specific = drv_laps[drv_laps['LapNumber'] == int(d1_lap_num)]
-                lap = specific.iloc[0] if not specific.empty else get_best_lap(session, d1)
-            else:
-                lap = get_best_lap(session, d1)
+            lap = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
 
             if lap is None or pd.isna(lap.get('LapTime')):
                 raise PreventUpdate
@@ -517,7 +504,7 @@ def register_callbacks(app):
             if tel.empty:
                 raise PreventUpdate
 
-            # Downsample for fast hover updates
+            # Downsample for responsive hover updates.
             max_pts = 1400
             n = len(tel)
             step = max(1, n // max_pts)
@@ -536,7 +523,7 @@ def register_callbacks(app):
                 showlegend=False
             ))
 
-            # Initial marker at start
+            # Add marker at lap start.
             fig.add_trace(go.Scatter(
                 x=[float(x[0])], y=[float(y[0])],
                 mode='markers',
@@ -577,7 +564,7 @@ def register_callbacks(app):
         prevent_initial_call=True,
     )
     def update_gg_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
-        """Compute base friction circle + cache G-series for fast hover highlighting."""
+        """Build base friction-circle figure and cache G-series for hover."""
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update, dash.no_update
 
@@ -586,7 +573,7 @@ def register_callbacks(app):
         import pandas as pd
 
         def calculate_g_series(tel):
-            # Returns (dist, lat_g, long_g) arrays.
+            # Return (dist, lat_g, long_g) arrays.
             t = tel['Time'].dt.total_seconds()
             dt = t.diff().fillna(0.1).to_numpy(dtype=float)
             dt = np.where(dt <= 1e-3, 1e-3, dt)
@@ -610,19 +597,11 @@ def register_callbacks(app):
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
             session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
 
-            def get_lap(driver, mode, lap_num):
-                drv_laps = session.laps.pick_drivers(driver)
-                if mode == 'specific' and lap_num is not None:
-                    specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
-                    if not specific.empty:
-                        return specific.iloc[0]
-                return get_best_lap(session, driver)
-
-            lap1 = get_lap(d1, d1_mode, d1_lap_num)
-            lap2 = get_lap(d2, d2_mode, d2_lap_num)
-            if getattr(lap1, "empty", True) or pd.isna(lap1.get("LapTime")) if lap1 is not None else True:
+            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
+            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num)
+            if not _has_valid_lap(lap1, pd):
                 raise PreventUpdate
-            if getattr(lap2, "empty", True) or pd.isna(lap2.get("LapTime")) if lap2 is not None else True:
+            if not _has_valid_lap(lap2, pd):
                 raise PreventUpdate
 
             tel1 = lap1.get_telemetry().add_distance()
@@ -635,7 +614,7 @@ def register_callbacks(app):
             dist1, lat1, long1 = calculate_g_series(tel1)
             dist2, lat2, long2 = calculate_g_series(tel2)
 
-            # Downsample for browser store
+            # Downsample payload before writing to browser store.
             def ds(dist, lat, lng, max_pts=2200):
                 n = len(dist)
                 if n <= max_pts:
@@ -651,7 +630,7 @@ def register_callbacks(app):
             }
 
             fig = go.Figure()
-            # Reference circles
+            # Reference rings.
             for r0 in [1, 2, 3, 4, 5]:
                 th = np.linspace(0, 2 * np.pi, 160)
                 fig.add_trace(go.Scatter(
@@ -683,9 +662,7 @@ def register_callbacks(app):
         prevent_initial_call=True
     )
 
-    # =============================================
-    # 8. TAB: Track Dominance (lazy)
-    # =============================================
+    # Track map tab.
     @app.callback(
         [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
@@ -697,7 +674,7 @@ def register_callbacks(app):
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 import pandas as pd
-                # Dominance tab needs Laps and Telemetry
+                # Track map needs lap + telemetry data.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
                 lap1 = get_best_lap(session, d1)
                 lap2 = get_best_lap(session, d2)
@@ -717,7 +694,7 @@ def register_callbacks(app):
                     d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2
                 )
 
-                # Build Radar Chart (Driver DNA)
+                # Build Driver DNA radar chart.
                 radar_fig, dna_legend = _build_driver_radar(d1, d2, c1, c2, tel1, tel2)
                 legend_ui = html.Div(
                     [
@@ -788,9 +765,7 @@ def register_callbacks(app):
                 print(f"Dominance Error: {e}")
                 return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
 
-    # =============================================
-    # 9. TAB: Strategy & Tyres (lazy)
-    # =============================================
+    # Strategy tab.
     @app.callback(
         [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
@@ -800,7 +775,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                # Strategy tab needs Laps and Weather (for Temp), but NO Telemetry
+                # Strategy view needs laps + weather; no telemetry.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
                 session_type = params['session_type']
 
@@ -822,9 +797,7 @@ def register_callbacks(app):
                 err = _error_figure(_friendly_error(e))
                 return err, err
 
-    # =============================================
-    # 10. TAB: Race Analysis (lazy)
-    # =============================================
+    # Race tab.
     @app.callback(
         [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
@@ -834,7 +807,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                # Race Analysis needs Laps, but NO Telemetry or Weather
+                # Race analysis needs laps only.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False)
                 session_type = params['session_type']
 
@@ -850,9 +823,7 @@ def register_callbacks(app):
                 err = _error_figure(_friendly_error(e))
                 return err, err
 
-    # =============================================
-    # 11. TAB: Grid Pace (lazy, independent of driver selection)
-    # =============================================
+    # Grid pace tab.
     @app.callback(
         Output('grid-pace-graph', 'figure'),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
@@ -862,7 +833,7 @@ def register_callbacks(app):
             return dash.no_update
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                # Grid Pace uses weather to detect wet sessions for pace filtering.
+                # Use weather to detect wet conditions for pace filtering.
                 session = load_session_with_preload(
                     params['year'],
                     params['race'],
@@ -878,9 +849,7 @@ def register_callbacks(app):
                 return _error_figure(_friendly_error(e))
 
 
-    # =============================================
-    # 13. FEEDBACK MODAL (client-side toggle)
-    # =============================================
+    # Feedback modal.
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='toggleFeedbackModal'),
         Output('feedback-modal', 'is_open'),
@@ -995,10 +964,7 @@ def register_callbacks(app):
         filename = f"feedback-inbox-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
         return dcc.send_data_frame(df.to_csv, filename, index=False)
 
-    # =============================================
-    # 14. AI ANALYSIS (rate-limited, cached, budget-tracked)
-    #     with clientside navigation and rendering
-    # =============================================
+    # AI analysis with rate limiting and cache.
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='updateAIHistoryIndex'),
         Output('ai-history-index-store', 'data', allow_duplicate=True),
@@ -1026,7 +992,7 @@ def register_callbacks(app):
         prevent_initial_call=True
     )
     def ask_ai(n_clicks, n_submit, question, session_context, history):
-        """Sends the user's question + session context to Gemini with full protection."""
+        """Send user question + session context to Gemini with guardrails."""
         if history is None:
             history = []
         history = _trim_history(history)
@@ -1035,19 +1001,19 @@ def register_callbacks(app):
         if total_clicks == 0 or not question or not question.strip():
             raise PreventUpdate
 
-        # --- Guard: API key ---
+        # Guard: API key.
         if not GEMINI_API_KEY:
             err = "AI Analysis is not available at this time."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
 
-        # --- Guard: Session context ---
+        # Guard: session context.
         if not session_context:
             err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
 
-        # --- Guard: Input validation ---
+        # Guard: input length.
         question = question.strip()
         if len(question) < 10:
             err = "⚠️ Please ask a more specific question (at least 10 characters)."
@@ -1058,7 +1024,7 @@ def register_callbacks(app):
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
 
-        # --- Guard: Rate Limiting ---
+        # Guard: per-user rate limit.
         forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
         raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
         
@@ -1069,13 +1035,13 @@ def register_callbacks(app):
             return new_history, '', len(new_history) - 1, ''
 
         with _timed_callback('ask_ai', question_len=len(question)):
-            # --- Check response cache ---
+            # Check response cache first.
             cached = get_cached_response(session_context, question)
             if cached:
                 new_history = _trim_history(history + [{'question': question, 'answer': cached}])
                 return new_history, '', len(new_history) - 1, ''
 
-            # --- Call Gemini Models sequentially with random start ---
+            # Try configured Gemini models in random order.
             shuffled_models = GEMINI_MODELS.copy()
             random.shuffle(shuffled_models)
             
@@ -1089,11 +1055,11 @@ def register_callbacks(app):
                     response = client.models.generate_content(model=model_name, contents=prompt)
                     answer = response.text
                     
-                    # Append model attribution
+                    # Append model attribution.
                     attribution = f"\n\n---\n*Response generated by {model_name}*"
                     full_answer = answer + attribution
 
-                    # Cache the response for future identical questions
+                    # Cache response for identical future question/context.
                     store_cached_response(session_context, question, full_answer)
 
                     new_history = _trim_history(history + [{'question': question, 'answer': full_answer}])
@@ -1101,10 +1067,10 @@ def register_callbacks(app):
 
                 except Exception as e:
                     last_error = str(e)
-                    # Fail gracefully and try the next model
+                    # Try next model on failure.
                     continue
 
-            # If all models failed
+            # All models failed.
             err = f"❌ **AI Analysis encountered an error after trying multiple models.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
@@ -1122,19 +1088,19 @@ def register_callbacks(app):
         
         try:
             import pandas as pd
-            # Load lightweight session with laps to determine bounds
+            # Load lightweight session to determine lap bounds.
             session = load_session_summary(year, race, session_type, include_laps=True)
             
-            # Default to whoever completed the most laps
+            # Start from maximum completed lap.
             max_lap = 1
             if not session.laps.empty:
                 max_lap = int(session.laps['LapNumber'].max())
 
-            # For Races/Sprints, use official length if available (often matches or exceeds completed)
+            # For Race/Sprint, use official total when available.
             if is_race(session_type):
                 official_total = getattr(session, 'total_laps', None)
                 if official_total is not None and pd.notna(official_total):
-                    # Use official total but ensure it's at least as much as completed
+                    # Keep at least as high as completed laps.
                     max_lap = max(max_lap, int(official_total))
 
             if max_lap < 1: max_lap = 1

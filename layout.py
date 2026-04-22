@@ -5,7 +5,7 @@ from graphs import GRAPH_CONFIG
 from ai_utils import AI_ENABLED
 
 
-# --- Tab graph height constants ---
+# Tab graph heights by view.
 TAB_HEIGHTS = {
     'single':       '75vh',
     'telemetry':    '68vh',
@@ -15,18 +15,18 @@ TAB_HEIGHTS = {
     'race_bot':     '33vh',
 }
 
-# --- Shared Disclaimer ---
+# Shared disclaimer.
 DISCLAIMER = html.Div([
     html.Span("Note: F1 data can occasionally be missing or incomplete for specific stints/laps due to session recording issues.",
               style={'fontSize': '0.75rem', 'color': '#888', 'fontStyle': 'italic'})
 ], style={'textAlign': 'center', 'marginBottom': '0.5rem'})
 
-# --- Tab / style constants ---
+# Shared tab styles.
 TAB_STYLE          = {'backgroundColor': '#222', 'color': 'white'}
 TAB_SELECTED_STYLE = {'backgroundColor': '#ff0000', 'color': 'white'}
 
 
-# --- Reusable empty-state placeholder ---
+# Reusable empty-state graph placeholder.
 def _empty_state(graph_id, height='68vh'):
     """Returns a graph with a friendly empty-state message instead of a blank chart."""
     return dcc.Graph(
@@ -50,7 +50,7 @@ def _empty_state(graph_id, height='68vh'):
     )
 
 
-# --- Reusable driver selector (dropdown + teammate button) ---
+# Reusable driver selector with teammate shortcut.
 def _driver_selector(label, dropdown_id, btn_id):
     return html.Div([
         dbc.Label(label, style={"fontSize": "0.9rem"}),
@@ -71,7 +71,7 @@ def _driver_selector(label, dropdown_id, btn_id):
     ], style={'marginBottom': '0.75rem'})
 
 
-# --- CONTROL PANEL (SIDEBAR) ---
+# Sidebar control panel.
 sidebar = html.Div([
     html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
     html.P("Session Analysis Dashboard", style={"fontSize": "0.75rem", "color": "#888", "marginBottom": "0.5rem"}),
@@ -99,7 +99,7 @@ sidebar = html.Div([
                      style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
     ]),
 
-    # Driver selectors
+    # Driver selectors.
     _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
     _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
 
@@ -119,8 +119,8 @@ sidebar = html.Div([
           "display": "flex", "flexDirection": "column"})
 
 
-# --- MAIN VIEWING AREA ---
-# Lap selection row for Telemetry tab
+# Main viewing area.
+# Telemetry lap-selection row.
 telemetry_controls = html.Div([
     dbc.Row([
         dbc.Col([
@@ -317,11 +317,11 @@ content = html.Div([
 app_layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dbc.Row([
-        # Sidebar: sticky/fixed on medium+ screens, scrollable on mobile
+        # Sidebar column.
         dbc.Col(sidebar, md=2, xs=12, 
                 style={'height': '100vh', 'overflowY': 'auto', 'borderRight': '1px solid #333'},
                 className='sidebar-col'),
-        # Main content: scrollable area
+        # Main content column.
         dbc.Col(content, md=10, xs=12, 
                 style={'height': '100vh', 'overflowY': 'auto'},
                 className='content-col')

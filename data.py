@@ -15,6 +15,8 @@ _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
 _MAX_TRACKED_PRELOAD_FUTURES = 24
 _CACHE_DIR = 'f1_cache'
+_CACHE_SETUP_LOCK = threading.Lock()
+_CACHE_READY = False
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
 _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
@@ -41,19 +43,32 @@ def is_practice(session_type):
     return any(p in session_type for p in ['Practice', 'FP'])
 
 
-# --- 1. SETUP F1 CACHE ---
 def setup_cache():
+    """Enable FastF1 disk cache once per process."""
+    global _CACHE_READY
+    if _CACHE_READY:
+        return
     import fastf1
 
-    if not os.path.exists(_CACHE_DIR):
-        os.makedirs(_CACHE_DIR)
-    fastf1.Cache.enable_cache(_CACHE_DIR)
+    with _CACHE_SETUP_LOCK:
+        if _CACHE_READY:
+            return
+        if not os.path.exists(_CACHE_DIR):
+            os.makedirs(_CACHE_DIR)
+        fastf1.Cache.enable_cache(_CACHE_DIR)
+        _CACHE_READY = True
 
 
-# --- 1b. EVENT SCHEDULE CACHE ---
+def _ensure_cache_ready():
+    """Ensure FastF1 cache is enabled before any data calls."""
+    if not _CACHE_READY:
+        setup_cache()
+
+
 @lru_cache(maxsize=EVENT_SCHEDULE_CACHE_MAXSIZE)
 def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
+    _ensure_cache_ready()
     import fastf1
     return fastf1.get_event_schedule(year)
 
@@ -61,6 +76,7 @@ def get_event_schedule_cached(year):
 @lru_cache(maxsize=EVENT_SESSIONS_CACHE_MAXSIZE)
 def get_event_sessions_cached(year, race):
     """LRU-cached session names for a specific event."""
+    _ensure_cache_ready()
     import fastf1
     import pandas as pd
 
@@ -73,13 +89,13 @@ def get_event_sessions_cached(year, race):
     return tuple(sessions)
 
 
-# --- 2. SESSION CACHE ---
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
 def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """LRU-cached session loader with granular control.
     Uses the same keys but allows loading specific data streams.
     Note: FastF1 handles repeated .load() calls efficiently if data is already loaded.
     """
+    _ensure_cache_ready()
     import fastf1
     # Tip: Use load=False (or skip immediate loading) for lazy initialization
     session = fastf1.get_session(int(year), str(race), str(session_name))
@@ -104,6 +120,7 @@ def _load_session_cached(year, race, session_name):
 @lru_cache(maxsize=SESSION_SUMMARY_CACHE_MAXSIZE)
 def _load_session_summary_cached(year, race, session_name, include_laps):
     """LRU-cached lightweight session loader for sidebar data and labels."""
+    _ensure_cache_ready()
     import fastf1
     session = fastf1.get_session(year, race, session_name)
     session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
@@ -185,7 +202,6 @@ def _load_drivers_fast(year, race, session_name):
         return []
 
 
-# --- 3. TRACK STATUS UTILITY ---
 def get_track_status_events(session):
     """Returns (sc_laps, vsc_laps, red_laps) sets extracted from session laps."""
     import pandas as pd
@@ -203,7 +219,6 @@ def get_track_status_events(session):
     return sc_laps, vsc_laps, red_laps
 
 
-# --- 4. DRIVER INFO UTILITY ---
 def get_driver_info(session):
     """Returns a list of dicts with driver abbreviation, full name, team, and color."""
     drivers = []
@@ -238,7 +253,6 @@ def get_driver_info(session):
     return drivers
 
 
-# --- 5. TEAMMATE LOOKUP ---
 def get_teammate_from_info(driver_abbr, driver_info):
     """Return the teammate abbreviation from preloaded driver info."""
     driver_team = None
@@ -298,7 +312,6 @@ def get_best_lap(session, driver_abbr):
             return None
 
 
-# --- 5b. SINGLE DRIVER COLOR UTILITY ---
 def get_single_driver_color(driver_abbr, session):
     """Fetch a single driver's team color with fallback."""
     try:
@@ -311,7 +324,6 @@ def get_single_driver_color(driver_abbr, session):
         return '#ffffff'
 
 
-# --- 5c. SHARED DATA (session + labels + colors) ---
 @lru_cache(maxsize=32)
 def _get_shared_data_cached(year, race, session_type, d1, d2, laps, telemetry, weather, messages):
     """Internal LRU-cached helper for shared data.
@@ -430,7 +442,6 @@ def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
             lock_handle.close()
 
 
-# --- 6. CACHE MANAGEMENT ---
 def clear_old_cache(max_size_gb=2.0):
     """Backward-compatible cache pruning entry point."""
     maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)

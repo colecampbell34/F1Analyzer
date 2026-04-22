@@ -8,6 +8,7 @@ from ai_utils import flush_ai_cache
 from flask_compress import Compress
 import threading
 import atexit
+import time
 
 app = dash.Dash(
     __name__,
@@ -20,9 +21,34 @@ app = dash.Dash(
 Compress(app.server)
 server = app.server
 
-data.setup_cache()
-threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
-setup_feedback_storage()
+_RUNTIME_INIT_LOCK = threading.Lock()
+_RUNTIME_INIT_DONE = False
+
+
+def _init_runtime_background():
+    """Run non-critical startup tasks outside the first paint path."""
+    global _RUNTIME_INIT_DONE
+    with _RUNTIME_INIT_LOCK:
+        if _RUNTIME_INIT_DONE:
+            return
+        start = time.perf_counter()
+        try:
+            data.setup_cache()
+            threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
+            setup_feedback_storage()
+        finally:
+            _RUNTIME_INIT_DONE = True
+            print(f"[startup] deferred_init_ms={(time.perf_counter() - start) * 1000:.1f}")
+
+
+@server.before_request
+def _ensure_runtime_initialized():
+    """Kick off deferred runtime initialization once."""
+    if _RUNTIME_INIT_DONE:
+        return
+    threading.Thread(target=_init_runtime_background, daemon=True).start()
+
+
 atexit.register(flush_ai_cache)
 app.layout = app_layout
 register_callbacks(app)

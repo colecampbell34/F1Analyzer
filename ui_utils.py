@@ -23,7 +23,7 @@ def _friendly_error(e):
     if 'no lap data' in lower_msg or 'no laps' in lower_msg:
         return "Lap data is not available for this session yet. The event may still be in progress or not published."
     if 'did not set a valid lap' in msg:
-        return msg  # Already user-friendly
+        return msg
     return f"Something went wrong loading the data: {msg}"
 
 def _tab_label(tab_value):

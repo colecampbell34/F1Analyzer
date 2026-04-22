@@ -8,12 +8,12 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from data import get_track_status_events, get_best_lap, get_pit_stop_data, get_driver_info, get_teammate_from_info
 
-# --- GEMINI API SETUP ---
+# Gemini API setup.
 load_dotenv()
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 AI_ENABLED = bool(GEMINI_API_KEY)
 
-# --- Model Configuration ---
+# Model configuration.
 GEMINI_MODELS = [
     'gemini-3-flash-preview',
     'gemini-3.1-flash-lite-preview',
@@ -21,15 +21,15 @@ GEMINI_MODELS = [
     'gemini-2.5-flash'
 ]
 
-# --- Thread lock for all rate-limiting state ---
+# Shared rate-limit lock.
 _RATE_LIMIT_LOCK = threading.Lock()
 
-# --- Rate Limiting (User-Specific Daily Limit) ---
+# Per-user daily rate limit.
 _USER_DAILY_USAGE = defaultdict(int)  # IP → count
 USER_DAILY_LIMIT = 10
 _daily_reset_date = None
 
-# --- Response Cache (disk-backed for persistence across restarts) ---
+# Disk-backed AI response cache.
 _AI_CACHE_DIR = 'ai_cache'
 _AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
 _AI_CACHE_LOCK = threading.Lock()
@@ -113,7 +113,7 @@ def _maybe_flush_cache_unlocked(force=False):
     _AI_CACHE_DIRTY = False
 
 
-# Load cache from disk on module import
+# Load cache on import.
 _load_cache_from_disk()
 
 
@@ -132,7 +132,7 @@ def check_user_limit(ip):
     today = datetime.now(timezone.utc).date()
 
     with _RATE_LIMIT_LOCK:
-        # Reset all users' daily counts at midnight UTC
+        # Reset daily counters at midnight UTC.
         if _daily_reset_date != today:
             _USER_DAILY_USAGE.clear()
             _daily_reset_date = today
@@ -187,11 +187,11 @@ def build_ai_prompt(session_context, question, history=None):
     
     Keeps prompt engineering logic centralized in the AI module.
     """
-    # Build conversation context from history
+    # Include up to the last three exchanges.
     history_text = ""
     if history:
         history_text = "\n\n=== PREVIOUS Q&A ===\n"
-        for h in history[-3:]:  # last 3 exchanges for context
+        for h in history[-3:]:
             history_text += f"Q: {h['question']}\nA: {h['answer'][:1500]}...\n\n"
 
     prompt = (
@@ -246,14 +246,14 @@ def _get_field_summary(session):
                 team = row.get('TeamName', '')
                 status = row.get('Status', 'Finished')
                 
-                # Gap to leader
+                # Gap to leader.
                 time_val = row.get('Time')
                 if pd.notna(time_val) and isinstance(time_val, pd.Timedelta):
                     gap = f"+{time_val.total_seconds():.3f}s" if pos > 1 else "LEADER"
                 else:
                     gap = status if status != 'Finished' else ""
 
-                # Pit stops for this driver
+                # Pit stops for this driver.
                 pits = 0
                 try:
                     pits = len(session.laps.pick_drivers(abbr).pick_wo_box().pick_pit_stops())
@@ -277,7 +277,7 @@ def _get_starting_grid(session):
     lines = ["=== OFFICIAL STARTING GRID ==="]
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
-            # Sort by GridPosition (handles cases where they started from pits etc)
+            # Sort by grid position, including pit-lane starts.
             res = session.results.sort_values('GridPosition')
             for _, row in res.iterrows():
                 grid_pos = row.get('GridPosition')
@@ -299,7 +299,7 @@ def _get_field_tyre_strategy(session):
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
             all_laps = session.laps
-            # Sort by finishing position for logical order
+            # Sort by finishing position.
             res = session.results.sort_values('Position')
             for _, row in res.iterrows():
                 abbr = row.get('Abbreviation', '')
@@ -308,11 +308,11 @@ def _get_field_tyre_strategy(session):
                 try:
                     drv_laps = all_laps.pick_drivers(abbr).sort_values('LapNumber')
                     if drv_laps.empty:
-                        # lines.append(f"{abbr}: No lap data") # Keep it compact
+                        # Skip drivers with no lap data to keep output compact.
                         continue
                     
                     stint_summary = []
-                    # Get unique stints in chronological order
+                    # Process stints in chronological order.
                     stints = sorted(drv_laps['Stint'].dropna().unique())
                     for stint in stints:
                         subset = drv_laps[drv_laps['Stint'] == stint]
@@ -321,7 +321,7 @@ def _get_field_tyre_strategy(session):
                         start = int(subset['LapNumber'].min())
                         end = int(subset['LapNumber'].max())
                         
-                        # Added TyreLife for better degradation context
+                        # Include TyreLife for degradation context.
                         life_start = int(subset['TyreLife'].min()) if 'TyreLife' in subset.columns else 1
                         life_end = int(subset['TyreLife'].max()) if 'TyreLife' in subset.columns else (life_start + (end - start))
                         
@@ -360,7 +360,7 @@ def _get_teammate_benchmark(session, driver_abbr):
         best_lap = get_best_lap(session, teammate)
         bl_str = f"{best_lap['LapTime'].total_seconds():.3f}s" if best_lap is not None and pd.notna(best_lap['LapTime']) else "N/A"
         
-        # Avg Pace
+        # Average race pace.
         avg_pace = "N/A"
         try:
             tl = session.laps.pick_drivers(teammate).pick_wo_box().pick_track_status('1')
@@ -382,12 +382,10 @@ def _get_session_narrative(session):
         if not hasattr(session, 'messages') or session.messages is None or session.messages.empty:
             return ""
         
-        # Filter for interesting categories
-        # FastF1 messages usually have 'Category' and 'Message'
-        # Categories: 'Flag', 'Safety Car', 'Decision', 'Incident', 'Other'
+        # Filter to high-signal event categories.
         interesting = session.messages.copy()
         
-        # Heuristic: exclude repetitive/low-info messages
+        # Exclude repetitive low-signal messages.
         exclude_keywords = ['DRS ENABLED', 'DRS DISABLED', 'TRACK LIMITS', 'METEOROLOGICAL', 'WIND']
         
         for _, row in interesting.iterrows():
@@ -395,10 +393,10 @@ def _get_session_narrative(session):
             if any(k in msg for k in exclude_keywords):
                 continue
             
-            # Focus on Flags, Overtakes (rare in messages but sometimes noted), Incidents, decisions
+            # Keep flag/safety/incident/decision events.
             cat = str(row.get('Category', '')).lower()
             if cat in ['flag', 'safety car', 'incident', 'decision']:
-                # Format time if possible
+                # Format timestamp when available.
                 time_val = row.get('Time')
                 t_str = ""
                 if pd.notna(time_val):
@@ -413,9 +411,9 @@ def _get_session_narrative(session):
                 lines.append(f"{t_str}{msg}")
         
         if len(lines) == 1:
-            return "" # No interesting events found
+            return ""
             
-        # Limit to last 50 events to avoid bloating if race was chaotic
+        # Cap output to the latest events to avoid prompt bloat.
         if len(lines) > 51:
             lines = lines[:1] + lines[-50:]
             
@@ -431,8 +429,7 @@ def _get_stint_telemetry_summary(session, driver, stint):
         if laps.empty:
             return "N/A"
         
-        # We sample a few laps to get representative data without loading every byte
-        # But since we have the full session loaded in memory usually, we can just aggregate
+        # Aggregate over available telemetry in the stint.
         tel = laps.get_telemetry()
         if tel.empty:
             return "N/A"
@@ -456,7 +453,7 @@ def _get_track_temp_evolution(session):
         if wd.empty:
             return ""
         
-        # Sample ~10 points or every 10 minutes
+        # Sample approximately 10 points across the session.
         total = len(wd)
         if total <= 1:
             return f"Track Temp: {wd['TrackTemp'].iloc[0]:.1f}°C (Constant)"
@@ -486,7 +483,7 @@ def _calculate_g_and_corners(tel):
         t = tel['Time'].dt.total_seconds()
         dt = t.diff().fillna(0.1)
         
-        # G forces
+        # Longitudinal and lateral G-force estimates.
         v_ms = tel['Speed'] / 3.6
         accel_ms2 = v_ms.diff() / dt
         long_g = accel_ms2 * 0.1019
@@ -504,7 +501,7 @@ def _calculate_g_and_corners(tel):
         braking_mask = long_g < -0.5
         avg_braking_g = np.abs(long_g[braking_mask]).mean() if braking_mask.any() else 0.0
 
-        # Corners
+        # Corner-speed buckets from local minima.
         speed = tel['Speed'].to_numpy()
         peaks, _ = find_peaks(-speed, prominence=5, distance=10)
         corner_speeds = speed[peaks]
@@ -550,39 +547,39 @@ def _gather_session_context(session, session_type, driver1, driver2):
 
     lines += [f"Session Type: {session_type}", f"Drivers being compared: {driver1} vs {driver2}", ""]
 
-    # Teammate Context (Benchmark)
+    # Teammate benchmark context.
     lines.append("=== TEAMMATE BENCHMARKS ===")
     lines.append(_get_teammate_benchmark(session, driver1))
     lines.append(_get_teammate_benchmark(session, driver2))
     lines.append("")
 
-    # Full Field Classification
+    # Full field classification.
     lines.append(_get_field_summary(session))
     lines.append("")
     
-    # Starting Grid
+    # Starting grid.
     lines.append(_get_starting_grid(session))
     lines.append("")
 
-    # Full Field Tyre Strategy
+    # Full-field tyre strategy.
     tyre_strat = _get_field_tyre_strategy(session)
     if tyre_strat:
         lines.append(tyre_strat)
         lines.append("")
 
-    # Session Narrative
+    # Session narrative.
     narrative = _get_session_narrative(session)
     if narrative:
         lines.append(narrative)
         lines.append("")
 
-    # Track Temperature Evolution
+    # Track temperature evolution.
     track_evolution = _get_track_temp_evolution(session)
     if track_evolution:
         lines.append(track_evolution)
         lines.append("")
 
-    # Fastest lap comparison
+    # Fastest-lap comparison.
     try:
         lap1 = get_best_lap(session, driver1)
         lap2 = get_best_lap(session, driver2)
@@ -592,7 +589,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
             t2 = lap2['LapTime'].total_seconds()
             lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
 
-            # Sector times
+            # Sector times.
             for s in [1, 2, 3]:
                 s1 = lap1.get(f'Sector{s}Time')
                 s2 = lap2.get(f'Sector{s}Time')
@@ -600,7 +597,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
                     lines.append(
                         f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
             
-            # Telemetry Aggregation
+            # Fastest-lap telemetry summary.
             for drv, l in [(driver1, lap1), (driver2, lap2)]:
                 try:
                     tel = l.get_telemetry()
@@ -628,7 +625,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
     except Exception:
         lines.append("Fastest lap data: unavailable")
 
-    # Race/Sprint specific data
+    # Race/Sprint-specific context.
     if session_type in ['Race', 'Sprint']:
         try:
             pit_stops_df = get_pit_stop_data(session.event.year, session.event.RoundNumber)
@@ -655,7 +652,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
                     lines.append(f"  Best lap: {rl['LapTime_Sec'].min():.3f}s")
                     lines.append(f"  Worst lap: {rl['LapTime_Sec'].max():.3f}s")
 
-                # Pit stops (explicit lap numbers and duration)
+                # Pit stops with lap numbers and durations when available.
                 pit_laps = all_laps[all_laps['PitInTime'].notna()]['LapNumber'].tolist()
                 if pit_laps:
                     pit_info = []
@@ -677,7 +674,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
                 else:
                     lines.append("  Pit stops: None")
 
-                # Stint & tyre data with lap ranges
+                # Stint and tyre data with lap ranges.
                 if 'Stint' in all_laps.columns:
                     stints = sorted(all_laps['Stint'].dropna().unique())
                     lines.append(f"  Number of stints: {len(stints)}")
@@ -690,7 +687,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         comp = stint_all['Compound'].iloc[0] if 'Compound' in stint_all.columns else '?'
                         total_stint_laps = len(stint_all)
 
-                        # Stint Telemetry Summary
+                        # Stint telemetry summary.
                         tel_summary = _get_stint_telemetry_summary(session, drv, stint)
 
                         stint_racing = rl[rl['Stint'] == stint].sort_values('LapNumber').reset_index(drop=True)
@@ -708,7 +705,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
                                          f"({total_stint_laps} laps)")
                             lines.append(f"      Pace context: {tel_summary}")
 
-                # Position changes
+                # Position progression.
                 if 'Position' in all_laps.columns and not all_laps.empty:
                     start_p = all_laps['Position'].iloc[0]
                     end_p = all_laps['Position'].iloc[-1]
@@ -718,7 +715,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
             except Exception:
                 lines.append(f"\n{drv}: lap data unavailable")
 
-        # Track status events (SC, VSC, Red Flag)
+        # Track status events.
         lines.append("\n=== Track Status Events ===")
         sc_laps, vsc_laps, red_laps = get_track_status_events(session)
 
@@ -757,7 +754,7 @@ def _gather_session_context(session, session_type, driver1, driver2):
             laps1 = session.laps.pick_drivers(driver1).dropna(subset=['Time']).set_index('LapNumber')
             laps2 = session.laps.pick_drivers(driver2).dropna(subset=['Time']).set_index('LapNumber')
             
-            # Leader data for context
+            # Leader lap times for gap-to-leader context.
             leader = session.results.sort_values('Position').iloc[0]['Abbreviation'] if not session.results.empty else None
             leader_laps = session.laps.pick_drivers(leader).dropna(subset=['Time']).set_index('LapNumber') if leader else None
 
