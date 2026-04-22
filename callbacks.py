@@ -1,6 +1,5 @@
 import dash
-from dash import dcc, html
-import dash_bootstrap_components as dbc
+from dash import dcc, html, ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import flask
@@ -22,9 +21,7 @@ from graphs import (
     _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
     _build_strategy_fig, _build_deg_fig, _build_race_gaps_fig,
     _build_grid_pace_fig, _build_pit_stops_fig,
-    _error_figure, _not_applicable_figure,
-    _build_mini_map_fig, _build_driver_radar,
-    _build_gg_diagram
+    _error_figure, _not_applicable_figure, _build_driver_radar
 )
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS,
@@ -564,41 +561,7 @@ def register_callbacks(app):
             return dash.no_update, dash.no_update
 
     app.clientside_callback(
-        """
-        function(hoverData, miniStore, fig) {
-            if (!hoverData || !miniStore || !fig) return window.dash_clientside.no_update;
-            if (!hoverData.points || hoverData.points.length === 0) return window.dash_clientside.no_update;
-            const hoverDist = hoverData.points[0].x;
-            if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
-
-            const dist = miniStore.dist || [];
-            const x = miniStore.x || [];
-            const y = miniStore.y || [];
-            if (dist.length < 2 || x.length !== dist.length || y.length !== dist.length) return window.dash_clientside.no_update;
-
-            // Find nearest distance sample.
-            let bestI = 0;
-            let bestD = Infinity;
-            for (let i = 0; i < dist.length; i++) {
-                const d = Math.abs(dist[i] - hoverDist);
-                if (d < bestD) { bestD = d; bestI = i; }
-            }
-
-            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
-            baseData.push({
-                type: 'scatter',
-                mode: 'markers',
-                x: [x[bestI]],
-                y: [y[bestI]],
-                marker: {color: '#ff0000', size: 12, symbol: 'circle', line: {color: 'white', width: 2}},
-                hoverinfo: 'skip',
-                showlegend: false,
-                meta: 'hover'
-            });
-
-            return {...fig, data: baseData};
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='updateMiniMap'),
         Output('mini-track-map', 'figure', allow_duplicate=True),
         Input('speed-graph', 'hoverData'),
         [State('mini-map-store', 'data'), State('mini-track-map', 'figure')],
@@ -700,7 +663,7 @@ def register_callbacks(app):
                 ))
 
             fig.update_layout(
-                title="Hover over telemetry to view G-force",
+                title="Hover over telemetry to view G-Force traces",
                 title_font=dict(size=14),
                 xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444'),
                 yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444', scaleanchor="x", scaleratio=1),
@@ -713,179 +676,7 @@ def register_callbacks(app):
             return fig, store
 
     app.clientside_callback(
-        """
-        function(hoverData, ggStore, fig) {
-            if (!hoverData || !ggStore || !fig) return window.dash_clientside.no_update;
-            if (!hoverData.points || hoverData.points.length === 0) return window.dash_clientside.no_update;
-            const hoverDist = hoverData.points[0].x;
-            if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
-
-            const windowM = 120.0;
-
-            function hexToRgba(hex, a) {
-                if (!hex) return `rgba(255,255,255,${a})`;
-                const s = String(hex).replace('#','');
-                if (s.length !== 6) return `rgba(255,255,255,${a})`;
-                const r = parseInt(s.slice(0,2), 16);
-                const g = parseInt(s.slice(2,4), 16);
-                const b = parseInt(s.slice(4,6), 16);
-                return `rgba(${r},${g},${b},${a})`;
-            }
-
-            function quantile(sorted, q) {
-                if (!sorted || sorted.length === 0) return null;
-                const i = Math.max(0, Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1))));
-                return sorted[i];
-            }
-
-            function envelopeBand(latArr, longArr, bins, qLo, qHi) {
-                const xs = [];
-                const ys = [];
-                for (let i = 0; i < latArr.length; i++) {
-                    const x = latArr[i], y = longArr[i];
-                    if (!isFinite(x) || !isFinite(y)) continue;
-                    xs.push(x); ys.push(y);
-                }
-                if (xs.length < 40) return null;
-
-                const edges = [];
-                for (let i = 0; i <= bins; i++) edges.push(-Math.PI + (2*Math.PI*i)/bins);
-                const centers = [];
-                for (let i = 0; i < bins; i++) centers.push((edges[i] + edges[i+1]) / 2.0);
-
-                const rBins = Array.from({length: bins}, () => []);
-                for (let i = 0; i < xs.length; i++) {
-                    const th = Math.atan2(ys[i], xs[i]);
-                    let bi = Math.floor(((th + Math.PI) / (2*Math.PI)) * bins);
-                    bi = Math.max(0, Math.min(bins - 1, bi));
-                    const r = Math.hypot(xs[i], ys[i]);
-                    rBins[bi].push(r);
-                }
-
-                const rLo = new Array(bins).fill(NaN);
-                const rHi = new Array(bins).fill(NaN);
-                for (let i = 0; i < bins; i++) {
-                    if (rBins[i].length === 0) continue;
-                    rBins[i].sort((a,b) => a-b);
-                    rLo[i] = quantile(rBins[i], qLo);
-                    rHi[i] = quantile(rBins[i], qHi);
-                }
-
-                // Fill missing bins with nearest neighbor to keep a continuous ring.
-                function fillMissing(arr) {
-                    const valid = [];
-                    for (let i = 0; i < arr.length; i++) if (isFinite(arr[i])) valid.push(i);
-                    if (valid.length < 18) return null;
-                    const out = arr.slice();
-                    for (let i = 0; i < out.length; i++) {
-                        if (isFinite(out[i])) continue;
-                        let best = valid[0];
-                        let bestD = Math.abs(valid[0] - i);
-                        for (let k = 1; k < valid.length; k++) {
-                            const d = Math.abs(valid[k] - i);
-                            if (d < bestD) { bestD = d; best = valid[k]; }
-                        }
-                        out[i] = arr[best];
-                    }
-                    return out;
-                }
-
-                const fLo = fillMissing(rLo);
-                const fHi = fillMissing(rHi);
-                if (!fLo || !fHi) return null;
-
-                const xHi = [], yHi = [], xLo = [], yLo = [];
-                for (let i = 0; i < bins; i++) {
-                    xHi.push(fHi[i] * Math.cos(centers[i]));
-                    yHi.push(fHi[i] * Math.sin(centers[i]));
-                    xLo.push(fLo[i] * Math.cos(centers[i]));
-                    yLo.push(fLo[i] * Math.sin(centers[i]));
-                }
-                // Close each loop
-                xHi.push(xHi[0]); yHi.push(yHi[0]);
-                xLo.push(xLo[0]); yLo.push(yLo[0]);
-
-                // Ring polygon: hi loop + reversed lo loop
-                const polyX = xHi.concat(xLo.slice().reverse());
-                const polyY = yHi.concat(yLo.slice().reverse());
-                return {polyX, polyY, xHi, yHi};
-            }
-
-            function nearestIndex(distArr, target) {
-                let bestI = 0, bestD = Infinity;
-                for (let i = 0; i < distArr.length; i++) {
-                    const d = Math.abs(distArr[i] - target);
-                    if (d < bestD) { bestD = d; bestI = i; }
-                }
-                return bestI;
-            }
-
-            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
-
-            function addDriver(key) {
-                const d = ggStore[key];
-                if (!d) return;
-                const dist = d.dist || [];
-                const lat = d.lat || [];
-                const lng = d.long || [];
-                if (dist.length < 5) return;
-                const idx = nearestIndex(dist, hoverDist);
-
-                const color = d.color || '#ffffff';
-                const name = d.driver || key;
-
-                // 1. G-Vector Beam (Connecting center to current G)
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: [0, lat[idx]],
-                    y: [0, lng[idx]],
-                    line: {color: color, width: 1.5, dash: 'dot'},
-                    opacity: 0.5,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                // 2. Motion Trail (last 15 samples for context of change)
-                const start = Math.max(0, idx - 15);
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: lat.slice(start, idx + 1),
-                    y: lng.slice(start, idx + 1),
-                    line: {color: color, width: 3, shape: 'spline'},
-                    opacity: 0.4,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                // 3. Current "G-Ball" Marker
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'markers',
-                    x: [lat[idx]],
-                    y: [lng[idx]],
-                    marker: {
-                        color: color, 
-                        size: 11, 
-                        line: {color: 'white', width: 1.5},
-                        symbol: (key === 'd1' ? 'circle' : 'diamond')
-                    },
-                    name: name,
-                    showlegend: false,
-                    meta: 'hover',
-                    hovertemplate: `<b>${name}</b><br>Lat: %{x:.2f}G<br>Long: %{y:.2f}G<extra></extra>`
-                });
-            }
-
-            addDriver('d1');
-            addDriver('d2');
-
-            return {...fig, data: baseData};
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='updateGGHover'),
         Output('gg-diagram', 'figure', allow_duplicate=True),
         Input('speed-graph', 'hoverData'),
         [State('gg-data-store', 'data'), State('gg-diagram', 'figure')],
@@ -1091,14 +882,7 @@ def register_callbacks(app):
     # 13. FEEDBACK MODAL (client-side toggle)
     # =============================================
     app.clientside_callback(
-        """
-        function(open_clicks, cancel_clicks, refresh_data, is_open) {
-            const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
-            if (trigger.includes('open-feedback-modal-btn')) return true;
-            if (trigger.includes('cancel-feedback-btn') || trigger.includes('feedback-refresh-store')) return false;
-            return is_open;
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='toggleFeedbackModal'),
         Output('feedback-modal', 'is_open'),
         [Input('open-feedback-modal-btn', 'n_clicks'),
          Input('cancel-feedback-btn', 'n_clicks'),
@@ -1216,19 +1000,7 @@ def register_callbacks(app):
     #     with clientside navigation and rendering
     # =============================================
     app.clientside_callback(
-        """
-        function(n_prev, n_next, history, current_index) {
-            if (!history || history.length === 0) return 0;
-            const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
-            if (trigger.includes('ai-prev-btn')) {
-                return Math.max(0, current_index - 1);
-            }
-            if (trigger.includes('ai-next-btn')) {
-                return Math.min(history.length - 1, current_index + 1);
-            }
-            return current_index;
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='updateAIHistoryIndex'),
         Output('ai-history-index-store', 'data', allow_duplicate=True),
         [Input('ai-prev-btn', 'n_clicks'), Input('ai-next-btn', 'n_clicks')],
         [State('ai-history-store', 'data'), State('ai-history-index-store', 'data')],
@@ -1236,24 +1008,7 @@ def register_callbacks(app):
     )
 
     app.clientside_callback(
-        """
-        function(history, index) {
-            if (!history || history.length === 0) {
-                return ["", "Type a question and click 'Ask AI' or press Enter to get started.", 
-                        {'display': 'none'}, true, true, "", {'display': 'none'}];
-            }
-            const i = Math.max(0, Math.min(index || 0, history.length - 1));
-            const h = history[i];
-            
-            const prev_disabled = (i === 0);
-            const next_disabled = (i >= history.length - 1);
-            const position = (i + 1) + " / " + history.length;
-            const nav_style = {'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'marginTop': '0.75rem'};
-            const q_container_style = {'marginBottom': '0.5rem', 'display': 'block'};
-            
-            return [h.question, h.answer, q_container_style, prev_disabled, next_disabled, position, nav_style];
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='renderAIState'),
         [Output('ai-question-display', 'children'),
          Output('ai-answer-display', 'children'),
          Output('ai-question-container', 'style'),
@@ -1389,18 +1144,7 @@ def register_callbacks(app):
             return 1, 100, 1, 100
 
     app.clientside_callback(
-        """
-        function(d1_mode, d2_mode) {
-            const base = {
-                'width': '70px', 'display': 'inline-block', 'marginLeft': '6px',
-                'backgroundColor': '#222', 'color': 'white', 'border': '1px solid #444',
-                'fontSize': '0.8rem'
-            };
-            const d1_style = Object.assign({}, base, {display: (d1_mode === 'specific' ? 'inline-block' : 'none')});
-            const d2_style = Object.assign({}, base, {display: (d2_mode === 'specific' ? 'inline-block' : 'none')});
-            return [d1_style, d2_style];
-        }
-        """,
+        ClientsideFunction(namespace='clientside', function_name='toggleLapNumbers'),
         [Output('d1-lap-number', 'style'), Output('d2-lap-number', 'style')],
         [Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value')]
     )
