@@ -115,7 +115,7 @@ sidebar = html.Div([
         ])
     ], style={'overflowY': 'auto', 'overflowX': 'hidden', 'scrollbarGutter': 'stable', 'flex': '1', 'minHeight': '0'})
 
-], style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh", "overflowY": "hidden",
+], style={"padding": "1rem", "backgroundColor": "#111111", "minHeight": "100vh",
           "display": "flex", "flexDirection": "column"})
 
 
@@ -168,15 +168,60 @@ content = html.Div([
         dcc.Tab(label='Telemetry', value='tab-telemetry', children=[
             DISCLAIMER,
             telemetry_controls,
-            dcc.Loading(type='circle', color='#ff0000', children=[
-                _empty_state('speed-graph', TAB_HEIGHTS['telemetry'])
+            dbc.Row([
+                dbc.Col([
+                    dcc.Loading(type='circle', color='#ff0000', children=[
+                        _empty_state('speed-graph', TAB_HEIGHTS['telemetry'])
+                    ])
+                ], lg=9, md=8, xs=12),
+                dbc.Col([
+                    html.Div("Track Position", style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.75rem', 'marginBottom': '5px'}),
+                    dcc.Graph(id='mini-track-map', style={'height': '250px'}, config={'displayModeBar': False}),
+                    html.Hr(style={'margin': '10px 0'}),
+                    html.Div("Friction Circle", style={
+                        'textAlign': 'center',
+                        'color': '#888',
+                        'fontSize': '0.75rem',
+                        'marginBottom': '5px'
+                    }),
+                    dcc.Graph(id='gg-diagram', style={'height': '320px'}, config={'displayModeBar': False})
+                ], lg=3, md=4, xs=12, style={'backgroundColor': '#151515', 'borderRadius': '8px', 'padding': '10px', 'marginTop': '10px'})
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Track Map', value='tab-trackmap', children=[
             DISCLAIMER,
-            dcc.Loading(type='circle', color='#ff0000', children=[
-                _empty_state('2d-dominance-graph', TAB_HEIGHTS['single'])
+            html.Div([
+                dbc.Label("Overlay Mode:", style={"fontSize": "0.8rem", "color": "#aaa", "marginRight": "10px"}),
+                dbc.RadioItems(
+                    id='trackmap-mode',
+                    options=[
+                        {'label': 'Dominance', 'value': 'dominance'},
+                        {'label': 'Braking', 'value': 'braking'},
+                        {'label': 'Speed', 'value': 'speed'}
+                    ],
+                    value='dominance',
+                    inline=True,
+                    style={"fontSize": "0.8rem"},
+                    inputStyle={"marginRight": "4px"},
+                    labelStyle={"marginRight": "15px", "color": "#ccc"}
+                ),
+            ], style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center'}),
+            dbc.Row([
+                dbc.Col([
+                    dcc.Loading(type='circle', color='#ff0000', children=[
+                        _empty_state('2d-dominance-graph', TAB_HEIGHTS['single'])
+                    ])
+                ], lg=9, md=8, xs=12),
+                dbc.Col([
+                    html.Div(id='driver-dna-container', style={'flex': '1 1 auto', 'minHeight': 0}),
+                    html.Div(id='track-apex-stats', style={'flex': '0 0 auto'})
+                ], lg=3, md=4, xs=12, style={
+                    'height': TAB_HEIGHTS['single'],
+                    'display': 'flex',
+                    'flexDirection': 'column',
+                    'gap': '0.75rem'
+                })
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
@@ -226,12 +271,18 @@ content = html.Div([
                 ], style={'padding': '0.5rem 0'}),
                 dcc.Loading(
                     type='default', color='#ff0000',
-                    children=html.Div(id='ai-response-output',
-                                      style={'padding': '1rem', 'minHeight': '200px',
-                                             'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
-                                             'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
-                                             'lineHeight': '1.6', 'fontSize': '0.95rem',
-                                             'maxHeight': '70vh', 'overflowY': 'auto'})
+                    children=html.Div([
+                        html.Div([
+                            html.Strong("Q: ", style={'color': '#ff4444'}),
+                            html.Span(id='ai-question-display', style={'color': '#ddd'})
+                        ], id='ai-question-container', style={'marginBottom': '0.5rem', 'display': 'none'}),
+                        dcc.Markdown(id='ai-answer-display', style={'color': '#e0e0e0', 'lineHeight': '1.7'})
+                    ], id='ai-response-output',
+                       style={'padding': '1rem', 'minHeight': '200px',
+                              'backgroundColor': '#1a1a1a', 'borderRadius': '8px',
+                              'border': '1px solid #333', 'whiteSpace': 'pre-wrap',
+                              'lineHeight': '1.6', 'fontSize': '0.95rem',
+                              'maxHeight': '70vh', 'overflowY': 'auto'})
                 ),
                 html.Div([
                     dbc.Button("◀", id='ai-prev-btn', color='secondary', size='sm', n_clicks=0,
@@ -265,9 +316,15 @@ content = html.Div([
 app_layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     dbc.Row([
-        dbc.Col(sidebar, md=2, xs=12, style={'height': '100vh', 'overflow': 'hidden'}),
-        dbc.Col(content, md=10, xs=12, style={'height': '100vh', 'overflow': 'hidden'})
-    ], className='g-0', style={'height': '100vh', 'margin': '0'}),
+        # Sidebar: sticky/fixed on medium+ screens, scrollable on mobile
+        dbc.Col(sidebar, md=2, xs=12, 
+                style={'height': '100vh', 'overflowY': 'auto', 'borderRight': '1px solid #333'},
+                className='sidebar-col'),
+        # Main content: scrollable area
+        dbc.Col(content, md=10, xs=12, 
+                style={'height': '100vh', 'overflowY': 'auto'},
+                className='content-col')
+    ], className='g-0'),
     dbc.Button("Send Feedback", id='open-feedback-modal-btn', color='danger', n_clicks=0,
                className='feedback-fab'),
     dbc.Modal([
@@ -335,6 +392,8 @@ app_layout = dbc.Container([
         ])
     ], id='feedback-modal', is_open=False, size='lg', centered=True),
     dcc.Store(id='dashboard-params-store', storage_type='session'),
+    dcc.Store(id='gg-data-store', storage_type='memory'),
+    dcc.Store(id='mini-map-store', storage_type='memory'),
     dcc.Store(id='feedback-refresh-store'),
     dcc.Download(id='feedback-download'),
     dcc.ConfirmDialog(id='error-dialog', message='')
