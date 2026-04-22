@@ -3,12 +3,8 @@ from dash import dcc, html, ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import flask
-import os
 import random
-import time
-from contextlib import contextmanager
 from datetime import datetime
-from urllib.parse import parse_qs, urlencode
 
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
@@ -32,99 +28,15 @@ from ui_utils import (
     _friendly_error, _feedback_admin_authorized,
     _build_feedback_review_panel, _build_leaderboard_children
 )
-
-
-# Max AI Q&A exchanges kept in browser session storage.
-MAX_AI_HISTORY = 20
-VALID_TABS = {
-    'tab-telemetry', 'tab-trackmap', 'tab-strategy',
-    'tab-race', 'tab-gridpace', 'tab-ai'
-}
-CALLBACK_TIMING_THRESHOLD_MS = float(os.getenv('CALLBACK_TIMING_THRESHOLD_MS', '400'))
-LOG_ALL_CALLBACKS = os.getenv('LOG_ALL_CALLBACKS') == '1'
-
-
-def _missing_required_fields(field_map):
-    """Return labels for required fields that are empty."""
-    return [label for label, value in field_map.items() if value in (None, '')]
-
-
-def _has_valid_lap(lap, pd):
-    """Return True when lap exists and contains a valid lap time."""
-    return not (getattr(lap, "empty", True) or (pd.isna(lap.get("LapTime")) if lap is not None else True))
-
-
-def _pick_driver_lap(session, driver, mode, lap_num):
-    """Return specific lap when requested, otherwise driver fastest lap."""
-    drv_laps = session.laps.pick_drivers(driver)
-    if mode == 'specific' and lap_num is not None:
-        specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
-        if not specific.empty:
-            return specific.iloc[0]
-    return get_best_lap(session, driver)
-
-
-def _trim_history(history):
-    """Enforce max history length by dropping oldest entries."""
-    if len(history) > MAX_AI_HISTORY:
-        return history[-MAX_AI_HISTORY:]
-    return history
-
-
-def _parse_url_state(url_search):
-    query_params = parse_qs((url_search or '').lstrip('?'))
-    state = {
-        'race': (query_params.get('race') or [None])[0],
-        'session_type': (query_params.get('session') or [None])[0],
-        'driver1': (query_params.get('driver1') or [None])[0],
-        'driver2': (query_params.get('driver2') or [None])[0],
-        'tab': (query_params.get('tab') or [None])[0]
-    }
-
-    raw_year = (query_params.get('year') or [None])[0]
-    try:
-        state['year'] = int(raw_year) if raw_year is not None else None
-    except (TypeError, ValueError):
-        state['year'] = None
-
-    if state['tab'] not in VALID_TABS:
-        state['tab'] = None
-
-    return state
-
-
-def _build_url_search(params, active_tab):
-    query = {
-        'year': params.get('year'),
-        'race': params.get('race'),
-        'session': params.get('session_type'),
-        'driver1': params.get('driver1'),
-        'driver2': params.get('driver2'),
-    }
-    if active_tab in VALID_TABS:
-        query['tab'] = active_tab
-
-    clean_query = {key: value for key, value in query.items() if value not in (None, '')}
-    return f"?{urlencode(clean_query)}" if clean_query else ""
-
-
-@contextmanager
-def _timed_callback(name, **fields):
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        if LOG_ALL_CALLBACKS or elapsed_ms >= CALLBACK_TIMING_THRESHOLD_MS:
-            trigger = getattr(dash.ctx, 'triggered_id', None)
-            field_text = ' '.join(
-                f"{key}={value}" for key, value in fields.items()
-                if value not in (None, '')
-            )
-            print(
-                f"[timing] callback={name} trigger={trigger} ms={elapsed_ms:.1f}"
-                f"{(' ' + field_text) if field_text else ''}"
-            )
+from callbacks_shared import (
+    _timed_callback,
+    _trim_history,
+    _parse_url_state,
+    _build_url_search,
+    _missing_required_fields,
+    _has_valid_lap,
+    _pick_driver_lap,
+)
 
 
 def register_callbacks(app):
@@ -458,8 +370,8 @@ def register_callbacks(app):
                 import pandas as pd
                 # Telemetry view needs lap + telemetry data.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-                lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
-                lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num)
+                lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
+                lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
 
                 if not _has_valid_lap(lap1, pd):
                     raise ValueError(f"{d1} did not set a valid lap.")
@@ -494,7 +406,7 @@ def register_callbacks(app):
             import pandas as pd
 
             session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-            lap = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
+            lap = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
 
             if lap is None or pd.isna(lap.get('LapTime')):
                 raise PreventUpdate
@@ -597,8 +509,8 @@ def register_callbacks(app):
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
             session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
 
-            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num)
-            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num)
+            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
+            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
             if not _has_valid_lap(lap1, pd):
                 raise PreventUpdate
             if not _has_valid_lap(lap2, pd):

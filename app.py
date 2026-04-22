@@ -8,7 +8,8 @@ from ai_utils import flush_ai_cache
 from flask_compress import Compress
 import threading
 import atexit
-import time
+from datetime import datetime
+from flask import jsonify
 
 app = dash.Dash(
     __name__,
@@ -31,14 +32,12 @@ def _init_runtime_background():
     with _RUNTIME_INIT_LOCK:
         if _RUNTIME_INIT_DONE:
             return
-        start = time.perf_counter()
         try:
             data.setup_cache()
             threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
             setup_feedback_storage()
         finally:
             _RUNTIME_INIT_DONE = True
-            print(f"[startup] deferred_init_ms={(time.perf_counter() - start) * 1000:.1f}")
 
 
 @server.before_request
@@ -47,6 +46,20 @@ def _ensure_runtime_initialized():
     if _RUNTIME_INIT_DONE:
         return
     threading.Thread(target=_init_runtime_background, daemon=True).start()
+
+
+@server.route('/healthz')
+def healthz():
+    """Cheap liveness endpoint for host health checks."""
+    return jsonify({'status': 'ok'}), 200
+
+
+@server.route('/warmup')
+def warmup():
+    """Prime lightweight caches to reduce cold-start request latency."""
+    threading.Thread(target=_init_runtime_background, daemon=True).start()
+    threading.Thread(target=data.get_event_schedule_cached, args=(datetime.now().year,), daemon=True).start()
+    return jsonify({'status': 'warming'}), 200
 
 
 atexit.register(flush_ai_cache)
