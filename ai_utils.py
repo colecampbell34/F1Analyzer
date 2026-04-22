@@ -478,6 +478,52 @@ def _get_track_temp_evolution(session):
     return "\n".join(lines)
 
 
+def _calculate_g_and_corners(tel):
+    """Computes average G-forces and bucketed minimum corner speeds from a lap's telemetry."""
+    import numpy as np
+    from scipy.signal import find_peaks
+    try:
+        t = tel['Time'].dt.total_seconds()
+        dt = t.diff().fillna(0.1)
+        
+        # G forces
+        v_ms = tel['Speed'] / 3.6
+        accel_ms2 = v_ms.diff() / dt
+        long_g = accel_ms2 * 0.1019
+        
+        dx = tel['X'].diff().fillna(0)
+        dy = tel['Y'].diff().fillna(0)
+        heading = np.arctan2(dy, dx)
+        d_heading = heading.diff().fillna(0)
+        d_heading = np.where(d_heading > np.pi, d_heading - 2*np.pi, d_heading)
+        d_heading = np.where(d_heading < -np.pi, d_heading + 2*np.pi, d_heading)
+        yaw_rate = d_heading / dt
+        lat_g = (v_ms * yaw_rate) * 0.1019
+
+        avg_lat_g = np.abs(lat_g).mean()
+        braking_mask = long_g < -0.5
+        avg_braking_g = np.abs(long_g[braking_mask]).mean() if braking_mask.any() else 0.0
+
+        # Corners
+        speed = tel['Speed'].to_numpy()
+        peaks, _ = find_peaks(-speed, prominence=5, distance=10)
+        corner_speeds = speed[peaks]
+        
+        low = corner_speeds[corner_speeds < 150]
+        med = corner_speeds[(corner_speeds >= 150) & (corner_speeds < 220)]
+        high = corner_speeds[corner_speeds >= 220]
+
+        return {
+            'avg_lat_g': float(avg_lat_g),
+            'avg_braking_g': float(avg_braking_g),
+            'low_speed': float(np.mean(low)) if len(low) > 0 else None,
+            'med_speed': float(np.mean(med)) if len(med) > 0 else None,
+            'high_speed': float(np.mean(high)) if len(high) > 0 else None
+        }
+    except Exception:
+        return None
+
+
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
     import pandas as pd
@@ -564,9 +610,19 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         full_thr = (tel['Throttle'] == 100).mean() * 100
                         brk = (tel['Brake'] > 0).mean() * 100
                         lines.append(f"  {drv} Telemetry (Fastest Lap): Max Speed = {max_spd} km/h, Min Speed = {min_spd} km/h, Full Throttle = {full_thr:.1f}%, Braking = {brk:.1f}%")
+                        
+                        g_data = _calculate_g_and_corners(tel)
+                        if g_data:
+                            lat = g_data['avg_lat_g']
+                            lng = g_data['avg_braking_g']
+                            ls = f"{g_data['low_speed']:.1f}" if g_data['low_speed'] else "N/A"
+                            ms = f"{g_data['med_speed']:.1f}" if g_data['med_speed'] else "N/A"
+                            hs = f"{g_data['high_speed']:.1f}" if g_data['high_speed'] else "N/A"
+                            
+                            lines.append(f"    Avg Lateral G: {lat:.2f}g, Avg Braking G: {lng:.2f}g")
+                            lines.append(f"    Corner Min Speeds -> Low (<150): {ls} km/h | Med (150-220): {ms} km/h | High (>220): {hs} km/h")
                 except Exception:
                     pass
-
         else:
             lines.append("Fastest lap comparison: data incomplete for one or both drivers")
     except Exception:

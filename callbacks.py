@@ -870,7 +870,7 @@ def register_callbacks(app):
                     laps=True,
                     telemetry=False,
                     weather=True,
-                    messages=True
+                    messages=False
                 )
                 return _build_grid_pace_fig(session, params['session_type'])
             except Exception as e:
@@ -1019,7 +1019,7 @@ def register_callbacks(app):
 
     @app.callback(
         [Output('ai-history-store', 'data'), Output('ai-question-input', 'value'),
-         Output('ai-history-index-store', 'data')],
+         Output('ai-history-index-store', 'data'), Output('ai-loading-dummy', 'children')],
         [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
         [State('ai-question-input', 'value'), State('session-context-store', 'data'),
          State('ai-history-store', 'data')],
@@ -1039,24 +1039,24 @@ def register_callbacks(app):
         if not GEMINI_API_KEY:
             err = "AI Analysis is not available at this time."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
 
         # --- Guard: Session context ---
         if not session_context:
             err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
 
         # --- Guard: Input validation ---
         question = question.strip()
         if len(question) < 10:
             err = "⚠️ Please ask a more specific question (at least 10 characters)."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
         if len(question) > 300:
             err = "⚠️ Question is too long. Please keep it under 300 characters."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
 
         # --- Guard: Rate Limiting ---
         forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
@@ -1066,14 +1066,14 @@ def register_callbacks(app):
         if not allowed:
             err = f"🛑 **Daily Limit Reached.** You have used your {USER_DAILY_LIMIT} AI analysis requests for today. Please come back tomorrow for more requests!"
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
 
         with _timed_callback('ask_ai', question_len=len(question)):
             # --- Check response cache ---
             cached = get_cached_response(session_context, question)
             if cached:
                 new_history = _trim_history(history + [{'question': question, 'answer': cached}])
-                return new_history, '', len(new_history) - 1
+                return new_history, '', len(new_history) - 1, ''
 
             # --- Call Gemini Models sequentially with random start ---
             shuffled_models = GEMINI_MODELS.copy()
@@ -1097,7 +1097,7 @@ def register_callbacks(app):
                     store_cached_response(session_context, question, full_answer)
 
                     new_history = _trim_history(history + [{'question': question, 'answer': full_answer}])
-                    return new_history, '', len(new_history) - 1
+                    return new_history, '', len(new_history) - 1, ''
 
                 except Exception as e:
                     last_error = str(e)
@@ -1107,7 +1107,7 @@ def register_callbacks(app):
             # If all models failed
             err = f"❌ **AI Analysis encountered an error after trying multiple models.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1
+            return new_history, '', len(new_history) - 1, ''
 
     @app.callback(
         [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),

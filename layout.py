@@ -276,6 +276,7 @@ content = html.Div([
                             html.Strong("Q: ", style={'color': '#ff4444'}),
                             html.Span(id='ai-question-display', style={'color': '#ddd'})
                         ], id='ai-question-container', style={'marginBottom': '0.5rem', 'display': 'none'}),
+                        html.Div(id='ai-loading-dummy', style={'display': 'none'}),
                         dcc.Markdown(id='ai-answer-display', style={'color': '#e0e0e0', 'lineHeight': '1.7'})
                     ], id='ai-response-output',
                        style={'padding': '1rem', 'minHeight': '200px',
