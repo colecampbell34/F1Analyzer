@@ -1,13 +1,5 @@
-from data import get_pit_stop_data, get_track_status_events, get_best_lap, get_single_driver_color
-
-
-def _downsample(df, max_points=2000):
-    """Downsample a DataFrame to max_points rows via even spacing. Visually identical at chart resolution."""
-    import pandas as pd
-    if len(df) <= max_points:
-        return df
-    step = max(1, len(df) // max_points)
-    return df.iloc[::step].reset_index(drop=True)
+from data import get_pit_stop_data, get_track_status_events, get_single_driver_color
+from ui_utils import _downsample, _apply_base_layout, _hex_to_rgba
 
 
 def _collapse_lap_ranges(laps):
@@ -40,18 +32,6 @@ GRAPH_CONFIG = {
     'toImageButtonOptions': {'format': 'png', 'height': 900, 'width': 1600, 'filename': 'f1_analysis'},
     'modeBarButtonsToAdd': ['toImage'],
 }
-
-BASE_LAYOUT = dict(
-    template='plotly_dark',
-    margin=dict(l=40, r=40, t=60, b=40),
-    hovermode='x unified'
-)
-
-def _apply_base_layout(fig, **kwargs):
-    """Applies the base F1 analyzer layout, allowing kwargs to override specifics."""
-    fig.update_layout(**BASE_LAYOUT)
-    fig.update_layout(**kwargs)
-    return fig
 
 
 def _error_figure(message):
@@ -565,7 +545,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
         try:
             for ann in (fig.layout.annotations or []):
                 if getattr(ann, 'text', None):
-                    ann.update(y=float(getattr(ann, 'y', 1.0)) - 0.04, yanchor='top')
+                    ann.update(y=float(getattr(ann, 'y', 1.0)) - 0.01, yanchor='top')
         except Exception:
             pass
     else:
@@ -627,12 +607,6 @@ def _build_gg_diagram(driver1, driver2, c1, c2, tel1, tel2):
             font=dict(size=10, color="rgba(255, 255, 255, 0.7)"),
             xanchor="center", yanchor="middle"
         )
-
-    # 2. Driver G-Envelopes (Friction Circle Coverage)
-    def _hex_to_rgba(hex_val, opacity):
-        h = hex_val.lstrip('#')
-        rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-        return f'rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {opacity})'
 
     num_bins = 16
     bin_angles = np.linspace(-np.pi, np.pi, num_bins + 1)
@@ -788,11 +762,6 @@ def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
     categories_closed = abbrs + [abbrs[0]] if abbrs else abbrs
     norm1_closed = norm1 + [norm1[0]] if norm1 else norm1
     norm2_closed = norm2 + [norm2[0]] if norm2 else norm2
-
-    def _hex_to_rgba(hex_val, opacity):
-        h = hex_val.lstrip('#')
-        rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-        return f'rgba({rgb[0]}, {rgb[1]}, {rgb[2]}, {opacity})'
 
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
