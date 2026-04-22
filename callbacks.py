@@ -22,7 +22,9 @@ from graphs import (
     _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
     _build_strategy_fig, _build_deg_fig, _build_race_gaps_fig,
     _build_grid_pace_fig, _build_pit_stops_fig,
-    _error_figure, _not_applicable_figure
+    _error_figure, _not_applicable_figure,
+    _build_mini_map_fig, _build_driver_radar,
+    _build_gg_diagram
 )
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS,
@@ -151,10 +153,23 @@ def register_callbacks(app):
 
             if current_race in races:
                 val = current_race
-            elif current_race is None and url_race in races:
+            elif url_race in races:
                 val = url_race
             else:
-                val = None
+                # Always pick a valid race once options exist. This prevents the app from getting
+                # "stuck" in a state where clicking Update Dashboard/Leaderboard claims nothing
+                # is selected even though the dropdowns are populated.
+                val = races[0] if races else None
+                try:
+                    # Prefer the latest completed event when dates are available.
+                    event_dates = schedule.get('EventDate')
+                    if event_dates is not None and len(schedule) == len(event_dates):
+                        now = datetime.now()
+                        completed = schedule[event_dates <= now]
+                        if not completed.empty:
+                            val = completed.iloc[-1]['EventName']
+                except Exception:
+                    pass
 
             return options, val
 
@@ -177,14 +192,17 @@ def register_callbacks(app):
 
             if current_session in valid_sessions:
                 val = current_session
-            elif current_session is None and url_session in valid_sessions:
+            elif url_session in valid_sessions:
                 val = url_session
             else:
-                val = options[-1]['value'] if options else None
-                for opt in options:
-                    if opt['label'] == 'Race':
-                        val = opt['value']
-                        break
+                # Prefer Race when available; otherwise fall back to the first listed session.
+                val = None
+                if options:
+                    val = options[0]['value']
+                    for opt in options:
+                        if opt['value'] == 'Race':
+                            val = 'Race'
+                            break
             return options, val
 
     # =============================================
@@ -280,8 +298,20 @@ def register_callbacks(app):
     def update_leaderboard(n_clicks, session_name, race, year):
         if not n_clicks:
             return html.Div("Click 'Update Leaderboard' to load.", style={'color': '#888', 'fontSize': '0.9rem'})
-        if not session_name or not race or not year:
-            return html.Div("Select a session to load the leaderboard.", style={'color': '#888', 'fontSize': '0.9rem'})
+        missing = []
+        if year in (None, ''):
+            missing.append('Year')
+        if race in (None, ''):
+            missing.append('Race')
+        if session_name in (None, ''):
+            missing.append('Session')
+        if missing:
+            print(f"[update_leaderboard] missing={missing} values: year={year!r} race={race!r} session={session_name!r}")
+            return html.Div(
+                "Select: " + ", ".join(missing) + " to load the leaderboard. "
+                f"(Debug: year={year!r}, race={race!r}, session={session_name!r})",
+                style={'color': '#888', 'fontSize': '0.9rem'}
+            )
 
         with _timed_callback('update_leaderboard', year=year, race=race, session=session_name):
             try:
@@ -306,8 +336,28 @@ def register_callbacks(app):
     def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year):
         if not n_clicks:
             return dash.no_update, False, ""
-        if not all([year, race, session_type, driver1, driver2]):
-            return dash.no_update, True, "Please select Year, Race, Session, and both Drivers before updating."
+        missing = []
+        if year in (None, ''):
+            missing.append('Year')
+        if race in (None, ''):
+            missing.append('Race')
+        if session_type in (None, ''):
+            missing.append('Session')
+        if driver1 in (None, ''):
+            missing.append('Driver 1')
+        if driver2 in (None, ''):
+            missing.append('Driver 2')
+
+        if missing:
+            # Include raw values to make debugging user reports straightforward.
+            msg = (
+                "Please select: " + ", ".join(missing) + " before updating.\n\n"
+                f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
+                f"driver1={driver1!r}, driver2={driver2!r}"
+            )
+            print(f"[update_dashboard_params] missing={missing} values: year={year!r} race={race!r} "
+                  f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
+            return dash.no_update, True, msg
 
         preload_session(year, race, session_type)
         
@@ -438,33 +488,514 @@ def register_callbacks(app):
                 print(f"Telemetry Error: {e}")
                 return _error_figure(_friendly_error(e))
 
+    @app.callback(
+        [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('update-laps-btn', 'n_clicks')],
+        [State('d1-lap-mode', 'value'), State('d1-lap-number', 'value')],
+        prevent_initial_call=True
+    )
+    def update_mini_map_base(params, active_tab, n_laps, d1_mode, d1_lap_num):
+        """Precompute the track polyline once; hover only moves a marker."""
+        if not params or active_tab != 'tab-telemetry':
+            return dash.no_update, dash.no_update
+        try:
+            import numpy as np
+            import plotly.graph_objects as go
+            import pandas as pd
+
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
+            drv_laps = session.laps.pick_drivers(d1)
+            if d1_mode == 'specific' and d1_lap_num is not None:
+                specific = drv_laps[drv_laps['LapNumber'] == int(d1_lap_num)]
+                lap = specific.iloc[0] if not specific.empty else get_best_lap(session, d1)
+            else:
+                lap = get_best_lap(session, d1)
+
+            if lap is None or pd.isna(lap.get('LapTime')):
+                raise PreventUpdate
+
+            tel = lap.get_telemetry().add_distance()
+            tel = tel.dropna(subset=['X', 'Y', 'Distance'])
+            if tel.empty:
+                raise PreventUpdate
+
+            # Downsample for fast hover updates
+            max_pts = 1400
+            n = len(tel)
+            step = max(1, n // max_pts)
+            x = tel['X'].to_numpy(dtype=float)[::step]
+            y = tel['Y'].to_numpy(dtype=float)[::step]
+            dist = tel['Distance'].to_numpy(dtype=float)[::step]
+
+            store = {'x': x.tolist(), 'y': y.tolist(), 'dist': dist.tolist()}
+
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=x, y=y,
+                mode='lines',
+                line=dict(color='#444', width=2),
+                hoverinfo='skip',
+                showlegend=False
+            ))
+
+            # Initial marker at start
+            fig.add_trace(go.Scatter(
+                x=[float(x[0])], y=[float(y[0])],
+                mode='markers',
+                marker=dict(color='#ff0000', size=12, symbol='circle', line=dict(color='white', width=2)),
+                hoverinfo='skip',
+                showlegend=False,
+                meta='hover'
+            ))
+
+            fig.update_layout(
+                template='plotly_dark',
+                margin=dict(l=0, r=0, t=0, b=0),
+                xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+                yaxis=dict(visible=False),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+            )
+            return fig, store
+        except PreventUpdate:
+            raise
+        except Exception:
+            return dash.no_update, dash.no_update
+
+    app.clientside_callback(
+        """
+        function(hoverData, miniStore, fig) {
+            if (!hoverData || !miniStore || !fig) return window.dash_clientside.no_update;
+            if (!hoverData.points || hoverData.points.length === 0) return window.dash_clientside.no_update;
+            const hoverDist = hoverData.points[0].x;
+            if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
+
+            const dist = miniStore.dist || [];
+            const x = miniStore.x || [];
+            const y = miniStore.y || [];
+            if (dist.length < 2 || x.length !== dist.length || y.length !== dist.length) return window.dash_clientside.no_update;
+
+            // Find nearest distance sample.
+            let bestI = 0;
+            let bestD = Infinity;
+            for (let i = 0; i < dist.length; i++) {
+                const d = Math.abs(dist[i] - hoverDist);
+                if (d < bestD) { bestD = d; bestI = i; }
+            }
+
+            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
+            baseData.push({
+                type: 'scatter',
+                mode: 'markers',
+                x: [x[bestI]],
+                y: [y[bestI]],
+                marker: {color: '#ff0000', size: 12, symbol: 'circle', line: {color: 'white', width: 2}},
+                hoverinfo: 'skip',
+                showlegend: false,
+                meta: 'hover'
+            });
+
+            return {...fig, data: baseData};
+        }
+        """,
+        Output('mini-track-map', 'figure', allow_duplicate=True),
+        Input('speed-graph', 'hoverData'),
+        [State('mini-map-store', 'data'), State('mini-track-map', 'figure')],
+        prevent_initial_call=True
+    )
+
+    @app.callback(
+        [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('update-laps-btn', 'n_clicks')],
+        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
+         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
+        prevent_initial_call=True,
+    )
+    def update_gg_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+        """Compute base friction circle + cache G-series for fast hover highlighting."""
+        if not params or active_tab != 'tab-telemetry':
+            return dash.no_update, dash.no_update
+
+        import numpy as np
+        import plotly.graph_objects as go
+        import pandas as pd
+
+        def calculate_g_series(tel):
+            # Returns (dist, lat_g, long_g) arrays.
+            t = tel['Time'].dt.total_seconds()
+            dt = t.diff().fillna(0.1).to_numpy(dtype=float)
+            dt = np.where(dt <= 1e-3, 1e-3, dt)
+
+            v_ms = (tel['Speed'].to_numpy(dtype=float) / 3.6)
+            accel_ms2 = np.diff(v_ms, prepend=v_ms[0]) / dt
+            long_g = np.clip(accel_ms2 * 0.1019, -6.0, 6.0)
+
+            x = tel['X'].to_numpy(dtype=float)
+            y = tel['Y'].to_numpy(dtype=float)
+            dx = np.diff(x, prepend=x[0])
+            dy = np.diff(y, prepend=y[0])
+            heading = np.arctan2(dy, dx)
+            d_heading = np.diff(heading, prepend=heading[0])
+            d_heading = (d_heading + np.pi) % (2 * np.pi) - np.pi
+            lat_g = np.clip((v_ms * (d_heading / dt)) * 0.1019, -6.0, 6.0)
+
+            dist = tel['Distance'].to_numpy(dtype=float)
+            return dist, lat_g, long_g
+
+        with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
+            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
+
+            def get_lap(driver, mode, lap_num):
+                drv_laps = session.laps.pick_drivers(driver)
+                if mode == 'specific' and lap_num is not None:
+                    specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
+                    if not specific.empty:
+                        return specific.iloc[0]
+                return get_best_lap(session, driver)
+
+            lap1 = get_lap(d1, d1_mode, d1_lap_num)
+            lap2 = get_lap(d2, d2_mode, d2_lap_num)
+            if getattr(lap1, "empty", True) or pd.isna(lap1.get("LapTime")) if lap1 is not None else True:
+                raise PreventUpdate
+            if getattr(lap2, "empty", True) or pd.isna(lap2.get("LapTime")) if lap2 is not None else True:
+                raise PreventUpdate
+
+            tel1 = lap1.get_telemetry().add_distance()
+            tel2 = lap2.get_telemetry().add_distance()
+            if not tel1.empty:
+                tel1['Distance'] -= tel1['Distance'].min()
+            if not tel2.empty:
+                tel2['Distance'] -= tel2['Distance'].min()
+
+            dist1, lat1, long1 = calculate_g_series(tel1)
+            dist2, lat2, long2 = calculate_g_series(tel2)
+
+            # Downsample for browser store
+            def ds(dist, lat, lng, max_pts=2200):
+                n = len(dist)
+                if n <= max_pts:
+                    return dist.tolist(), lat.tolist(), lng.tolist()
+                step = max(1, n // max_pts)
+                return dist[::step].tolist(), lat[::step].tolist(), lng[::step].tolist()
+
+            d1_dist, d1_lat, d1_long = ds(dist1, lat1, long1)
+            d2_dist, d2_lat, d2_long = ds(dist2, lat2, long2)
+            store = {
+                'd1': {'driver': d1, 'color': c1, 'dist': d1_dist, 'lat': d1_lat, 'long': d1_long},
+                'd2': {'driver': d2, 'color': c2, 'dist': d2_dist, 'lat': d2_lat, 'long': d2_long},
+            }
+
+            fig = go.Figure()
+            # Reference circles
+            for r0 in [1, 2, 3, 4, 5]:
+                th = np.linspace(0, 2 * np.pi, 160)
+                fig.add_trace(go.Scatter(
+                    x=r0 * np.cos(th), y=r0 * np.sin(th),
+                    mode='lines',
+                    line=dict(color='#2a2a2a', dash='dot', width=1),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ))
+
+            fig.update_layout(
+                title="Hover over telemetry to view G-force",
+                title_font=dict(size=14),
+                xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444'),
+                yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444', scaleanchor="x", scaleratio=1),
+                margin=dict(l=40, r=20, t=55, b=40),
+                showlegend=False,
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                template='plotly_dark'
+            )
+            return fig, store
+
+    app.clientside_callback(
+        """
+        function(hoverData, ggStore, fig) {
+            if (!hoverData || !ggStore || !fig) return window.dash_clientside.no_update;
+            if (!hoverData.points || hoverData.points.length === 0) return window.dash_clientside.no_update;
+            const hoverDist = hoverData.points[0].x;
+            if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
+
+            const windowM = 120.0;
+
+            function hexToRgba(hex, a) {
+                if (!hex) return `rgba(255,255,255,${a})`;
+                const s = String(hex).replace('#','');
+                if (s.length !== 6) return `rgba(255,255,255,${a})`;
+                const r = parseInt(s.slice(0,2), 16);
+                const g = parseInt(s.slice(2,4), 16);
+                const b = parseInt(s.slice(4,6), 16);
+                return `rgba(${r},${g},${b},${a})`;
+            }
+
+            function quantile(sorted, q) {
+                if (!sorted || sorted.length === 0) return null;
+                const i = Math.max(0, Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1))));
+                return sorted[i];
+            }
+
+            function envelopeBand(latArr, longArr, bins, qLo, qHi) {
+                const xs = [];
+                const ys = [];
+                for (let i = 0; i < latArr.length; i++) {
+                    const x = latArr[i], y = longArr[i];
+                    if (!isFinite(x) || !isFinite(y)) continue;
+                    xs.push(x); ys.push(y);
+                }
+                if (xs.length < 40) return null;
+
+                const edges = [];
+                for (let i = 0; i <= bins; i++) edges.push(-Math.PI + (2*Math.PI*i)/bins);
+                const centers = [];
+                for (let i = 0; i < bins; i++) centers.push((edges[i] + edges[i+1]) / 2.0);
+
+                const rBins = Array.from({length: bins}, () => []);
+                for (let i = 0; i < xs.length; i++) {
+                    const th = Math.atan2(ys[i], xs[i]);
+                    let bi = Math.floor(((th + Math.PI) / (2*Math.PI)) * bins);
+                    bi = Math.max(0, Math.min(bins - 1, bi));
+                    const r = Math.hypot(xs[i], ys[i]);
+                    rBins[bi].push(r);
+                }
+
+                const rLo = new Array(bins).fill(NaN);
+                const rHi = new Array(bins).fill(NaN);
+                for (let i = 0; i < bins; i++) {
+                    if (rBins[i].length === 0) continue;
+                    rBins[i].sort((a,b) => a-b);
+                    rLo[i] = quantile(rBins[i], qLo);
+                    rHi[i] = quantile(rBins[i], qHi);
+                }
+
+                // Fill missing bins with nearest neighbor to keep a continuous ring.
+                function fillMissing(arr) {
+                    const valid = [];
+                    for (let i = 0; i < arr.length; i++) if (isFinite(arr[i])) valid.push(i);
+                    if (valid.length < 18) return null;
+                    const out = arr.slice();
+                    for (let i = 0; i < out.length; i++) {
+                        if (isFinite(out[i])) continue;
+                        let best = valid[0];
+                        let bestD = Math.abs(valid[0] - i);
+                        for (let k = 1; k < valid.length; k++) {
+                            const d = Math.abs(valid[k] - i);
+                            if (d < bestD) { bestD = d; best = valid[k]; }
+                        }
+                        out[i] = arr[best];
+                    }
+                    return out;
+                }
+
+                const fLo = fillMissing(rLo);
+                const fHi = fillMissing(rHi);
+                if (!fLo || !fHi) return null;
+
+                const xHi = [], yHi = [], xLo = [], yLo = [];
+                for (let i = 0; i < bins; i++) {
+                    xHi.push(fHi[i] * Math.cos(centers[i]));
+                    yHi.push(fHi[i] * Math.sin(centers[i]));
+                    xLo.push(fLo[i] * Math.cos(centers[i]));
+                    yLo.push(fLo[i] * Math.sin(centers[i]));
+                }
+                // Close each loop
+                xHi.push(xHi[0]); yHi.push(yHi[0]);
+                xLo.push(xLo[0]); yLo.push(yLo[0]);
+
+                // Ring polygon: hi loop + reversed lo loop
+                const polyX = xHi.concat(xLo.slice().reverse());
+                const polyY = yHi.concat(yLo.slice().reverse());
+                return {polyX, polyY, xHi, yHi};
+            }
+
+            function nearestIndex(distArr, target) {
+                let bestI = 0, bestD = Infinity;
+                for (let i = 0; i < distArr.length; i++) {
+                    const d = Math.abs(distArr[i] - target);
+                    if (d < bestD) { bestD = d; bestI = i; }
+                }
+                return bestI;
+            }
+
+            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
+
+            function addDriver(key) {
+                const d = ggStore[key];
+                if (!d) return;
+                const dist = d.dist || [];
+                const lat = d.lat || [];
+                const lng = d.long || [];
+                if (dist.length < 5) return;
+                const idx = nearestIndex(dist, hoverDist);
+
+                const color = d.color || '#ffffff';
+                const name = d.driver || key;
+
+                // 1. G-Vector Beam (Connecting center to current G)
+                baseData.push({
+                    type: 'scatter',
+                    mode: 'lines',
+                    x: [0, lat[idx]],
+                    y: [0, lng[idx]],
+                    line: {color: color, width: 1.5, dash: 'dot'},
+                    opacity: 0.5,
+                    showlegend: false,
+                    meta: 'hover',
+                    hoverinfo: 'skip'
+                });
+
+                // 2. Motion Trail (last 15 samples for context of change)
+                const start = Math.max(0, idx - 15);
+                baseData.push({
+                    type: 'scatter',
+                    mode: 'lines',
+                    x: lat.slice(start, idx + 1),
+                    y: lng.slice(start, idx + 1),
+                    line: {color: color, width: 3, shape: 'spline'},
+                    opacity: 0.4,
+                    showlegend: false,
+                    meta: 'hover',
+                    hoverinfo: 'skip'
+                });
+
+                // 3. Current "G-Ball" Marker
+                baseData.push({
+                    type: 'scatter',
+                    mode: 'markers',
+                    x: [lat[idx]],
+                    y: [lng[idx]],
+                    marker: {
+                        color: color, 
+                        size: 11, 
+                        line: {color: 'white', width: 1.5},
+                        symbol: (key === 'd1' ? 'circle' : 'diamond')
+                    },
+                    name: name,
+                    showlegend: false,
+                    meta: 'hover',
+                    hovertemplate: `<b>${name}</b><br>Lat: %{x:.2f}G<br>Long: %{y:.2f}G<extra></extra>`
+                });
+            }
+
+            addDriver('d1');
+            addDriver('d2');
+
+            return {...fig, data: baseData};
+        }
+        """,
+        Output('gg-diagram', 'figure', allow_duplicate=True),
+        Input('speed-graph', 'hoverData'),
+        [State('gg-data-store', 'data'), State('gg-diagram', 'figure')],
+        prevent_initial_call=True
+    )
+
     # =============================================
     # 8. TAB: Track Dominance (lazy)
     # =============================================
     @app.callback(
-        Output('2d-dominance-graph', 'figure'),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
+        [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('trackmap-mode', 'value')]
     )
-    def update_dominance(params, active_tab):
+    def update_dominance(params, active_tab, mode):
         if not params or active_tab != 'tab-trackmap':
-            return dash.no_update
+            return dash.no_update, dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                import pandas as pd
                 # Dominance tab needs Laps and Telemetry
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
                 lap1 = get_best_lap(session, d1)
                 lap2 = get_best_lap(session, d2)
+                if lap1 is None or pd.isna(lap1.get('LapTime')):
+                    raise ValueError(f"{d1} did not set a valid lap for track map analysis.")
+                if lap2 is None or pd.isna(lap2.get('LapTime')):
+                    raise ValueError(f"{d2} did not set a valid lap for track map analysis.")
 
                 tel1 = lap1.get_telemetry().add_distance()
                 tel2 = lap2.get_telemetry().add_distance()
-                if not tel1.empty: tel1['Distance'] -= tel1['Distance'].min()
-                if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
+                if not tel1.empty:
+                    tel1['Distance'] -= tel1['Distance'].min()
+                if not tel2.empty:
+                    tel2['Distance'] -= tel2['Distance'].min()
 
-                fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
-                return _build_dominance_fig(d1, d2, c1, c2, tel1, tel2, fast_data, slow_data)
+                fast_data, slow_data = _sort_fastest_driver(
+                    d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2
+                )
+
+                # Build Radar Chart (Driver DNA)
+                radar_fig, dna_legend = _build_driver_radar(d1, d2, c1, c2, tel1, tel2)
+                legend_ui = html.Div(
+                    [
+                        html.Span([html.Strong(f"{letter}:"), f" {label}"])
+                        for (letter, label) in (dna_legend or [])
+                    ],
+                    style={
+                        'display': 'flex',
+                        'flexWrap': 'wrap',
+                        'gap': '4px 10px',
+                        'justifyContent': 'center',
+                        'color': '#bbb',
+                        'fontSize': '0.72rem',
+                        'lineHeight': '1.15',
+                        'marginBottom': '6px',
+                    }
+                )
+                norm_note = html.Div(
+                    [
+                        "Normalization: values are compressed around 50 based on relative differences between the two drivers.",
+                        html.Br(),
+                        "Small raw deltas can still be visible, but won't dominate the shape."
+                    ],
+                    style={
+                        'textAlign': 'center',
+                        'color': '#888',
+                        'fontSize': '0.70rem',
+                        'lineHeight': '1.15',
+                        'marginBottom': '6px',
+                        'whiteSpace': 'normal',
+                        'wordBreak': 'break-word',
+                        'maxWidth': '100%'
+                    }
+                )
+                dna_ui = html.Div(
+                    [
+                        html.H6(
+                            "Driver DNA",
+                            style={
+                                'textAlign': 'center',
+                                'color': '#ff4444',
+                                'marginBottom': '6px'
+                            }
+                        ),
+                        legend_ui,
+                        norm_note,
+                        dcc.Graph(
+                            figure=radar_fig,
+                            config={'displayModeBar': False},
+                            style={'flex': '1 1 auto', 'minHeight': 0}
+                        )
+                    ],
+                    style={
+                        'backgroundColor': '#151515',
+                        'borderRadius': '8px',
+                        'padding': '10px',
+                        'height': '100%',
+                        'display': 'flex',
+                        'flexDirection': 'column'
+                    }
+                )
+
+                return _build_dominance_fig(
+                    d1, d2, c1, c2, tel1, tel2, fast_data, slow_data,
+                    mode=mode, session=session
+                ), dna_ui
             except Exception as e:
                 print(f"Dominance Error: {e}")
-                return _error_figure(_friendly_error(e))
+                return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
 
     # =============================================
     # 9. TAB: Strategy & Tyres (lazy)
@@ -682,98 +1213,95 @@ def register_callbacks(app):
 
     # =============================================
     # 14. AI ANALYSIS (rate-limited, cached, budget-tracked)
-    #     with paginated history (prev/next arrows)
+    #     with clientside navigation and rendering
     # =============================================
-    @app.callback(
-        [Output('ai-response-output', 'children'), Output('ai-history-store', 'data'),
-         Output('ai-question-input', 'value'), Output('ai-history-index-store', 'data'),
+    app.clientside_callback(
+        """
+        function(n_prev, n_next, history, current_index) {
+            if (!history || history.length === 0) return 0;
+            const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
+            if (trigger.includes('ai-prev-btn')) {
+                return Math.max(0, current_index - 1);
+            }
+            if (trigger.includes('ai-next-btn')) {
+                return Math.min(history.length - 1, current_index + 1);
+            }
+            return current_index;
+        }
+        """,
+        Output('ai-history-index-store', 'data', allow_duplicate=True),
+        [Input('ai-prev-btn', 'n_clicks'), Input('ai-next-btn', 'n_clicks')],
+        [State('ai-history-store', 'data'), State('ai-history-index-store', 'data')],
+        prevent_initial_call=True
+    )
+
+    app.clientside_callback(
+        """
+        function(history, index) {
+            if (!history || history.length === 0) {
+                return ["", "Type a question and click 'Ask AI' or press Enter to get started.", 
+                        {'display': 'none'}, true, true, "", {'display': 'none'}];
+            }
+            const i = Math.max(0, Math.min(index || 0, history.length - 1));
+            const h = history[i];
+            
+            const prev_disabled = (i === 0);
+            const next_disabled = (i >= history.length - 1);
+            const position = (i + 1) + " / " + history.length;
+            const nav_style = {'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'marginTop': '0.75rem'};
+            const q_container_style = {'marginBottom': '0.5rem', 'display': 'block'};
+            
+            return [h.question, h.answer, q_container_style, prev_disabled, next_disabled, position, nav_style];
+        }
+        """,
+        [Output('ai-question-display', 'children'),
+         Output('ai-answer-display', 'children'),
+         Output('ai-question-container', 'style'),
          Output('ai-prev-btn', 'disabled'), Output('ai-next-btn', 'disabled'),
          Output('ai-history-position', 'children'), Output('ai-history-nav', 'style')],
-        [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit'),
-         Input('ai-prev-btn', 'n_clicks'), Input('ai-next-btn', 'n_clicks')],
-        [State('ai-question-input', 'value'), State('session-context-store', 'data'),
-         State('ai-history-store', 'data'), State('ai-history-index-store', 'data')],
-        prevent_initial_call=False
+        [Input('ai-history-store', 'data'), Input('ai-history-index-store', 'data')]
     )
-    def ask_ai(n_clicks, n_submit, n_prev, n_next, question, session_context, history, current_index):
+
+    @app.callback(
+        [Output('ai-history-store', 'data'), Output('ai-question-input', 'value'),
+         Output('ai-history-index-store', 'data')],
+        [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
+        [State('ai-question-input', 'value'), State('session-context-store', 'data'),
+         State('ai-history-store', 'data')],
+        prevent_initial_call=True
+    )
+    def ask_ai(n_clicks, n_submit, question, session_context, history):
         """Sends the user's question + session context to Gemini with full protection."""
         if history is None:
             history = []
         history = _trim_history(history)
-        if current_index is None:
-            current_index = max(0, len(history) - 1)
-
-        trigger = dash.ctx.triggered_id
-
-        # --- Navigation: prev/next arrows ---
-        if trigger == 'ai-prev-btn':
-            new_index = max(0, current_index - 1)
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(history, new_index)
-            return page, dash.no_update, dash.no_update, new_index, prev_disabled, next_disabled, position, nav_style
-        if trigger == 'ai-next-btn':
-            new_index = min(len(history) - 1, current_index + 1) if history else 0
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(history, new_index)
-            return page, dash.no_update, dash.no_update, new_index, prev_disabled, next_disabled, position, nav_style
-
-        # On initial load: show existing history or default message
-        if not trigger:
-            if history:
-                idx = len(history) - 1
-                page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(history, idx)
-                return page, dash.no_update, dash.no_update, idx, prev_disabled, next_disabled, position, nav_style
-            if not GEMINI_API_KEY:
-                page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(
-                    history,
-                    0,
-                    html.P("AI Analysis is not available at this time.", style={'color': '#888'})
-                )
-                return page, dash.no_update, dash.no_update, 0, prev_disabled, next_disabled, position, nav_style
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(
-                history,
-                0,
-                html.P("Type a question and click 'Ask AI' or press Enter to get started.",
-                       style={'color': '#888'})
-            )
-            return page, dash.no_update, dash.no_update, 0, prev_disabled, next_disabled, position, nav_style
 
         total_clicks = (n_clicks or 0) + (n_submit or 0)
         if total_clicks == 0 or not question or not question.strip():
-            return (
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update
-            )
+            raise PreventUpdate
 
         # --- Guard: API key ---
         if not GEMINI_API_KEY:
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(
-                history,
-                current_index,
-                html.P("AI Analysis is not available at this time.", style={'color': '#888'})
-            )
-            return page, dash.no_update, dash.no_update, current_index, prev_disabled, next_disabled, position, nav_style
+            err = "AI Analysis is not available at this time."
+            new_history = _trim_history(history + [{'question': question, 'answer': err}])
+            return new_history, '', len(new_history) - 1
 
         # --- Guard: Session context ---
         if not session_context:
             err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            new_idx = len(new_history) - 1
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+            return new_history, '', len(new_history) - 1
 
         # --- Guard: Input validation ---
         question = question.strip()
         if len(question) < 10:
             err = "⚠️ Please ask a more specific question (at least 10 characters)."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            new_idx = len(new_history) - 1
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+            return new_history, '', len(new_history) - 1
         if len(question) > 300:
             err = "⚠️ Question is too long. Please keep it under 300 characters."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            new_idx = len(new_history) - 1
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+            return new_history, '', len(new_history) - 1
 
         # --- Guard: Rate Limiting ---
         forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
@@ -783,18 +1311,14 @@ def register_callbacks(app):
         if not allowed:
             err = f"🛑 **Daily Limit Reached.** You have used your {USER_DAILY_LIMIT} AI analysis requests for today. Please come back tomorrow for more requests!"
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            new_idx = len(new_history) - 1
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+            return new_history, '', len(new_history) - 1
 
         with _timed_callback('ask_ai', question_len=len(question)):
             # --- Check response cache ---
             cached = get_cached_response(session_context, question)
             if cached:
                 new_history = _trim_history(history + [{'question': question, 'answer': cached}])
-                new_idx = len(new_history) - 1
-                page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-                return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+                return new_history, '', len(new_history) - 1
 
             # --- Call Gemini Models sequentially with random start ---
             shuffled_models = GEMINI_MODELS.copy()
@@ -818,9 +1342,7 @@ def register_callbacks(app):
                     store_cached_response(session_context, question, full_answer)
 
                     new_history = _trim_history(history + [{'question': question, 'answer': full_answer}])
-                    new_idx = len(new_history) - 1
-                    page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-                    return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+                    return new_history, '', len(new_history) - 1
 
                 except Exception as e:
                     last_error = str(e)
@@ -830,9 +1352,7 @@ def register_callbacks(app):
             # If all models failed
             err = f"❌ **AI Analysis encountered an error after trying multiple models.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            new_idx = len(new_history) - 1
-            page, prev_disabled, next_disabled, position, nav_style = _render_ai_state(new_history, new_idx)
-            return page, new_history, '', new_idx, prev_disabled, next_disabled, position, nav_style
+            return new_history, '', len(new_history) - 1
 
     @app.callback(
         [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),
@@ -867,6 +1387,23 @@ def register_callbacks(app):
             return 1, max_lap, 1, max_lap
         except Exception:
             return 1, 100, 1, 100
+
+    app.clientside_callback(
+        """
+        function(d1_mode, d2_mode) {
+            const base = {
+                'width': '70px', 'display': 'inline-block', 'marginLeft': '6px',
+                'backgroundColor': '#222', 'color': 'white', 'border': '1px solid #444',
+                'fontSize': '0.8rem'
+            };
+            const d1_style = Object.assign({}, base, {display: (d1_mode === 'specific' ? 'inline-block' : 'none')});
+            const d2_style = Object.assign({}, base, {display: (d2_mode === 'specific' ? 'inline-block' : 'none')});
+            return [d1_style, d2_style];
+        }
+        """,
+        [Output('d1-lap-number', 'style'), Output('d2-lap-number', 'style')],
+        [Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value')]
+    )
 
 
 def _render_ai_state(history, index, empty_state=None):
