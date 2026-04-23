@@ -5,6 +5,8 @@ import hashlib
 import threading
 from datetime import datetime, timezone
 from collections import defaultdict
+import numpy as np
+import pandas as pd
 from dotenv import load_dotenv
 from data import get_track_status_events, get_best_lap, get_pit_stop_data, get_driver_info, get_teammate_from_info
 
@@ -235,7 +237,6 @@ def build_ai_prompt(session_context, question, history=None):
 
 def _get_field_summary(session):
     """Returns a text summary of the full finishing order and key field stats."""
-    import pandas as pd 
     lines = ["=== FULL FIELD CLASSIFICATION ==="]
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
@@ -273,7 +274,6 @@ def _get_field_summary(session):
 
 def _get_starting_grid(session):
     """Extracts official starting grid positions for all drivers."""
-    import pandas as pd
     lines = ["=== OFFICIAL STARTING GRID ==="]
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
@@ -294,7 +294,6 @@ def _get_starting_grid(session):
 
 def _get_field_tyre_strategy(session):
     """Extracts tyre compounds and stint lengths for every driver in the race."""
-    import pandas as pd
     lines = ["=== FIELD TYRE STRATEGY (EVERY DRIVER) ==="]
     try:
         if getattr(session, 'results', None) is not None and not session.results.empty:
@@ -342,7 +341,6 @@ def _get_field_tyre_strategy(session):
 
 def _get_teammate_benchmark(session, driver_abbr):
     """Returns key performance stats for a driver's teammate to provide car-performance baseline."""
-    import pandas as pd  
     try:
         driver_info = get_driver_info(session)
         teammate = get_teammate_from_info(driver_abbr, driver_info)
@@ -376,7 +374,6 @@ def _get_teammate_benchmark(session, driver_abbr):
 
 def _get_session_narrative(session):
     """Extracts high-level race events from session messages (Overtakes, Flags, Retirements)."""
-    import pandas as pd  
     lines = ["=== SESSION NARRATIVE (High-Level Events) ==="]
     try:
         if not hasattr(session, 'messages') or session.messages is None or session.messages.empty:
@@ -446,7 +443,6 @@ def _get_stint_telemetry_summary(session, driver, stint):
 
 def _get_track_temp_evolution(session):
     """Returns track temperature samples across the session to show thermal evolution."""
-    import pandas as pd
     lines = ["=== TRACK TEMPERATURE EVOLUTION ==="]
     try:
         wd = session.weather_data
@@ -477,7 +473,6 @@ def _get_track_temp_evolution(session):
 
 def _calculate_g_and_corners(tel):
     """Computes average G-forces and bucketed minimum corner speeds from a lap's telemetry."""
-    import numpy as np
     from scipy.signal import find_peaks
     try:
         t = tel['Time'].dt.total_seconds()
@@ -523,8 +518,6 @@ def _calculate_g_and_corners(tel):
 
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
-    import pandas as pd
-    import numpy as np
     lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
              "CRITICAL: Use ONLY the team assignments listed here. "
              "Do NOT rely on prior training knowledge for any driver's team or car number."]

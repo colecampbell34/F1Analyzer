@@ -10,12 +10,16 @@ import threading
 import atexit
 from datetime import datetime
 from flask import jsonify
+import logging
+
+# Set global log level to WARNING
+logging.basicConfig(level=logging.WARNING)
 
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG],
     title="F1 Analyzer",
-    update_title="Loading...",
+    update_title=None,
     suppress_callback_exceptions=True
 )
 

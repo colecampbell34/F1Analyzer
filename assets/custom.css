@@ -4,28 +4,50 @@ html, body, #react-entry-point {
     overflow: hidden;
 }
 
-/* Fullscreen loader override for Dark Mode */
+/* Fullscreen loader override for Dark Mode.
+   We target the Dash loading components specifically rather than any div with a spinner,
+   to avoid 'background strobe' when multiple fast callbacks fire. */
 
-div:has(> .dash-spinner),
-div:has(> ._dash-loading-callback),
-div[style*="rgba(255, 255, 255"] {
+.dash-loading-callback,
+._dash-loading-callback,
+.dash-spinner-container {
     background-color: rgba(17, 17, 17, 0.7) !important;
 }
 
+/* Ensure the spinner itself doesn't have a white background */
 .dash-spinner {
     background-color: transparent !important;
 }
 
-.dash-spinner.dash-spinner--fullscreen {
-    background-color: rgba(17, 17, 17, 0.7) !important;
+/* Suppress loading overlay flicker on graphs that update from clientside
+   callbacks (hover, playback).  These fire at ~25 fps so even a brief
+   loading-overlay flash produces a visible strobe effect. */
+#speed-graph[data-dash-is-loading="true"] > ._dash-loading-callback,
+#mini-track-map[data-dash-is-loading="true"] > ._dash-loading-callback,
+#gg-diagram[data-dash-is-loading="true"] > ._dash-loading-callback,
+#speed-graph .dash-spinner,
+#mini-track-map .dash-spinner,
+#gg-diagram .dash-spinner,
+/* Also catch any child of these graphs that might be marked as loading */
+#speed-graph [data-dash-is-loading="true"],
+#mini-track-map [data-dash-is-loading="true"],
+#gg-diagram [data-dash-is-loading="true"] {
+    display: none !important;
+    visibility: hidden !important;
+    opacity: 0 !important;
 }
 
-._dash-loading-callback {
+/* Also prevent the parent loading wrapper from showing overlay bg */
+#speed-graph > div[data-dash-is-loading],
+#mini-track-map > div[data-dash-is-loading],
+#gg-diagram > div[data-dash-is-loading],
+[data-dash-is-loading="true"] {
     background-color: transparent !important;
 }
 
-[data-dash-is-loading="true"] > ._dash-loading-callback {
-    background-color: transparent !important;
+/* Re-enable background for actual dcc.Loading wrappers that aren't the ones we suppressed above */
+div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
+    background-color: rgba(17, 17, 17, 0.5);
 }
 
 /* Responsive adjustments */

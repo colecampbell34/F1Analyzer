@@ -1,53 +1,61 @@
+"""Core callbacks: dropdowns, dashboard params, URL sync, leaderboard, lap constraints.
+
+Domain-specific callbacks are registered by sub-modules:
+  - callbacks_telemetry  (telemetry tab)
+  - callbacks_tabs       (track map, strategy, race, grid pace tabs)
+  - callbacks_ai         (AI analysis)
+  - callbacks_feedback   (feedback system)
+"""
 import dash
-from dash import dcc, html, ClientsideFunction
+from dash import html, ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-import flask
-import random
-from datetime import datetime
+import pandas as pd
+import logging
 
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     get_event_sessions_cached,
-    load_session_summary, load_session_with_preload, preload_session,
-    get_best_lap, get_shared_data, is_qualifying, is_race, is_practice,
+    load_session_summary, preload_session,
+    get_shared_data, is_race,
 )
-from feedback import store_feedback_entry, load_feedback_entries
-from graphs import (
-    _sort_fastest_driver, _build_telemetry_fig, _build_dominance_fig,
-    _build_strategy_fig, _build_deg_fig, _build_race_gaps_fig,
-    _build_grid_pace_fig, _build_pit_stops_fig,
-    _error_figure, _not_applicable_figure, _build_driver_radar
-)
-from ai_utils import (
-    _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS,
-    get_cached_response, store_cached_response, build_ai_prompt,
-    check_user_limit, USER_DAILY_LIMIT
-)
-from ui_utils import (
-    _friendly_error, _feedback_admin_authorized,
-    _build_feedback_review_panel, _build_leaderboard_children
-)
+from ui_utils import _friendly_error, _build_leaderboard_children
 from callbacks_shared import (
     _timed_callback,
-    _trim_history,
     _parse_url_state,
     _build_url_search,
     _missing_required_fields,
-    _has_valid_lap,
-    _pick_driver_lap,
 )
+
+# Sub-module registrations.
+from callbacks_telemetry import register_telemetry_callbacks
+from callbacks_tabs import register_tab_callbacks
+from callbacks_ai import register_ai_callbacks
+from callbacks_feedback import register_feedback_callbacks
 
 
 def register_callbacks(app):
+    """Register all application callbacks."""
+    _register_core_callbacks(app)
+    register_telemetry_callbacks(app)
+    register_tab_callbacks(app)
+    register_ai_callbacks(app)
+    register_feedback_callbacks(app)
+
+
+def _register_core_callbacks(app):
+    """Core navigation, dropdown, and dashboard param callbacks."""
+
     @app.callback(
         Output('year-dropdown', 'value'),
         Input('url', 'search'),
         State('year-dropdown', 'value')
     )
     def hydrate_year_from_url(url_search, current_year):
+        if not url_search:
+            return dash.no_update
         url_state = _parse_url_state(url_search)
-        if url_state['year'] and url_state['year'] != current_year:
+        if url_state.get('year') and url_state['year'] != current_year:
             return url_state['year']
         return dash.no_update
 
@@ -57,187 +65,197 @@ def register_callbacks(app):
         State('main-tabs', 'value')
     )
     def hydrate_tab_from_url(url_search, current_tab):
+        if not url_search:
+            return dash.no_update
         url_state = _parse_url_state(url_search)
-        if url_state['tab'] and url_state['tab'] != current_tab:
+        if url_state.get('tab') and url_state['tab'] != current_tab:
             return url_state['tab']
         return dash.no_update
 
-    # Year -> race dropdown.
     @app.callback(
         [Output('race-dropdown', 'options'), Output('race-dropdown', 'value')],
         [Input('year-dropdown', 'value')],
-        [State('race-dropdown', 'value'), State('url', 'search')]
+        State('url', 'search')
     )
-    def update_races(year, current_race, url_search):
+    def update_races(year, url_search):
         if not year:
-            return dash.no_update, dash.no_update
-        with _timed_callback('update_races', year=year):
-            schedule = get_event_schedule_cached(year)
-            schedule = schedule[schedule['EventFormat'] != 'testing']
-            races = schedule['EventName'].tolist()
-            options = [{'label': r.replace("Grand Prix", "GP"), 'value': r} for r in races]
-            url_race = _parse_url_state(url_search)['race']
+            return [], None
 
-            if current_race in races:
-                val = current_race
-            elif url_race in races:
-                val = url_race
-            else:
-                # Keep a valid selected race once options are loaded.
-                val = races[0] if races else None
-                try:
-                    # Prefer the latest completed event when event dates exist.
-                    event_dates = schedule.get('EventDate')
-                    if event_dates is not None and len(schedule) == len(event_dates):
-                        now = datetime.now()
-                        completed = schedule[event_dates <= now]
-                        if not completed.empty:
-                            val = completed.iloc[-1]['EventName']
-                except Exception:
-                    pass
+        url_state = _parse_url_state(url_search)
 
-            return options, val
+        try:
+            schedule = get_event_schedule_cached(int(year))
+            if schedule.empty:
+                return [], None
 
-    # Race -> session dropdown.
+            schedule = schedule[schedule['EventFormat'] != 'testing'].copy()
+            race_names = schedule['EventName'].tolist()
+            options = [{'label': name, 'value': name} for name in race_names]
+
+            if url_state.get('race') and url_state['race'] in race_names:
+                return options, url_state['race']
+
+            return options, None
+        except Exception as e:
+            print(f"Race Loading Error: {e}")
+            return [], None
+
     @app.callback(
         [Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
         [Input('race-dropdown', 'value')],
-        [State('year-dropdown', 'value'), State('session-dropdown', 'value'), State('url', 'search')]
+        [State('year-dropdown', 'value'), State('url', 'search')]
     )
-    def update_sessions(race, year, current_session, url_search):
+    def update_sessions(race, year, url_search):
         if not race or not year:
-            return dash.no_update, dash.no_update
-        with _timed_callback('update_sessions', year=year, race=race):
-            sessions = list(get_event_sessions_cached(year, race))
-            options = [{'label': session_name, 'value': session_name} for session_name in sessions]
-            valid_sessions = [opt['value'] for opt in options]
-            url_session = _parse_url_state(url_search)['session_type']
+            return [], None
 
-            if current_session in valid_sessions:
-                val = current_session
-            elif url_session in valid_sessions:
-                val = url_session
-            else:
-                # Prefer Race when available, else use the first session.
-                val = None
-                if options:
-                    val = options[0]['value']
-                    for opt in options:
-                        if opt['value'] == 'Race':
-                            val = 'Race'
-                            break
-            return options, val
+        url_state = _parse_url_state(url_search)
 
-    # Session -> driver dropdowns.
+        try:
+            sessions = get_event_sessions_cached(int(year), race)
+            if not sessions:
+                return [], None
+
+            options = [{'label': s, 'value': s} for s in sessions]
+            if url_state.get('session') and url_state['session'] in sessions:
+                return options, url_state['session']
+
+            return options, None
+        except Exception as e:
+            print(f"Session Loading Error: {e}")
+            return [], None
+
     @app.callback(
         [Output('driver1-dropdown', 'options'), Output('driver1-dropdown', 'value'),
          Output('driver2-dropdown', 'options'), Output('driver2-dropdown', 'value')],
-        [Input('session-dropdown', 'value'), Input('race-dropdown', 'value')],
-        [State('year-dropdown', 'value'), State('driver1-dropdown', 'value'),
-         State('driver2-dropdown', 'value'), State('url', 'search')]
+        [Input('session-dropdown', 'value')],
+        [State('year-dropdown', 'value'), State('race-dropdown', 'value'),
+         State('url', 'search')]
     )
-    def update_drivers(session_name, race, year, current_d1, current_d2, url_search):
-        if not session_name or not race or not year:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+    def update_drivers(session_type, year, race, url_search):
+        if not session_type or not year or not race:
+            return [], None, [], None
 
-        with _timed_callback('update_drivers', year=year, race=race, session=session_name):
-            try:
-                driver_info = _load_drivers_fast(year, race, session_name)
-                url_state = _parse_url_state(url_search)
+        url_state = _parse_url_state(url_search)
 
-                # Build labels like "VER - Verstappen (Red Bull)".
-                options = []
-                valid_abbrs = []
-                for d in driver_info:
-                    label = f"{d['abbr']} - {d['name']} ({d['team']})" if d['team'] else f"{d['abbr']} - {d['name']}"
-                    options.append({'label': label, 'value': d['abbr']})
-                    valid_abbrs.append(d['abbr'])
-
-                options.sort(key=lambda x: x['value'])
-                valid_abbrs.sort()
-
-                default_d1 = valid_abbrs[0] if len(valid_abbrs) > 0 else None
-                default_d2 = valid_abbrs[1] if len(valid_abbrs) > 1 else None
-
-                new_d1 = current_d1 if current_d1 in valid_abbrs else (
-                    url_state['driver1'] if current_d1 is None and url_state['driver1'] in valid_abbrs else default_d1
-                )
-                new_d2 = current_d2 if current_d2 in valid_abbrs else (
-                    url_state['driver2'] if current_d2 is None and url_state['driver2'] in valid_abbrs else default_d2
-                )
-
-                return options, new_d1, options, new_d2
-            except Exception as e:
-                print(f"Drivers Error: {e}")
+        try:
+            driver_info = _load_drivers_fast(int(year), race, session_type)
+            if not driver_info:
                 return [], None, [], None
 
-    # Teammate auto-select buttons.
+            options = [
+                {'label': f"{d['abbr']} ({d['name']})", 'value': d['abbr']}
+                for d in driver_info
+            ]
+            abbrs = [d['abbr'] for d in driver_info]
+
+            # Logic: Only use URL drivers if the session matches the URL.
+            # If the user has changed the session dropdown, url_state['session_type'] 
+            # will still be the old one (or None), so we trigger the Top 2 default.
+            if session_type == url_state.get('session_type'):
+                d1_val = url_state.get('driver1')
+                d2_val = url_state.get('driver2')
+                
+                # Validation
+                if d1_val not in abbrs: d1_val = abbrs[0] if abbrs else None
+                if d2_val not in abbrs: d2_val = abbrs[1] if len(abbrs) > 1 else None
+            else:
+                # Session changed or no URL match -> Top 2
+                d1_val = abbrs[0] if abbrs else None
+                d2_val = abbrs[1] if len(abbrs) > 1 else None
+
+            return options, d1_val, options, d2_val
+        except Exception as e:
+            print(f"Driver Loading Error: {e}")
+            return [], None, [], None
+
+    @app.callback(
+        Output('update-dashboard-btn', 'n_clicks'),
+        [Input('url', 'search')],
+        [State('update-dashboard-btn', 'n_clicks'),
+         State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
+         State('session-dropdown', 'value'), State('race-dropdown', 'value'),
+         State('year-dropdown', 'value')]
+    )
+    def auto_trigger_dashboard_on_paste(url_search, n_clicks, d1, d2, sess, race, year):
+        """Automatically click 'Update Dashboard' if we have a full URL state on first load."""
+        if n_clicks > 0 or not url_search:
+            raise PreventUpdate
+            
+        url_state = _parse_url_state(url_search)
+        # If the URL has the core params, trigger the button click simulation.
+        if all([url_state.get('year'), url_state.get('race'), url_state.get('session_type'),
+                url_state.get('driver1'), url_state.get('driver2')]):
+            return 1
+        raise PreventUpdate
+
     @app.callback(
         Output('driver2-dropdown', 'value', allow_duplicate=True),
-        Input('teammate1-btn', 'n_clicks'),
-        [State('driver1-dropdown', 'value'), State('session-dropdown', 'value'),
-         State('race-dropdown', 'value'), State('year-dropdown', 'value')],
+        Input('driver1-dropdown', 'value'),
+        [State('session-dropdown', 'value'), State('year-dropdown', 'value'),
+         State('race-dropdown', 'value'), State('driver2-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def teammate_for_d1(n_clicks, driver1, session_name, race, year):
-        if not n_clicks or not driver1 or not session_name or not race or not year:
-            return dash.no_update
+    def teammate_for_d1(d1, session_type, year, race, current_d2):
+        if not d1 or not session_type or not year or not race or current_d2:
+            raise PreventUpdate
         try:
-            driver_info = _load_drivers_fast(year, race, session_name)
-            teammate = get_teammate_from_info(driver1, driver_info)
-            return teammate if teammate else dash.no_update
+            driver_info = _load_drivers_fast(int(year), race, session_type)
+            mate = get_teammate_from_info(d1, driver_info)
+            return mate if mate else dash.no_update
         except Exception:
-            return dash.no_update
+            raise PreventUpdate
 
     @app.callback(
         Output('driver1-dropdown', 'value', allow_duplicate=True),
-        Input('teammate2-btn', 'n_clicks'),
-        [State('driver2-dropdown', 'value'), State('session-dropdown', 'value'),
-         State('race-dropdown', 'value'), State('year-dropdown', 'value')],
+        Input('driver2-dropdown', 'value'),
+        [State('session-dropdown', 'value'), State('year-dropdown', 'value'),
+         State('race-dropdown', 'value'), State('driver1-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def teammate_for_d2(n_clicks, driver2, session_name, race, year):
-        if not n_clicks or not driver2 or not session_name or not race or not year:
-            return dash.no_update
+    def teammate_for_d2(d2, session_type, year, race, current_d1):
+        if not d2 or not session_type or not year or not race or current_d1:
+            raise PreventUpdate
         try:
-            driver_info = _load_drivers_fast(year, race, session_name)
-            teammate = get_teammate_from_info(driver2, driver_info)
-            return teammate if teammate else dash.no_update
+            driver_info = _load_drivers_fast(int(year), race, session_type)
+            mate = get_teammate_from_info(d2, driver_info)
+            return mate if mate else dash.no_update
         except Exception:
-            return dash.no_update
+            raise PreventUpdate
 
-    # Leaderboard with gap display.
+    # Leaderboard.
     @app.callback(
         Output('leaderboard-container', 'children'),
-        [Input('update-leaderboard-btn', 'n_clicks')],
-        [State('session-dropdown', 'value'), State('race-dropdown', 'value'), State('year-dropdown', 'value')]
+        [Input('dashboard-params-store', 'data'),
+         Input('update-leaderboard-btn', 'n_clicks')],
+        [State('year-dropdown', 'value'),
+         State('race-dropdown', 'value'),
+         State('session-dropdown', 'value')],
+        prevent_initial_call=False
     )
-    def update_leaderboard(n_clicks, session_name, race, year):
-        if not n_clicks:
-            return html.Div("Click 'Update Leaderboard' to load.", style={'color': '#888', 'fontSize': '0.9rem'})
-        missing = []
-        if year in (None, ''):
-            missing.append('Year')
-        if race in (None, ''):
-            missing.append('Race')
-        if session_name in (None, ''):
-            missing.append('Session')
-        if missing:
-            print(f"[update_leaderboard] missing={missing} values: year={year!r} race={race!r} session={session_name!r}")
-            return html.Div(
-                "Select: " + ", ".join(missing) + " to load the leaderboard. "
-                f"(Debug: year={year!r}, race={race!r}, session={session_name!r})",
-                style={'color': '#888', 'fontSize': '0.9rem'}
-            )
+    def update_leaderboard(params, n_clicks, year, race, session_type):
+        ctx = dash.callback_context
+        if not ctx.triggered:
+            if params:
+                y, r, s = params['year'], params['race'], params['session_type']
+            else:
+                raise PreventUpdate
+        else:
+            trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+            if trigger_id == 'dashboard-params-store':
+                if not params:
+                    return []
+                y, r, s = params['year'], params['race'], params['session_type']
+            else:  # update-leaderboard-btn
+                if not all([year, race, session_type]):
+                    return dash.no_update
+                y, r, s = year, race, session_type
 
-        with _timed_callback('update_leaderboard', year=year, race=race, session=session_name):
+        with _timed_callback('update_leaderboard', year=y, race=r, session=s):
             try:
-                include_laps = is_practice(session_name) or is_qualifying(session_name)
-                session = load_session_summary(year, race, session_name, include_laps=include_laps)
-                return _build_leaderboard_children(session, session_name)
-
+                session = load_session_summary(y, r, s, include_laps=True)
+                return _build_leaderboard_children(session, s, year=y)
             except Exception as e:
-                print(f"Leaderboard Error: {e}")
                 return html.Div(_friendly_error(e), style={'color': 'red', 'fontSize': '0.9rem'})
 
     # Update dashboard params and metadata.
@@ -261,7 +279,6 @@ def register_callbacks(app):
         })
 
         if missing:
-            # Include raw values to simplify production issue triage.
             msg = (
                 "Please select: " + ", ".join(missing) + " before updating.\n\n"
                 f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
@@ -279,7 +296,7 @@ def register_callbacks(app):
         elif active_tab == 'tab-ai':
             preload_kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
         preload_session(year, race, session_type, **preload_kwargs)
-        
+
         params = {'year': year, 'race': race, 'session_type': session_type,
                   'driver1': driver1, 'driver2': driver2}
         return params, False, ""
@@ -291,13 +308,12 @@ def register_callbacks(app):
     def update_dashboard_metadata(params):
         if not params:
             return "Select parameters to load data...", ""
-        
+
         year, race, session_type = params['year'], params['race'], params['session_type']
         driver1, driver2 = params['driver1'], params['driver2']
-        
+
         with _timed_callback('update_dashboard_metadata', year=year, race=race, session=session_type):
             try:
-                import pandas as pd
                 session = load_session_summary(year, race, session_type, include_laps=False)
 
                 # Include finishing position in title when available.
@@ -320,34 +336,6 @@ def register_callbacks(app):
                 return f"{year} {race} | Data Unavailable", ""
 
     @app.callback(
-        Output('session-context-store', 'data', allow_duplicate=True),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')],
-        [State('session-context-store', 'data')],
-        prevent_initial_call=True
-    )
-    def update_ai_session_context(params, active_tab, current_context):
-        if not params or active_tab != 'tab-ai':
-            return dash.no_update
-
-        year, race, session_type = params['year'], params['race'], params['session_type']
-        driver1, driver2 = params['driver1'], params['driver2']
-        context_header = f"{year} {race} | {session_type} | {driver1} vs {driver2}"
-
-        if isinstance(current_context, str) and current_context.startswith(f"{context_header}\n\n"):
-            return dash.no_update
-
-        with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
-            try:
-                # AI analysis uses full context streams.
-                session = load_session_with_preload(year, race, session_type, 
-                                                   laps=True, telemetry=True, weather=True, messages=True)
-                context = _gather_session_context(session, session_type, driver1, driver2)
-                return f"{context_header}\n\n{context}"
-            except Exception as e:
-                print(f"AI Context Error: {e}")
-                return ""
-
-    @app.callback(
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')],
         State('url', 'search'),
@@ -361,640 +349,6 @@ def register_callbacks(app):
             return dash.no_update
         return new_search
 
-
-    # Telemetry tab.
-    @app.callback(
-        Output('speed-graph', 'figure'),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
-         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')]
-    )
-    def update_telemetry(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
-        if not params or active_tab != 'tab-telemetry':
-            return dash.no_update
-        with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
-            try:
-                import pandas as pd
-                # Telemetry view needs lap + telemetry data.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-                lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-                lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
-
-                if not _has_valid_lap(lap1, pd):
-                    raise ValueError(f"{d1} did not set a valid lap.")
-                if not _has_valid_lap(lap2, pd):
-                    raise ValueError(f"{d2} did not set a valid lap.")
-
-                tel1 = lap1.get_telemetry().add_distance()
-                tel2 = lap2.get_telemetry().add_distance()
-                if not tel1.empty: tel1['Distance'] -= tel1['Distance'].min()
-                if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
-
-                fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
-                return _build_telemetry_fig(fast_data, slow_data)
-            except Exception as e:
-                print(f"Telemetry Error: {e}")
-                return _error_figure(_friendly_error(e))
-
-    @app.callback(
-        [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d1-lap-number', 'value')],
-        prevent_initial_call=True
-    )
-    def update_mini_map_base(params, active_tab, n_laps, d1_mode, d1_lap_num):
-        """Precompute track polyline once; hover only moves marker."""
-        if not params or active_tab != 'tab-telemetry':
-            return dash.no_update, dash.no_update
-        try:
-            import numpy as np
-            import plotly.graph_objects as go
-            import pandas as pd
-
-            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-            lap = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-
-            if lap is None or pd.isna(lap.get('LapTime')):
-                raise PreventUpdate
-
-            tel = lap.get_telemetry().add_distance()
-            tel = tel.dropna(subset=['X', 'Y', 'Distance'])
-            if tel.empty:
-                raise PreventUpdate
-
-            # Downsample for responsive hover updates.
-            max_pts = 1400
-            n = len(tel)
-            step = max(1, n // max_pts)
-            x = tel['X'].to_numpy(dtype=float)[::step]
-            y = tel['Y'].to_numpy(dtype=float)[::step]
-            dist = tel['Distance'].to_numpy(dtype=float)[::step]
-
-            store = {'x': x.tolist(), 'y': y.tolist(), 'dist': dist.tolist()}
-
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=x, y=y,
-                mode='lines',
-                line=dict(color='#444', width=2),
-                hoverinfo='skip',
-                showlegend=False
-            ))
-
-            # Add marker at lap start.
-            fig.add_trace(go.Scatter(
-                x=[float(x[0])], y=[float(y[0])],
-                mode='markers',
-                marker=dict(color='#ff0000', size=12, symbol='circle', line=dict(color='white', width=2)),
-                hoverinfo='skip',
-                showlegend=False,
-                meta='hover'
-            ))
-
-            fig.update_layout(
-                template='plotly_dark',
-                margin=dict(l=0, r=0, t=0, b=0),
-                xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
-                yaxis=dict(visible=False),
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-            )
-            return fig, store
-        except PreventUpdate:
-            raise
-        except Exception:
-            return dash.no_update, dash.no_update
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='updateMiniMap'),
-        Output('mini-track-map', 'figure', allow_duplicate=True),
-        Input('speed-graph', 'hoverData'),
-        [State('mini-map-store', 'data'), State('mini-track-map', 'figure')],
-        prevent_initial_call=True
-    )
-
-    @app.callback(
-        [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
-         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
-        prevent_initial_call=True,
-    )
-    def update_gg_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
-        """Build base friction-circle figure and cache G-series for hover."""
-        if not params or active_tab != 'tab-telemetry':
-            return dash.no_update, dash.no_update
-
-        import numpy as np
-        import plotly.graph_objects as go
-        import pandas as pd
-
-        def calculate_g_series(tel):
-            # Return (dist, lat_g, long_g) arrays.
-            t = tel['Time'].dt.total_seconds()
-            dt = t.diff().fillna(0.1).to_numpy(dtype=float)
-            dt = np.where(dt <= 1e-3, 1e-3, dt)
-
-            v_ms = (tel['Speed'].to_numpy(dtype=float) / 3.6)
-            accel_ms2 = np.diff(v_ms, prepend=v_ms[0]) / dt
-            long_g = np.clip(accel_ms2 * 0.1019, -6.0, 6.0)
-
-            x = tel['X'].to_numpy(dtype=float)
-            y = tel['Y'].to_numpy(dtype=float)
-            dx = np.diff(x, prepend=x[0])
-            dy = np.diff(y, prepend=y[0])
-            heading = np.arctan2(dy, dx)
-            d_heading = np.diff(heading, prepend=heading[0])
-            d_heading = (d_heading + np.pi) % (2 * np.pi) - np.pi
-            lat_g = np.clip((v_ms * (d_heading / dt)) * 0.1019, -6.0, 6.0)
-
-            dist = tel['Distance'].to_numpy(dtype=float)
-            return dist, lat_g, long_g
-
-        with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
-            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-
-            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
-            if not _has_valid_lap(lap1, pd):
-                raise PreventUpdate
-            if not _has_valid_lap(lap2, pd):
-                raise PreventUpdate
-
-            tel1 = lap1.get_telemetry().add_distance()
-            tel2 = lap2.get_telemetry().add_distance()
-            if not tel1.empty:
-                tel1['Distance'] -= tel1['Distance'].min()
-            if not tel2.empty:
-                tel2['Distance'] -= tel2['Distance'].min()
-
-            dist1, lat1, long1 = calculate_g_series(tel1)
-            dist2, lat2, long2 = calculate_g_series(tel2)
-
-            # Downsample payload before writing to browser store.
-            def ds(dist, lat, lng, max_pts=2200):
-                n = len(dist)
-                if n <= max_pts:
-                    return dist.tolist(), lat.tolist(), lng.tolist()
-                step = max(1, n // max_pts)
-                return dist[::step].tolist(), lat[::step].tolist(), lng[::step].tolist()
-
-            d1_dist, d1_lat, d1_long = ds(dist1, lat1, long1)
-            d2_dist, d2_lat, d2_long = ds(dist2, lat2, long2)
-            store = {
-                'd1': {'driver': d1, 'color': c1, 'dist': d1_dist, 'lat': d1_lat, 'long': d1_long},
-                'd2': {'driver': d2, 'color': c2, 'dist': d2_dist, 'lat': d2_lat, 'long': d2_long},
-            }
-
-            fig = go.Figure()
-            # Reference rings.
-            for r0 in [1, 2, 3, 4, 5]:
-                th = np.linspace(0, 2 * np.pi, 160)
-                fig.add_trace(go.Scatter(
-                    x=r0 * np.cos(th), y=r0 * np.sin(th),
-                    mode='lines',
-                    line=dict(color='#2a2a2a', dash='dot', width=1),
-                    showlegend=False,
-                    hoverinfo='skip'
-                ))
-
-            fig.update_layout(
-                title="Hover over telemetry to view G-Force traces",
-                title_font=dict(size=14),
-                xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444'),
-                yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444', scaleanchor="x", scaleratio=1),
-                margin=dict(l=40, r=20, t=55, b=40),
-                showlegend=False,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                template='plotly_dark'
-            )
-            return fig, store
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='updateGGHover'),
-        Output('gg-diagram', 'figure', allow_duplicate=True),
-        Input('speed-graph', 'hoverData'),
-        [State('gg-data-store', 'data'), State('gg-diagram', 'figure')],
-        prevent_initial_call=True
-    )
-
-    # Track map tab.
-    @app.callback(
-        [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('trackmap-mode', 'value')]
-    )
-    def update_dominance(params, active_tab, mode):
-        if not params or active_tab != 'tab-trackmap':
-            return dash.no_update, dash.no_update
-        with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
-            try:
-                import pandas as pd
-                # Track map needs lap + telemetry data.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-                lap1 = get_best_lap(session, d1)
-                lap2 = get_best_lap(session, d2)
-                if lap1 is None or pd.isna(lap1.get('LapTime')):
-                    raise ValueError(f"{d1} did not set a valid lap for track map analysis.")
-                if lap2 is None or pd.isna(lap2.get('LapTime')):
-                    raise ValueError(f"{d2} did not set a valid lap for track map analysis.")
-
-                tel1 = lap1.get_telemetry().add_distance()
-                tel2 = lap2.get_telemetry().add_distance()
-                if not tel1.empty:
-                    tel1['Distance'] -= tel1['Distance'].min()
-                if not tel2.empty:
-                    tel2['Distance'] -= tel2['Distance'].min()
-
-                fast_data, slow_data = _sort_fastest_driver(
-                    d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2
-                )
-
-                # Build Driver DNA radar chart.
-                radar_fig, dna_legend = _build_driver_radar(d1, d2, c1, c2, tel1, tel2)
-                legend_ui = html.Div(
-                    [
-                        html.Span([html.Strong(f"{letter}:"), f" {label}"])
-                        for (letter, label) in (dna_legend or [])
-                    ],
-                    style={
-                        'display': 'flex',
-                        'flexWrap': 'wrap',
-                        'gap': '4px 10px',
-                        'justifyContent': 'center',
-                        'color': '#bbb',
-                        'fontSize': '0.72rem',
-                        'lineHeight': '1.15',
-                        'marginBottom': '6px',
-                    }
-                )
-                norm_note = html.Div(
-                    [
-                        "Normalization: values are compressed around 50 based on relative differences between the two drivers.",
-                        html.Br(),
-                        "Small raw deltas can still be visible, but won't dominate the shape."
-                    ],
-                    style={
-                        'textAlign': 'center',
-                        'color': '#888',
-                        'fontSize': '0.70rem',
-                        'lineHeight': '1.15',
-                        'marginBottom': '6px',
-                        'whiteSpace': 'normal',
-                        'wordBreak': 'break-word',
-                        'maxWidth': '100%'
-                    }
-                )
-                dna_ui = html.Div(
-                    [
-                        html.H6(
-                            "Driver DNA",
-                            style={
-                                'textAlign': 'center',
-                                'color': '#ff4444',
-                                'marginBottom': '6px'
-                            }
-                        ),
-                        legend_ui,
-                        norm_note,
-                        dcc.Graph(
-                            figure=radar_fig,
-                            config={'displayModeBar': False},
-                            style={'flex': '1 1 auto', 'minHeight': 0}
-                        )
-                    ],
-                    style={
-                        'backgroundColor': '#151515',
-                        'borderRadius': '8px',
-                        'padding': '10px',
-                        'height': '100%',
-                        'display': 'flex',
-                        'flexDirection': 'column'
-                    }
-                )
-
-                return _build_dominance_fig(
-                    d1, d2, c1, c2, tel1, tel2, fast_data, slow_data,
-                    mode=mode, session=session
-                ), dna_ui
-            except Exception as e:
-                print(f"Dominance Error: {e}")
-                return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
-
-    # Strategy tab.
-    @app.callback(
-        [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
-    )
-    def update_strategy(params, active_tab):
-        if not params or active_tab != 'tab-strategy':
-            return dash.no_update, dash.no_update
-        with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
-            try:
-                # Strategy view needs laps + weather; no telemetry.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
-                session_type = params['session_type']
-
-                if is_qualifying(session_type):
-                    fig_strat = _not_applicable_figure("Strategy timeline is not applicable for Qualifying sessions")
-                    fig_deg = _not_applicable_figure("Tyre degradation is not applicable for Qualifying sessions")
-                elif is_practice(session_type):
-                    fig_strat = _not_applicable_figure(
-                        "Strategy view available for Race & Sprint sessions.\n"
-                        "For practice, check the Grid Pace tab for pace comparisons.")
-                    fig_deg = _not_applicable_figure("Tyre degradation not applicable for practice sessions")
-                else:
-                    fig_strat = _build_strategy_fig(session, d1, d2, lbl1, lbl2, c1, c2)
-                    fig_deg = _build_deg_fig(session, d1, d2, lbl1, lbl2, c1, c2)
-
-                return fig_strat, fig_deg
-            except Exception as e:
-                print(f"Strategy Error: {e}")
-                err = _error_figure(_friendly_error(e))
-                return err, err
-
-    # Race tab.
-    @app.callback(
-        [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
-    )
-    def update_race_analysis(params, active_tab):
-        if not params or active_tab != 'tab-race':
-            return dash.no_update, dash.no_update
-        with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
-            try:
-                # Race analysis needs laps only.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False)
-                session_type = params['session_type']
-
-                if is_race(session_type):
-                    fig_gaps = _build_race_gaps_fig(session, d1, d2, lbl1, lbl2, c1, c2)
-                    fig_pits = _build_pit_stops_fig(session, d1, d2, lbl1, lbl2, c1, c2)
-                else:
-                    fig_gaps = _not_applicable_figure("Race gap analysis available for Race & Sprint sessions only")
-                    fig_pits = _not_applicable_figure("Pit stop data available for Race & Sprint sessions only")
-                return fig_gaps, fig_pits
-            except Exception as e:
-                print(f"Race Analysis Error: {e}")
-                err = _error_figure(_friendly_error(e))
-                return err, err
-
-    # Grid pace tab.
-    @app.callback(
-        Output('grid-pace-graph', 'figure'),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
-    )
-    def update_grid_pace(params, active_tab):
-        if not params or active_tab != 'tab-gridpace':
-            return dash.no_update
-        with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
-            try:
-                # Use weather to detect wet conditions for pace filtering.
-                session = load_session_with_preload(
-                    params['year'],
-                    params['race'],
-                    params['session_type'],
-                    laps=True,
-                    telemetry=False,
-                    weather=True,
-                    messages=False
-                )
-                return _build_grid_pace_fig(session, params['session_type'])
-            except Exception as e:
-                print(f"Grid Pace Error: {e}")
-                return _error_figure(_friendly_error(e))
-
-
-    # Feedback modal.
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='toggleFeedbackModal'),
-        Output('feedback-modal', 'is_open'),
-        [Input('open-feedback-modal-btn', 'n_clicks'),
-         Input('cancel-feedback-btn', 'n_clicks'),
-         Input('feedback-refresh-store', 'data')],
-        State('feedback-modal', 'is_open'),
-        prevent_initial_call=True
-    )
-
-    @app.callback(
-        [Output('feedback-submit-alert', 'children'),
-         Output('feedback-submit-alert', 'color'),
-         Output('feedback-submit-alert', 'is_open'),
-         Output('feedback-refresh-store', 'data'),
-         Output('feedback-message', 'value'),
-         Output('feedback-contact', 'value')],
-        Input('submit-feedback-btn', 'n_clicks'),
-        [State('feedback-category', 'value'),
-         State('feedback-rating', 'value'),
-         State('feedback-message', 'value'),
-         State('feedback-contact', 'value'),
-         State('dashboard-params-store', 'data'),
-         State('main-tabs', 'value'),
-         State('session-context-store', 'data')],
-        prevent_initial_call=True
-    )
-    def submit_feedback(n_clicks, category, rating, message, contact, params, active_tab, session_context):
-        if not n_clicks:
-            raise PreventUpdate
-
-        message = (message or '').strip()
-        if len(message) < 15:
-            return (
-                "Please include a bit more detail so the issue is actionable.",
-                'warning',
-                True,
-                dash.no_update,
-                dash.no_update,
-                dash.no_update
-            )
-        if len(message) > 2500:
-            return (
-                "Feedback is too long. Keep it under 2500 characters.",
-                'warning',
-                True,
-                dash.no_update,
-                dash.no_update,
-                dash.no_update
-            )
-
-        forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
-        raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
-        user_agent = flask.request.headers.get('User-Agent')
-
-        entry = store_feedback_entry(
-            {
-                'category': category,
-                'rating': rating,
-                'message': message,
-                'contact': contact,
-                'active_tab': active_tab,
-                'session': params or {},
-                'context_loaded': bool(session_context)
-            },
-            raw_ip=raw_ip,
-            user_agent=user_agent
-        )
-
-        return (
-            "Feedback submitted. Thanks.",
-            'success',
-            True,
-            {'entry_id': entry['id'], 'submitted_at': entry['submitted_at']},
-            '',
-            ''
-        )
-
-    @app.callback(
-        [Output('feedback-review-panel', 'children'),
-         Output('feedback-review-controls', 'style')],
-        [Input('url', 'search'),
-         Input('feedback-refresh-store', 'data'),
-         Input('refresh-feedback-review-btn', 'n_clicks')]
-    )
-    def update_feedback_review_panel(url_search, refresh_data, refresh_clicks):
-        if not _feedback_admin_authorized(url_search):
-            return [], {'display': 'none'}
-        return _build_feedback_review_panel(load_feedback_entries(limit=100)), {
-            'display': 'flex',
-            'gap': '0.5rem',
-            'marginBottom': '1rem'
-        }
-
-    @app.callback(
-        Output('feedback-download', 'data'),
-        Input('download-feedback-btn', 'n_clicks'),
-        State('url', 'search'),
-        prevent_initial_call=True
-    )
-    def download_feedback_csv(n_clicks, url_search):
-        if not n_clicks or not _feedback_admin_authorized(url_search):
-            raise PreventUpdate
-
-        import pandas as pd
-        entries = load_feedback_entries()
-        df = pd.json_normalize(entries, sep='_') if entries else pd.DataFrame(columns=[
-            'id', 'submitted_at', 'category', 'rating', 'message', 'contact',
-            'active_tab', 'context_loaded', 'ip_hash', 'user_agent', 'status',
-            'session_year', 'session_race', 'session_session_type', 'session_driver1', 'session_driver2'
-        ])
-        filename = f"feedback-inbox-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.csv"
-        return dcc.send_data_frame(df.to_csv, filename, index=False)
-
-    # AI analysis with rate limiting and cache.
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='updateAIHistoryIndex'),
-        Output('ai-history-index-store', 'data', allow_duplicate=True),
-        [Input('ai-prev-btn', 'n_clicks'), Input('ai-next-btn', 'n_clicks')],
-        [State('ai-history-store', 'data'), State('ai-history-index-store', 'data')],
-        prevent_initial_call=True
-    )
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='renderAIState'),
-        [Output('ai-question-display', 'children'),
-         Output('ai-answer-display', 'children'),
-         Output('ai-question-container', 'style'),
-         Output('ai-prev-btn', 'disabled'), Output('ai-next-btn', 'disabled'),
-         Output('ai-history-position', 'children'), Output('ai-history-nav', 'style')],
-        [Input('ai-history-store', 'data'), Input('ai-history-index-store', 'data')]
-    )
-
-    @app.callback(
-        [Output('ai-history-store', 'data'), Output('ai-question-input', 'value'),
-         Output('ai-history-index-store', 'data'), Output('ai-loading-dummy', 'children')],
-        [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
-        [State('ai-question-input', 'value'), State('session-context-store', 'data'),
-         State('ai-history-store', 'data')],
-        prevent_initial_call=True
-    )
-    def ask_ai(n_clicks, n_submit, question, session_context, history):
-        """Send user question + session context to Gemini with guardrails."""
-        if history is None:
-            history = []
-        history = _trim_history(history)
-
-        total_clicks = (n_clicks or 0) + (n_submit or 0)
-        if total_clicks == 0 or not question or not question.strip():
-            raise PreventUpdate
-
-        # Guard: API key.
-        if not GEMINI_API_KEY:
-            err = "AI Analysis is not available at this time."
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-
-        # Guard: session context.
-        if not session_context:
-            err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-
-        # Guard: input length.
-        question = question.strip()
-        if len(question) < 10:
-            err = "⚠️ Please ask a more specific question (at least 10 characters)."
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-        if len(question) > 300:
-            err = "⚠️ Question is too long. Please keep it under 300 characters."
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-
-        # Guard: per-user rate limit.
-        forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
-        raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
-        
-        allowed, current_count = check_user_limit(raw_ip)
-        if not allowed:
-            err = f"🛑 **Daily Limit Reached.** You have used your {USER_DAILY_LIMIT} AI analysis requests for today. Please come back tomorrow for more requests!"
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-
-        with _timed_callback('ask_ai', question_len=len(question)):
-            # Check response cache first.
-            cached = get_cached_response(session_context, question)
-            if cached:
-                new_history = _trim_history(history + [{'question': question, 'answer': cached}])
-                return new_history, '', len(new_history) - 1, ''
-
-            # Try configured Gemini models in random order.
-            shuffled_models = GEMINI_MODELS.copy()
-            random.shuffle(shuffled_models)
-            
-            last_error = ""
-            for model_name in shuffled_models:
-                try:
-                    from google import genai
-                    client = genai.Client(api_key=GEMINI_API_KEY)
-                    prompt = build_ai_prompt(session_context, question, history)
-                    
-                    response = client.models.generate_content(model=model_name, contents=prompt)
-                    answer = response.text
-                    
-                    # Append model attribution.
-                    attribution = f"\n\n---\n*Response generated by {model_name}*"
-                    full_answer = answer + attribution
-
-                    # Cache response for identical future question/context.
-                    store_cached_response(session_context, question, full_answer)
-
-                    new_history = _trim_history(history + [{'question': question, 'answer': full_answer}])
-                    return new_history, '', len(new_history) - 1, ''
-
-                except Exception as e:
-                    last_error = str(e)
-                    # Try next model on failure.
-                    continue
-
-            # All models failed.
-            err = f"❌ **AI Analysis encountered an error after trying multiple models.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
-            new_history = _trim_history(history + [{'question': question, 'answer': err}])
-            return new_history, '', len(new_history) - 1, ''
-
     @app.callback(
         [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),
          Output('d2-lap-number', 'min'), Output('d2-lap-number', 'max')],
@@ -1003,14 +357,13 @@ def register_callbacks(app):
     def update_lap_input_constraints(params):
         if not params:
             return dash.no_update, dash.no_update, dash.no_update, dash.no_update
-        
+
         year, race, session_type = params['year'], params['race'], params['session_type']
-        
+
         try:
-            import pandas as pd
             # Load lightweight session to determine lap bounds.
             session = load_session_summary(year, race, session_type, include_laps=True)
-            
+
             # Start from maximum completed lap.
             max_lap = 1
             if not session.laps.empty:
@@ -1020,11 +373,10 @@ def register_callbacks(app):
             if is_race(session_type):
                 official_total = getattr(session, 'total_laps', None)
                 if official_total is not None and pd.notna(official_total):
-                    # Keep at least as high as completed laps.
                     max_lap = max(max_lap, int(official_total))
 
             if max_lap < 1: max_lap = 1
-            
+
             return 1, max_lap, 1, max_lap
         except Exception:
             return 1, 100, 1, 100
@@ -1034,39 +386,3 @@ def register_callbacks(app):
         [Output('d1-lap-number', 'style'), Output('d2-lap-number', 'style')],
         [Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value')]
     )
-
-
-def _render_ai_state(history, index, empty_state=None):
-    """Return the AI body plus nav UI state for the current history page."""
-    if not history:
-        return empty_state or [], True, True, "", {'display': 'none'}
-
-    index = max(0, min(index, len(history) - 1))
-    return (
-        _render_history_page(history, index),
-        index == 0,
-        index >= len(history) - 1,
-        f"{index + 1} / {len(history)}",
-        {'display': 'flex', 'alignItems': 'center', 'justifyContent': 'center', 'marginTop': '0.75rem'}
-    )
-
-
-def _render_history_page(history, index):
-    """Renders a single AI Q&A exchange with prev/next navigation."""
-    if not history:
-        return []
-
-    index = max(0, min(index, len(history) - 1))
-    h = history[index]
-
-    content = html.Div([
-        html.Div([
-            html.Strong("Q: ", style={'color': '#ff4444'}),
-            html.Span(h['question'], style={'color': '#ddd'})
-        ], style={'marginBottom': '0.5rem'}),
-        html.Div([
-            dcc.Markdown(h['answer'], style={'color': '#e0e0e0', 'lineHeight': '1.7'})
-        ]),
-    ], style={'marginBottom': '1rem', 'paddingBottom': '1rem'})
-
-    return content

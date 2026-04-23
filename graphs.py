@@ -1,4 +1,7 @@
-from data import get_pit_stop_data, get_track_status_events, get_single_driver_color
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from data import get_pit_stop_data, get_track_status_events, get_single_driver_color, is_practice
 from ui_utils import _downsample, _apply_base_layout, _hex_to_rgba
 
 
@@ -36,7 +39,6 @@ GRAPH_CONFIG = {
 
 def _error_figure(message):
     """Creates a standard dark-themed error annotation figure."""
-    import plotly.graph_objects as go
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.add_annotation(text=f"Error: {message}", showarrow=False,
@@ -47,7 +49,6 @@ def _error_figure(message):
 
 def _not_applicable_figure(message):
     """Creates a standard dark-themed 'N/A' placeholder figure."""
-    import plotly.graph_objects as go
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.update_xaxes(visible=False).update_yaxes(visible=False)
@@ -87,8 +88,6 @@ def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
 
 def _identify_corners(tel1, tel2):
     """Detects corners as local minima in speed and extracts comparison metrics."""
-    import numpy as np
-    import pandas as pd
     corners = []
     
     # Smooth speed slightly for cleaner apex detection
@@ -134,7 +133,6 @@ def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0):
         return []
 
     try:
-        import pandas as pd
         if isinstance(corners_df, pd.DataFrame):
             df = corners_df.copy()
         else:
@@ -255,7 +253,6 @@ def _build_mini_map_fig(tel1, hover_data):
 
 def _build_telemetry_fig(fast_data, slow_data):
     """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
-    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, fast_lap, fast_lbl = fast_data
     slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
@@ -326,9 +323,6 @@ def _build_telemetry_fig(fast_data, slow_data):
 
 def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data, mode='dominance', session=None):
     """Builds the 2D Track Map with multiple overlay modes."""
-    import plotly.graph_objects as go
-    import pandas as pd
-    import numpy as np
     from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, _, fast_lbl = fast_data
     slow_driver, slow_tel, slow_c, slow_t, _, slow_lbl = slow_data
@@ -556,150 +550,12 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     return fig
 
 
-def _build_gg_diagram(driver1, driver2, c1, c2, tel1, tel2):
-    """Builds the G-G Diagram (Friction Circle) using calculated acceleration data."""
-    import plotly.graph_objects as go
-    import numpy as np
-    
-    def calculate_g(tel):
-        # Time in seconds
-        t = tel['Time'].dt.total_seconds()
-        dt = t.diff().fillna(0.1)
-        
-        # Longitudinal G (from speed change)
-        # 1 m/s^2 = 0.1019 g
-        v_ms = tel['Speed'] / 3.6
-        accel_ms2 = v_ms.diff() / dt
-        long_g = accel_ms2 * 0.1019
-        
-        # Lateral G (Heuristic: using change in heading and speed)
-        # Or even simpler for this visual: use X, Y curvature
-        dx = tel['X'].diff().fillna(0)
-        dy = tel['Y'].diff().fillna(0)
-        heading = np.arctan2(dy, dx)
-        d_heading = heading.diff().fillna(0)
-        # Normalize d_heading to [-pi, pi]
-        d_heading = (d_heading + np.pi) % (2 * np.pi) - np.pi
-        
-        lat_g = (v_ms * (d_heading / dt)) * 0.1019
-        return long_g.clip(-6, 6), lat_g.clip(-6, 6)
-
-    fig = go.Figure()
-    
-    # 1. Background Circles (Annulus markers)
-    # Using filled traces from largest to smallest to create a layered "bullseye" effect
-    for r in [5, 4, 3, 2, 1]:
-        theta = np.linspace(0, 2*np.pi, 100)
-        fig.add_trace(go.Scatter(
-            x=r*np.cos(theta), y=r*np.sin(theta),
-            mode='lines', 
-            fill='toself',
-            fillcolor='rgba(255, 255, 255, 0.02)', # Each layer adds 2% opacity
-            line=dict(color='rgba(255, 255, 255, 0.2)', width=1),
-            showlegend=False, hoverinfo='skip'
-        ))
-        
-        # G-level label
-        fig.add_annotation(
-            x=r * 0.707, y=r * 0.707,
-            text=f"{r}G",
-            showarrow=False,
-            font=dict(size=10, color="rgba(255, 255, 255, 0.7)"),
-            xanchor="center", yanchor="middle"
-        )
-
-    num_bins = 16
-    bin_angles = np.linspace(-np.pi, np.pi, num_bins + 1)
-    
-    for i, (drv, col, tel) in enumerate([(driver1, c1, tel1), (driver2, c2, tel2)]):
-        long_g, lat_g = calculate_g(tel)
-        long_g, lat_g = long_g.to_numpy(), lat_g.to_numpy()
-        
-        # Calculate magnitude and angle for each point
-        mags = np.sqrt(long_g**2 + lat_g**2)
-        angles = np.arctan2(long_g, lat_g)
-        
-        envelope_mags = []
-        envelope_angles = []
-        
-        for b in range(num_bins):
-            # Find points in this angular bin
-            mask = (angles >= bin_angles[b]) & (angles < bin_angles[b+1])
-            if np.any(mask):
-                # Use 95th percentile for a robust "peak" envelope
-                envelope_mags.append(np.percentile(mags[mask], 95))
-            else:
-                envelope_mags.append(0)
-            envelope_angles.append((bin_angles[b] + bin_angles[b+1]) / 2)
-            
-        # Close the loop
-        envelope_mags.append(envelope_mags[0])
-        envelope_angles.append(envelope_angles[0])
-        
-        # Convert back to Cartesian for plotting
-        env_x = np.array(envelope_mags) * np.cos(envelope_angles)
-        env_y = np.array(envelope_mags) * np.sin(envelope_angles)
-        
-        # We need to swap X and Y because arctan2(long, lat) means lat is X, long is Y
-        # Actually our env_x is mag * cos(angle) where angle was atan2(long, lat).
-        # So cos(atan2(long, lat)) corresponds to lat normalized, sin corresponds to long.
-        # So env_x IS lateral, env_y IS longitudinal.
-        
-        fig.add_trace(go.Scatter(
-            x=env_x, y=env_y,
-            mode='lines',
-            fill='toself',
-            name=f"{drv} Envelope",
-            line=dict(color=col, width=2),
-            fillcolor=_hex_to_rgba(col, 0.2),
-            hovertemplate=f"<b>{drv} Envelope</b><br>Peak G: %{{marker.size:.2f}}<extra></extra>"
-        ))
-        
-        # Add a few markers at the vertices for better visibility and hover
-        fig.add_trace(go.Scatter(
-            x=env_x[:-1], y=env_y[:-1],
-            mode='markers',
-            showlegend=False,
-            marker=dict(color=col, size=4, opacity=0.8),
-            hoverinfo='skip'
-        ))
-
-    fig.update_layout(
-        title="G-G Diagram (G-Forces)",
-        title_font=dict(size=16),
-        xaxis=dict(
-            title="Lateral G (Turn)", 
-            range=[-6, 6], 
-            gridcolor='rgba(255,255,255,0.05)', 
-            zerolinecolor='rgba(255,255,255,0.2)'
-        ),
-        yaxis=dict(
-            title="Long. G (Brake/Accel)", 
-            range=[-6, 6], 
-            gridcolor='rgba(255,255,255,0.05)', 
-            zerolinecolor='rgba(255,255,255,0.2)', 
-            scaleanchor="x", 
-            scaleratio=1
-        ),
-        width=350, height=350,
-        margin=dict(l=40, r=20, t=60, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        template='plotly_dark'
-    )
-    return fig
-
-
 def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
     """Computes and builds a normalized Driver DNA radar chart.
 
     Returns:
         (fig, legend_map): Plotly figure + list of (letter, long_label) tuples for UI legend.
     """
-    import plotly.graph_objects as go
-    import numpy as np
-
     DNA_CATEGORY_LABELS = [
         'Top Speed (km/h)',
         'Corner Speed <220 (km/h)',
@@ -794,9 +650,7 @@ def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
 
 def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the Race Pace, Pits, Tyres & Weather dual-axis strategy plot."""
-    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    import pandas as pd
 
     # 1. Fetch unfiltered laps
     unf_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
@@ -911,9 +765,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Fuel-corrected tyre degradation analysis per stint, side-by-side."""
-    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    import numpy as np
     FUEL_CORRECTION = 0.06
 
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(lbl1, lbl2),
@@ -983,9 +835,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the gap-between-drivers chart over race laps."""
-    import plotly.graph_objects as go
     from plotly.subplots import make_subplots
-    import pandas as pd
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         row_heights=[0.7, 0.3],
                         subplot_titles=('Gap Between Drivers', 'Position'))
@@ -1085,8 +935,6 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
 def _build_grid_pace_fig(session, session_type):
     """Builds a box plot of lap time distributions for all drivers."""
-    import plotly.graph_objects as go
-    import pandas as pd
     from data import is_race, is_qualifying
     fig = go.Figure()
     drivers_data = []
@@ -1169,7 +1017,7 @@ def _build_grid_pace_fig(session, session_type):
         except Exception:
             continue
 
-    _is_practice = is_practice_session(session_type)
+    _is_practice = is_practice(session_type)
     _is_shootout = 'Shootout' in session_type
 
     if not has_results or _is_practice or _is_shootout:
@@ -1190,7 +1038,7 @@ def _build_grid_pace_fig(session, session_type):
             hovertemplate=f"{d['driver']}<br>Lap Time: %{{y:.3f}}s<extra></extra>"
         ))
 
-    session_label = "Racing Laps" if _is_race else "Practice Laps" if is_practice_session(
+    session_label = "Racing Laps" if _is_race else "Practice Laps" if is_practice(
         session_type) else "Qualifying Laps"
     _apply_base_layout(
         fig,
@@ -1209,15 +1057,8 @@ def _build_grid_pace_fig(session, session_type):
     return fig
 
 
-def is_practice_session(session_type):
-    """Helper for grid pace label."""
-    return any(p in session_type for p in ['Practice 1', 'Practice 2', 'Practice 3'])
-
-
 def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds a pit stop duration comparison chart for all drivers."""
-    import plotly.graph_objects as go
-    import pandas as pd
     pit_data = []
     title = 'Pit Stop Durations (Time spent in pit lane)'
     hover_label = 'Stop Time'

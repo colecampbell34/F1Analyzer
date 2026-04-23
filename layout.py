@@ -155,6 +155,20 @@ telemetry_controls = html.Div([
             dbc.Button("Update Laps", id='update-laps-btn', color='danger', size='sm', n_clicks=0,
                        style={'fontWeight': 'bold', 'width': '100%'})
         ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '0.5rem'})
+    ]),
+    dbc.Row([
+        dbc.Col([
+            dbc.Button("Play Lap", id='play-lap-btn', color='secondary', size='sm', n_clicks=0,
+                       style={'fontWeight': 'bold', 'width': '100%'})
+        ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
+        dbc.Col([
+            dbc.Button("Pause", id='pause-resume-lap-btn', color='secondary', outline=True, size='sm', n_clicks=0,
+                       style={'fontWeight': 'bold', 'width': '100%'})
+        ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
+        dbc.Col([
+            html.Div("Lap Time: 0.00s / 0.00s", id='lap-playback-time-label',
+                     style={'color': '#aaa', 'fontSize': '0.82rem', 'width': '100%'})
+        ], md=4, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'})
     ])
 ], style={'padding': '0.5rem 1rem', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px',
           'marginBottom': '0.5rem', 'border': '1px solid #333'})
@@ -170,7 +184,7 @@ content = html.Div([
             telemetry_controls,
             dbc.Row([
                 dbc.Col([
-                    dcc.Loading(type='circle', color='#ff0000', children=[
+                    dcc.Loading(type='dot', color='#ff0000', children=[
                         _empty_state('speed-graph', TAB_HEIGHTS['telemetry'])
                     ])
                 ], lg=9, md=8, xs=12),
@@ -178,7 +192,7 @@ content = html.Div([
                     html.Div("Track Position", style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.75rem', 'marginBottom': '5px'}),
                     dcc.Graph(id='mini-track-map', style={'height': '250px'}, config={'displayModeBar': False}),
                     html.Hr(style={'margin': '10px 0'}),
-                    html.Div("Friction Circle", style={
+                    html.Div("G-Force Traces", style={
                         'textAlign': 'center',
                         'color': '#888',
                         'fontSize': '0.75rem',
@@ -209,13 +223,12 @@ content = html.Div([
             ], style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center'}),
             dbc.Row([
                 dbc.Col([
-                    dcc.Loading(type='circle', color='#ff0000', children=[
+                    dcc.Loading(type='dot', color='#ff0000', children=[
                         _empty_state('2d-dominance-graph', TAB_HEIGHTS['single'])
                     ])
                 ], lg=9, md=8, xs=12),
                 dbc.Col([
-                    html.Div(id='driver-dna-container', style={'flex': '1 1 auto', 'minHeight': 0}),
-                    html.Div(id='track-apex-stats', style={'flex': '0 0 auto'})
+                    html.Div(id='driver-dna-container', style={'flex': '1 1 auto', 'minHeight': 0})
                 ], lg=3, md=4, xs=12, style={
                     'height': TAB_HEIGHTS['single'],
                     'display': 'flex',
@@ -227,27 +240,27 @@ content = html.Div([
 
         dcc.Tab(label='Strategy', value='tab-strategy', children=[
             DISCLAIMER,
-            dcc.Loading(type='circle', color='#ff0000', children=[
+            dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
             ]),
-            dcc.Loading(type='circle', color='#ff0000', children=[
+            dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('deg-graph', TAB_HEIGHTS['strategy_bot'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Race', value='tab-race', children=[
             DISCLAIMER,
-            dcc.Loading(type='circle', color='#ff0000', children=[
+            dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
             ]),
-            dcc.Loading(type='circle', color='#ff0000', children=[
+            dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('pit-stops-graph', TAB_HEIGHTS['race_bot'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(label='Grid Pace', value='tab-gridpace', children=[
             DISCLAIMER,
-            dcc.Loading(type='circle', color='#ff0000', children=[
+            dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
@@ -395,6 +408,8 @@ app_layout = dbc.Container([
     dcc.Store(id='dashboard-params-store', storage_type='session'),
     dcc.Store(id='gg-data-store', storage_type='memory'),
     dcc.Store(id='mini-map-store', storage_type='memory'),
+    dcc.Store(id='lap-playback-store', storage_type='memory'),
+    dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
     dcc.Store(id='feedback-refresh-store'),
     dcc.Download(id='feedback-download'),
     dcc.ConfirmDialog(id='error-dialog', message='')

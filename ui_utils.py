@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import parse_qs
 import flask
 import fastf1
@@ -122,7 +122,7 @@ def _build_feedback_review_panel(entries):
     recent_count = sum(
         1
         for entry in entries
-        if str(entry.get('submitted_at', ''))[:10] == datetime.utcnow().strftime('%Y-%m-%d')
+        if str(entry.get('submitted_at', ''))[:10] == datetime.now(timezone.utc).strftime('%Y-%m-%d')
     )
 
     summary_cards = dbc.Row([
@@ -148,10 +148,31 @@ def _build_feedback_review_panel(entries):
         feedback_body
     ])
 
-def _build_leaderboard_children(session, session_name):
+def _build_leaderboard_children(session, session_name, year=None, race=None):
     _is_practice = is_practice(session_name)
     _is_shootout = 'Shootout' in session_name
-    leaderboard_children = []
+    
+    parts = []
+    if year: parts.append(str(year))
+    if race: parts.append(str(race))
+    if session_name: parts.append(str(session_name))
+    subtitle = " | ".join(parts) if parts else ""
+    
+    leaderboard_children = [
+        html.Div(subtitle, style={
+            'fontSize': '0.72rem',
+            'color': '#888',
+            'marginBottom': '0.4rem',
+            'marginTop': '-0.2rem',
+            'fontStyle': 'italic',
+            'textAlign': 'center',
+            'borderBottom': '1px solid #444',
+            'paddingBottom': '0.3rem',
+            'whiteSpace': 'nowrap',
+            'overflow': 'hidden',
+            'textOverflow': 'ellipsis'
+        })
+    ] if subtitle else []
 
     if (_is_practice or _is_shootout) and getattr(session, 'laps', None) is not None and not session.laps.empty:
         drivers_data = []

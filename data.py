@@ -4,24 +4,25 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
+import pandas as pd
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
-_SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
-_MAX_TRACKED_PRELOAD_FUTURES = 24
+_MAX_TRACKED_PRELOAD_FUTURES = 12
 _CACHE_DIR = 'f1_cache'
 _CACHE_SETUP_LOCK = threading.Lock()
 _CACHE_READY = False
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
 _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
-SESSION_CACHE_MAXSIZE = 8
-SESSION_SUMMARY_CACHE_MAXSIZE = 8
+SESSION_CACHE_MAXSIZE = 4
+SESSION_SUMMARY_CACHE_MAXSIZE = 12
 EVENT_SCHEDULE_CACHE_MAXSIZE = 20
 EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
@@ -49,6 +50,8 @@ def setup_cache():
     if _CACHE_READY:
         return
     import fastf1
+    import logging
+    logging.getLogger('fastf1').setLevel(logging.WARNING)
 
     with _CACHE_SETUP_LOCK:
         if _CACHE_READY:
@@ -78,7 +81,6 @@ def get_event_sessions_cached(year, race):
     """LRU-cached session names for a specific event."""
     _ensure_cache_ready()
     import fastf1
-    import pandas as pd
 
     event = fastf1.get_event(int(year), str(race))
     sessions = []
@@ -221,7 +223,6 @@ def _load_drivers_fast(year, race, session_name):
 
 def get_track_status_events(session):
     """Returns (sc_laps, vsc_laps, red_laps) sets extracted from session laps."""
-    import pandas as pd
     sc_laps, vsc_laps, red_laps = set(), set(), set()
     try:
         all_laps = session.laps
@@ -243,7 +244,6 @@ def get_driver_info(session):
         return drivers
 
     for _, row in session.results.iterrows():
-        import pandas as pd
         abbr = row.get('Abbreviation', '')
         if not isinstance(abbr, str) or len(abbr) != 3:
             continue
@@ -291,7 +291,6 @@ def get_best_lap(session, driver_abbr):
     For Qualifying/Shootout, it prioritizes Q3 > Q2 > Q1 times from session.results.
     For other sessions (Practice, Race), it uses pick_fastest().
     """
-    import pandas as pd
     try:
         if not hasattr(session, 'laps') or session.laps.empty:
             return None
@@ -341,21 +340,19 @@ def get_single_driver_color(driver_abbr, session):
         return '#ffffff'
 
 
-@lru_cache(maxsize=32)
-def _get_shared_data_cached(year, race, session_type, d1, d2, laps, telemetry, weather, messages):
-    """Internal LRU-cached helper for shared data.
-    
-    Since dicts (params) aren't hashable, we decompose them here.
-    """
-    import pandas as pd
-    session = load_session_with_preload(
-        year, race, session_type,
-        laps=laps, telemetry=telemetry, weather=weather, messages=messages
-    )
+@lru_cache(maxsize=16)
+def _compute_labels_colors(year, race, session_type, d1, d2):
+    """LRU-cached driver labels (with finishing position) and team colors.
 
+    Separated from session loading so that different data-stream
+    combinations (telemetry vs. weather) share a single cache entry.
+    """
+    session = load_session_summary(year, race, session_type, include_laps=False)
+
+    from graphs import _get_driver_colors
+    c1, c2 = _get_driver_colors(d1, d2, session)
     try:
         if session.results is not None and not session.results.empty:
-            # Narrow down to just the drivers we care about early
             res1 = session.results[session.results['Abbreviation'] == d1]
             p1 = res1['Position'].values[0] if not res1.empty else None
             lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
@@ -368,18 +365,19 @@ def _get_shared_data_cached(year, race, session_type, d1, d2, laps, telemetry, w
     except (IndexError, KeyError):
         lbl1, lbl2 = d1, d2
 
-    from graphs import _get_driver_colors
-    c1, c2 = _get_driver_colors(d1, d2, session)
-    return session, d1, d2, lbl1, lbl2, c1, c2
+    return lbl1, lbl2, c1, c2
 
 
 def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False):
     """Loads session with granular control and computes shared labels/colors."""
-    return _get_shared_data_cached(
-        params['year'], params['race'], params['session_type'],
-        params['driver1'], params['driver2'],
-        bool(laps), bool(telemetry), bool(weather), bool(messages)
+    year, race, session_type = params['year'], params['race'], params['session_type']
+    d1, d2 = params['driver1'], params['driver2']
+    session = load_session_with_preload(
+        year, race, session_type,
+        laps=laps, telemetry=telemetry, weather=weather, messages=messages
     )
+    lbl1, lbl2, c1, c2 = _compute_labels_colors(year, race, session_type, d1, d2)
+    return session, d1, d2, lbl1, lbl2, c1, c2
 
 
 @lru_cache(maxsize=10)
@@ -390,14 +388,12 @@ def get_pit_stop_data(year, round_number):
     """
     try:
         from fastf1.ergast import Ergast
-        import pandas as pd
         ergast = Ergast(result_type='pandas', auto_cast=True)
         result = ergast.get_pit_stops(season=int(year), round=int(round_number))
         if not result.content:
             return pd.DataFrame()
         return result.content[0].copy()
     except Exception:
-        import pandas as pd
         # Ergast API may be offline (deprecated) — return empty to trigger fallback
         return pd.DataFrame()
 
