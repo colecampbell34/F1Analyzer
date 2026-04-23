@@ -1,5 +1,6 @@
 """Visualization tab callbacks: Track Map, Strategy, Race Analysis, Grid Pace."""
 import dash
+import logging
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
 import pandas as pd
@@ -120,7 +121,7 @@ def register_tab_callbacks(app):
                     mode=mode, session=session
                 ), dna_ui
             except Exception as e:
-                print(f"Dominance Error: {e}")
+                logging.error(f"Dominance Error: {e}")
                 return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
 
     # Strategy tab.
@@ -151,7 +152,7 @@ def register_tab_callbacks(app):
 
                 return fig_strat, fig_deg
             except Exception as e:
-                print(f"Strategy Error: {e}")
+                logging.error(f"Strategy Error: {e}")
                 err = _error_figure(_friendly_error(e))
                 return err, err
 
@@ -177,7 +178,7 @@ def register_tab_callbacks(app):
                     fig_pits = _not_applicable_figure("Pit stop data available for Race & Sprint sessions only")
                 return fig_gaps, fig_pits
             except Exception as e:
-                print(f"Race Analysis Error: {e}")
+                logging.error(f"Error in callback: {e}")
                 err = _error_figure(_friendly_error(e))
                 return err, err
 
@@ -203,5 +204,5 @@ def register_tab_callbacks(app):
                 )
                 return _build_grid_pace_fig(session, params['session_type'])
             except Exception as e:
-                print(f"Grid Pace Error: {e}")
+                logging.error(f"Grid Pace Error: {e}")
                 return _error_figure(_friendly_error(e))

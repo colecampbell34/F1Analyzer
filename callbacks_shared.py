@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 from contextlib import contextmanager
 from urllib.parse import parse_qs, urlencode
 
@@ -94,7 +95,7 @@ def _timed_callback(name, **fields):
                 f"{key}={value}" for key, value in fields.items()
                 if value not in (None, '')
             )
-            print(
+            logging.info(
                 f"[timing] callback={name} trigger={trigger} ms={elapsed_ms:.1f}"
                 f"{(' ' + field_text) if field_text else ''}"
             )

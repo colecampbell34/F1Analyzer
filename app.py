@@ -1,3 +1,4 @@
+import logging
 import dash
 import dash_bootstrap_components as dbc
 from layout import app_layout
@@ -10,10 +11,13 @@ import threading
 import atexit
 from datetime import datetime
 from flask import jsonify
-import logging
 
 # Set global log level to WARNING
 logging.basicConfig(level=logging.WARNING)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)
+logging.getLogger('dash').setLevel(logging.WARNING)
+logging.getLogger('flask').setLevel(logging.WARNING)
+logging.getLogger('google.genai').setLevel(logging.WARNING)
 
 app = dash.Dash(
     __name__,
@@ -72,4 +76,4 @@ app.layout = app_layout
 register_callbacks(app)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8000)

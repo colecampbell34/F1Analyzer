@@ -2,9 +2,14 @@ import os
 import shutil
 import threading
 import time
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 import pandas as pd
+
+# Suppress FastF1 and other noisy libraries at the module level
+logging.getLogger('fastf1').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 try:
     import fcntl
@@ -14,6 +19,7 @@ except ImportError:  # pragma: no cover - non-POSIX fallback
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
+_GRANULAR_LOAD_LOCK = threading.Lock()
 _MAX_TRACKED_PRELOAD_FUTURES = 12
 _CACHE_DIR = 'f1_cache'
 _CACHE_SETUP_LOCK = threading.Lock()
@@ -49,13 +55,11 @@ def setup_cache():
     global _CACHE_READY
     if _CACHE_READY:
         return
-    import fastf1
-    import logging
-    logging.getLogger('fastf1').setLevel(logging.WARNING)
 
     with _CACHE_SETUP_LOCK:
         if _CACHE_READY:
             return
+        import fastf1
         if not os.path.exists(_CACHE_DIR):
             os.makedirs(_CACHE_DIR)
         fastf1.Cache.enable_cache(_CACHE_DIR)
@@ -99,16 +103,19 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
     """
     _ensure_cache_ready()
     import fastf1
-    # Tip: Use load=False (or skip immediate loading) for lazy initialization
-    session = fastf1.get_session(int(year), str(race), str(session_name))
     
-    # Selective Loading: Only load what we need
-    session.load(
-        laps=bool(laps), 
-        telemetry=bool(telemetry), 
-        weather=bool(weather), 
-        messages=bool(messages)
-    )
+    # We use a lock here because lru_cache might allow multiple threads 
+    # to enter the function for the same missing key simultaneously.
+    with _GRANULAR_LOAD_LOCK:
+        session = fastf1.get_session(int(year), str(race), str(session_name))
+        
+        # Selective Loading: Only load what we need
+        session.load(
+            laps=bool(laps), 
+            telemetry=bool(telemetry), 
+            weather=bool(weather), 
+            messages=bool(messages)
+        )
     return session
 
 
@@ -159,13 +166,13 @@ def preload_session(year, race, session_name, laps=True, telemetry=False, weathe
             )
             _SESSION_PRELOAD_FUTURES[key] = future
             if LOG_SESSION_LOADING:
-                print(
+                logging.info(
                     "[session] preload started "
                     f"year={key[0]} race={key[1]} session={key[2]} "
                     f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
                 )
         elif LOG_SESSION_LOADING:
-            print(
+            logging.info(
                 "[session] preload reused "
                 f"year={key[0]} race={key[1]} session={key[2]} "
                 f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
@@ -183,7 +190,7 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
     # If matching preload is in-flight, reuse it directly.
     if exact_future is not None:
         if LOG_SESSION_LOADING:
-            print(
+            logging.info(
                 "[session] waiting on exact preload "
                 f"year={key[0]} race={key[1]} session={key[2]} "
                 f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
@@ -194,7 +201,7 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
         preload_session(*key, bool(laps), bool(telemetry), bool(weather), bool(messages))
 
     if LOG_SESSION_LOADING:
-        print(
+        logging.info(
             "[session] granular load "
             f"year={key[0]} race={key[1]} session={key[2]} "
             f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
@@ -212,12 +219,12 @@ def load_session_summary(year, race, session_name, include_laps=False):
 
 @lru_cache(maxsize=16)
 def _load_drivers_fast(year, race, session_name):
-    """Fast cache to get driver info without loading laps/telemetry."""
+    """Fast cache to get driver info ordered by session results or fastest laps."""
     try:
         session = load_session_summary(year, race, session_name, include_laps=False)
         return get_driver_info(session)
-    except Exception:
-        # Fallback if fastf1 complains
+    except Exception as e:
+        logging.error(f"Error in _load_drivers_fast: {e}")
         return []
 
 
@@ -438,7 +445,7 @@ def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
 
         total_size = _cache_size_bytes(_CACHE_DIR)
         if total_size > max_size_gb * 1024 ** 3:
-            print(f"[cache] pruning FastF1 cache at {total_size / 1024 ** 3:.2f} GB")
+            logging.warning(f"[cache] pruning FastF1 cache at {total_size / 1024 ** 3:.2f} GB")
             shutil.rmtree(_CACHE_DIR, ignore_errors=True)
             os.makedirs(_CACHE_DIR, exist_ok=True)
             fastf1.Cache.enable_cache(_CACHE_DIR)
@@ -458,3 +465,7 @@ def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
 def clear_old_cache(max_size_gb=2.0):
     """Backward-compatible cache pruning entry point."""
     maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)
+
+
+# Initialize cache on module import
+setup_cache()

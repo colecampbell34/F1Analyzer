@@ -16,8 +16,7 @@ import logging
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     get_event_sessions_cached,
-    load_session_summary, preload_session,
-    get_shared_data, is_race,
+    load_session_summary, preload_session, is_race
 )
 from ui_utils import _friendly_error, _build_leaderboard_children
 from callbacks_shared import (
@@ -97,7 +96,7 @@ def _register_core_callbacks(app):
 
             return options, None
         except Exception as e:
-            print(f"Race Loading Error: {e}")
+            logging.error(f"Race Loading Error: {e}")
             return [], None
 
     @app.callback(
@@ -122,7 +121,7 @@ def _register_core_callbacks(app):
 
             return options, None
         except Exception as e:
-            print(f"Session Loading Error: {e}")
+            logging.error(f"Session Loading Error: {e}")
             return [], None
 
     @app.callback(
@@ -166,7 +165,7 @@ def _register_core_callbacks(app):
 
             return options, d1_val, options, d2_val
         except Exception as e:
-            print(f"Driver Loading Error: {e}")
+            logging.error(f"Driver Loading Error: {e}")
             return [], None, [], None
 
     @app.callback(
@@ -254,8 +253,9 @@ def _register_core_callbacks(app):
         with _timed_callback('update_leaderboard', year=y, race=r, session=s):
             try:
                 session = load_session_summary(y, r, s, include_laps=True)
-                return _build_leaderboard_children(session, s, year=y)
+                return _build_leaderboard_children(session, s, year=y, race=r)
             except Exception as e:
+                logging.error(f"Leaderboard Error: {e}")
                 return html.Div(_friendly_error(e), style={'color': 'red', 'fontSize': '0.9rem'})
 
     # Update dashboard params and metadata.
@@ -284,8 +284,8 @@ def _register_core_callbacks(app):
                 f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
                 f"driver1={driver1!r}, driver2={driver2!r}"
             )
-            print(f"[update_dashboard_params] missing={missing} values: year={year!r} race={race!r} "
-                  f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
+            logging.warning(f"[update_dashboard_params] missing={missing} values: year={year!r} race={race!r} "
+                          f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
             return dash.no_update, True, msg
 
         preload_kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
@@ -332,7 +332,7 @@ def _register_core_callbacks(app):
                 return title_text, ""
 
             except Exception as e:
-                print(f"Metadata Error: {e}")
+                logging.error(f"Metadata Error: {e}")
                 return f"{year} {race} | Data Unavailable", ""
 
     @app.callback(

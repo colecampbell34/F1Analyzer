@@ -154,9 +154,12 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
     
     parts = []
     if year: parts.append(str(year))
-    if race: parts.append(str(race))
+    if race:
+        # Shorten 'Grand Prix' to 'GP' and add to title.
+        race_clean = str(race).replace('Grand Prix', 'GP')
+        parts.append(race_clean)
     if session_name: parts.append(str(session_name))
-    subtitle = " | ".join(parts) if parts else ""
+    subtitle = " ".join(parts) if parts else ""
     
     leaderboard_children = [
         html.Div(subtitle, style={
@@ -183,7 +186,6 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
         for drv in all_drivers:
             if not isinstance(drv, str) or len(drv) != 3:
                 continue
-            drv_laps = session.laps.pick_drivers(drv)
             fastest_lap = get_best_lap(session, drv)
             lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
                 fastest_lap['LapTime']) else pd.NaT

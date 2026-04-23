@@ -1,5 +1,6 @@
 """AI analysis callbacks: session context building, question answering, history navigation."""
 import dash
+import logging
 from dash import dcc, ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
@@ -43,7 +44,7 @@ def register_ai_callbacks(app):
                 context = _gather_session_context(session, session_type, driver1, driver2)
                 return f"{context_header}\n\n{context}"
             except Exception as e:
-                print(f"AI Context Error: {e}")
+                logging.error(f"AI Context Error: {e}")
                 return ""
 
     # AI history navigation (clientside).

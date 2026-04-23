@@ -1,5 +1,6 @@
 """Telemetry tab callbacks: speed graph, mini track map, GG diagram, and playback."""
 import dash
+import logging
 from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
@@ -46,7 +47,7 @@ def register_telemetry_callbacks(app):
                 fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
                 return _build_telemetry_fig(fast_data, slow_data)
             except Exception as e:
-                print(f"Telemetry Error: {e}")
+                logging.error(f"Telemetry Error: {e}")
                 return _error_figure(_friendly_error(e))
 
     @app.callback(
