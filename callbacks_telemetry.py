@@ -154,8 +154,10 @@ def register_telemetry_callbacks(app):
     )
 
     app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='animateMiniMapPlayback'),
+        ClientsideFunction(namespace='clientside', function_name='handlePlaybackAnimation'),
         [Output('mini-track-map', 'figure', allow_duplicate=True),
+         Output('gg-diagram', 'figure', allow_duplicate=True),
+         Output('speed-graph', 'figure', allow_duplicate=True),
          Output('lap-playback-interval', 'disabled'),
          Output('lap-playback-interval', 'n_intervals'),
          Output('pause-resume-lap-btn', 'children'),
@@ -165,7 +167,10 @@ def register_telemetry_callbacks(app):
          Input('pause-resume-lap-btn', 'n_clicks'),
          Input('lap-playback-interval', 'n_intervals')],
         [State('mini-map-store', 'data'),
+         State('gg-data-store', 'data'),
          State('mini-track-map', 'figure'),
+         State('gg-diagram', 'figure'),
+         State('speed-graph', 'figure'),
          State('lap-playback-interval', 'disabled'),
          State('lap-playback-store', 'data')],
         prevent_initial_call=True
@@ -254,21 +259,45 @@ def register_telemetry_callbacks(app):
                 fig.add_trace(go.Scatter(
                     x=r0 * np.cos(th), y=r0 * np.sin(th),
                     mode='lines',
-                    line=dict(color='#2a2a2a', dash='dot', width=1),
+                    line=dict(color='#444', dash='dot', width=1),
                     showlegend=False,
                     hoverinfo='skip'
                 ))
 
             fig.update_layout(
-                xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444'),
-                yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#222', zerolinecolor='#444', scaleanchor="x", scaleratio=1),
+                xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555'),
+                yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555', scaleanchor="x", scaleratio=1),
                 margin=dict(l=40, r=20, t=55, b=40),
                 showlegend=False,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
-                template='plotly_dark',
-                uirevision='gg-friction'
+                template='plotly_dark'
             )
+
+            # Add placeholder traces for 2 drivers (Beam, Trail, Ball each)
+            for i in range(2):
+                color = c1 if i == 0 else c2
+                name = d1 if i == 0 else d2
+                # Beam
+                fig.add_trace(go.Scatter(
+                    x=[0, 0], y=[0, 0], mode='lines',
+                    line=dict(color=color, width=1.5, dash='dot'),
+                    opacity=0.5, showlegend=False, meta='hover', hoverinfo='skip'
+                ))
+                # Trail
+                fig.add_trace(go.Scatter(
+                    x=[], y=[], mode='lines',
+                    line=dict(color=color, width=2.5, shape='spline', smoothing=1.3),
+                    opacity=0.35, showlegend=False, meta='hover', hoverinfo='skip'
+                ))
+                # Ball
+                fig.add_trace(go.Scatter(
+                    x=[None], y=[None], mode='markers',
+                    marker=dict(color=color, size=11, line=dict(color='white', width=1.5), symbol='diamond'),
+                    name=name, showlegend=False, meta='hover',
+                    hovertemplate=f"<b>{name}</b><br>Lat: %{{x:.2f}}G<br>Long: %{{y:.2f}}G<extra></extra>"
+                ))
+
             return fig, store
 
     app.clientside_callback(
@@ -280,18 +309,3 @@ def register_telemetry_callbacks(app):
         prevent_initial_call=True
     )
 
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='updateGGFromPlayback'),
-        Output('gg-diagram', 'figure', allow_duplicate=True),
-        Input('lap-playback-store', 'data'),
-        [State('gg-data-store', 'data'), State('gg-diagram', 'figure')],
-        prevent_initial_call=True
-    )
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='updateTelemetryPlaybackCursor'),
-        Output('speed-graph', 'figure', allow_duplicate=True),
-        Input('lap-playback-store', 'data'),
-        [State('mini-map-store', 'data'), State('speed-graph', 'figure')],
-        prevent_initial_call=True
-    )

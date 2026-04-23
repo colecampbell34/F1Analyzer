@@ -99,34 +99,42 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return {data: baseData, layout: layout};
         },
 
-        animateMiniMapPlayback: function(playClicks, toggleClicks, nIntervals, miniStore, fig, intervalDisabled, playbackStore) {
-            if (!miniStore || !miniStore.d1 || !miniStore.d2 || !fig) {
-                return [window.dash_clientside.no_update, true, 0, 'Pause', 'Lap Time: 0.00s / 0.00s', {'t': 0, 'total': 0, 'lastUpdate': 0}];
+        handlePlaybackAnimation: function(playClicks, toggleClicks, nIntervals, miniStore, ggStore, miniFig, ggFig, speedFig, intervalDisabled, playbackStore) {
+            if (!miniStore || !miniStore.d1 || !miniStore.d2) {
+                return [window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, true, 0, 'Pause', 'Lap Time: 0.00s / 0.00s', {'t': 0, 'total': 0, 'lastUpdate': 0}];
             }
+            
             const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
             const now = performance.now();
+            const pObj = (window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null));
+            if (!pObj) return window.dash_clientside.no_update;
+
+            const binarySearch = function(arr, val) {
+                let low = 0, high = arr.length - 1;
+                while (low <= high) {
+                    const mid = (low + high) >>> 1;
+                    if (arr[mid] < val) low = mid + 1;
+                    else if (arr[mid] > val) high = mid - 1;
+                    else return mid;
+                }
+                return low;
+            };
 
             const interpXY = function(series, tSec) {
-                const t = series.t || [];
-                const x = series.x || [];
-                const y = series.y || [];
+                const t = series.t || [], x = series.x || [], y = series.y || [];
                 if (!t.length || t.length !== x.length || t.length !== y.length) return null;
                 if (tSec <= t[0]) return [x[0], y[0]];
                 const lastI = t.length - 1;
                 if (tSec >= t[lastI]) return [x[lastI], y[lastI]];
-                let i = 1;
-                while (i < t.length && t[i] < tSec) i++;
-                const t0 = t[i - 1];
-                const t1 = t[i];
+                
+                const idx = binarySearch(t, tSec);
+                const t0 = t[idx - 1], t1 = t[idx];
                 const ratio = (tSec - t0) / Math.max(1e-6, (t1 - t0));
-                return [
-                    x[i - 1] + ratio * (x[i] - x[i - 1]),
-                    y[i - 1] + ratio * (y[i] - y[i - 1])
-                ];
+                return [x[idx - 1] + ratio * (x[idx] - x[idx - 1]), y[idx - 1] + ratio * (y[idx] - y[idx - 1])];
             };
 
-            const d1Lap = miniStore.d1.lap_s || (miniStore.d1.t && miniStore.d1.t.length ? miniStore.d1.t[miniStore.d1.t.length - 1] : 0);
-            const d2Lap = miniStore.d2.lap_s || (miniStore.d2.t && miniStore.d2.t.length ? miniStore.d2.t[miniStore.d2.t.length - 1] : 0);
+            const d1Lap = miniStore.d1.lap_s || (miniStore.d1.t?.length ? miniStore.d1.t[miniStore.d1.t.length - 1] : 0);
+            const d2Lap = miniStore.d2.lap_s || (miniStore.d2.t?.length ? miniStore.d2.t[miniStore.d2.t.length - 1] : 0);
             const maxLap = Math.max(d1Lap, d2Lap);
 
             let tSec = (playbackStore && playbackStore.t) || 0;
@@ -135,66 +143,88 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             let btnText = 'Pause';
 
             if (trigger.includes('play-lap-btn')) {
-                tSec = 0;
-                lastUpdate = now;
-                newIntervalDisabled = false;
-                btnText = 'Pause';
+                tSec = 0; lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause';
             } else if (trigger.includes('pause-resume-lap-btn')) {
-                if (intervalDisabled) { // Resuming
-                    lastUpdate = now;
-                    newIntervalDisabled = false;
-                    btnText = 'Pause';
-                } else { // Pausing
-                    newIntervalDisabled = true;
-                    btnText = 'Resume';
-                }
+                if (intervalDisabled) { lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause'; }
+                else { newIntervalDisabled = true; btnText = 'Resume'; }
             } else if (trigger.includes('lap-playback-interval')) {
                 if (intervalDisabled) return window.dash_clientside.no_update;
-                const dt = (now - lastUpdate) / 1000.0;
-                tSec += dt;
+                tSec += (now - lastUpdate) / 1000.0;
                 lastUpdate = now;
             }
 
-            const done = tSec >= maxLap;
-            if (done) {
-                tSec = maxLap;
-                newIntervalDisabled = true;
-                btnText = 'Pause';
-            }
+            if (tSec >= maxLap) { tSec = maxLap; newIntervalDisabled = true; btnText = 'Pause'; }
 
+            // 1. Update Mini Map
             const p1 = interpXY(miniStore.d1, tSec);
             const p2 = interpXY(miniStore.d2, tSec);
-            if (!p1 || !p2) return [window.dash_clientside.no_update, true, 0, 'Pause', 'Lap Time: 0.00s / 0.00s', {'t': 0, 'total': 0, 'lastUpdate': 0}];
+            let miniDiv = document.getElementById('mini-track-map');
+            if (miniDiv && p1 && p2) {
+                if (!miniDiv.data) miniDiv = miniDiv.querySelector('.js-plotly-plot') || miniDiv;
+                if (miniDiv.data) {
+                    pObj.restyle(miniDiv, {
+                        'x': [[p1[0]], [p2[0]]], 'y': [[p1[1]], [p2[1]]],
+                        'hovertemplate': [`<b>${miniStore.d1.name}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`, `<b>${miniStore.d2.name}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`]
+                    }, [1, 2]);
+                }
+            }
 
-            const baseData = (fig.data || []).filter(
-                tr => !(tr && (tr.meta === 'hover' || tr.meta === 'playback-marker' || tr.meta === 'driver-marker'))
-            );
+            // 2. Update GG Diagram
+            const getGGState = (key) => {
+                const d = ggStore[key]; if (!d || !d.t) return null;
+                const t = d.t, lat = d.lat, lng = d.long;
+                if (tSec <= t[0]) return { curLat: lat[0], curLng: lng[0], trailLat: [lat[0]], trailLng: [lng[0]], name: d.driver };
+                const idx = Math.min(t.length - 1, binarySearch(t, tSec));
+                const trailWindow = 0.8; let start = idx;
+                while (start > 0 && (tSec - t[start]) < trailWindow) start--;
+                return { curLat: lat[idx], curLng: lng[idx], trailLat: lat.slice(start, idx + 1), trailLng: lng.slice(start, idx + 1), name: d.driver };
+            };
+            const s1 = getGGState('d1'), s2 = getGGState('d2');
+            let ggDiv = document.getElementById('gg-diagram');
+            if (ggDiv && (s1 || s2)) {
+                if (!ggDiv.data) ggDiv = ggDiv.querySelector('.js-plotly-plot') || ggDiv;
+                if (ggDiv.data) {
+                    const ux = [], uy = [], uh = [], idxs = [5, 6, 7, 8, 9, 10];
+                    idxs.forEach(i => {
+                        const s = (i <= 7) ? s1 : s2;
+                        if (!s) { ux.push([null]); uy.push([null]); uh.push(null); }
+                        else {
+                            const p = (i - 5) % 3;
+                            if (p === 0) { ux.push([0, s.curLat]); uy.push([0, s.curLng]); uh.push(null); }
+                            else if (p === 1) { ux.push(s.trailLat); uy.push(s.trailLng); uh.push(null); }
+                            else { ux.push([s.curLat]); uy.push([s.curLng]); uh.push(`<b>${s.name}</b><br>${s.curLat.toFixed(2)}G, ${s.curLng.toFixed(2)}G<extra></extra>`); }
+                        }
+                    });
+                    pObj.restyle(ggDiv, { 'x': ux, 'y': uy, 'hovertemplate': uh }, idxs);
+                }
+            }
 
-            baseData.push({
-                type: 'scatter', mode: 'markers', x: [p1[0]], y: [p1[1]],
-                marker: { color: miniStore.d1.color || '#ff0000', size: 11, symbol: 'circle', line: {color: 'white', width: 1.5} },
-                name: miniStore.d1.name || 'Driver 1', showlegend: false,
-                hovertemplate: `<b>${miniStore.d1.name || 'Driver 1'}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`,
-                meta: 'driver-marker'
-            });
+            // 3. Update Speed Graph Cursor
+            let speedDiv = document.getElementById('speed-graph');
+            if (speedDiv) {
+                if (!speedDiv.layout) speedDiv = speedDiv.querySelector('.js-plotly-plot') || speedDiv;
+                if (speedDiv.layout) {
+                    const d1 = miniStore.d1, distArr = d1.dist || [], tArr = d1.t || [];
+                    let cDist = 0;
+                    if (tSec <= tArr[0]) cDist = distArr[0];
+                    else if (tSec >= tArr[tArr.length - 1]) cDist = distArr[distArr.length - 1];
+                    else {
+                        const i = binarySearch(tArr, tSec);
+                        const ratio = (tSec - tArr[i - 1]) / Math.max(1e-6, (tArr[i] - tArr[i - 1]));
+                        cDist = distArr[i - 1] + ratio * (distArr[i] - distArr[i - 1]);
+                    }
+                    const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDist, x1: cDist } : s));
+                    if (!shapes.some(s => s.name === 'playback-cursor')) {
+                        shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDist, x1: cDist, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
+                    }
+                    pObj.relayout(speedDiv, { 'shapes': shapes });
+                }
+            }
 
-            baseData.push({
-                type: 'scatter', mode: 'markers', x: [p2[0]], y: [p2[1]],
-                marker: { color: miniStore.d2.color || '#00ffff', size: 11, symbol: 'circle', line: {color: 'white', width: 1.5} },
-                name: miniStore.d2.name || 'Driver 2', showlegend: false,
-                hovertemplate: `<b>${miniStore.d2.name || 'Driver 2'}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`,
-                meta: 'driver-marker'
-            });
-
-            const playLayout = fig.layout || {};
-            const label = `Lap Time: ${tSec.toFixed(2)}s / ${maxLap.toFixed(2)}s`;
-            
             return [
-                {data: baseData, layout: playLayout},
-                newIntervalDisabled,
-                trigger.includes('play-lap-btn') ? 0 : nIntervals,
-                btnText,
-                label,
+                window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update,
+                newIntervalDisabled, trigger.includes('play-lap-btn') ? 0 : nIntervals,
+                btnText, `Lap Time: ${tSec.toFixed(2)}s / ${maxLap.toFixed(2)}s`,
                 {'t': tSec, 'total': maxLap, 'lastUpdate': lastUpdate}
             ];
         },
@@ -205,192 +235,56 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const hoverDist = hoverData.points[0].x;
             if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
 
-            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
-
-            const addDriver = (key) => {
+            const getDriverState = (key) => {
                 const d = ggStore[key];
-                if (!d) return;
+                if (!d) return null;
                 const dist = d.dist || [];
                 const lat = d.lat || [];
                 const lng = d.long || [];
-                if (dist.length < 5) return;
-                
+                if (dist.length < 5) return null;
                 const idx = window.dash_clientside.clientside.nearestIndex(dist, hoverDist);
-                const color = d.color || '#ffffff';
-                const name = d.driver || key;
-
-                // 1. G-Vector Beam
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: [0, lat[idx]],
-                    y: [0, lng[idx]],
-                    line: {color: color, width: 1.5, dash: 'dot'},
-                    opacity: 0.5,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                // 2. Motion Trail (shorter: 8 points for less clutter)
                 const start = Math.max(0, idx - 8);
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: lat.slice(start, idx + 1),
-                    y: lng.slice(start, idx + 1),
-                    line: {color: color, width: 2.5, shape: 'spline', smoothing: 1.3},
-                    opacity: 0.35,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                // 3. Current "G-Ball" Marker
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'markers',
-                    x: [lat[idx]],
-                    y: [lng[idx]],
-                    marker: {
-                        color: color, 
-                        size: 11, 
-                        line: {color: 'white', width: 1.5},
-                        symbol: 'diamond'
-                    },
-                    name: name,
-                    showlegend: false,
-                    meta: 'hover',
-                    hovertemplate: `<b>${name}</b><br>Lat: %{x:.2f}G<br>Long: %{y:.2f}G<extra></extra>`
-                });
+                return {
+                    curLat: lat[idx], curLng: lng[idx],
+                    trailLat: lat.slice(start, idx + 1),
+                    trailLng: lng.slice(start, idx + 1),
+                    name: d.driver || key
+                };
             };
 
-            addDriver('d1');
-            addDriver('d2');
-            return {...fig, data: baseData};
-        },
+            const s1 = getDriverState('d1');
+            const s2 = getDriverState('d2');
 
-        updateGGFromPlayback: function(playbackState, ggStore, fig) {
-            if (!playbackState || !ggStore || !fig) return window.dash_clientside.no_update;
-            const tSec = playbackState.t;
-            if (tSec === null || tSec === undefined) return window.dash_clientside.no_update;
-
-            const baseData = (fig.data || []).filter(tr => !(tr && tr.meta === 'hover'));
-
-            const addDriver = (key) => {
-                const d = ggStore[key];
-                if (!d) return;
-                const t = d.t || [];
-                const lat = d.lat || [];
-                const lng = d.long || [];
-                if (!t.length || t.length !== lat.length || t.length !== lng.length) return;
-
-                let idx = 0;
-                let curLat = lat[0];
-                let curLng = lng[0];
-                if (tSec <= t[0]) {
-                    idx = 0;
-                } else if (tSec >= t[t.length - 1]) {
-                    idx = t.length - 1;
-                    curLat = lat[idx];
-                    curLng = lng[idx];
-                } else {
-                    idx = 1;
-                    while (idx < t.length && t[idx] < tSec) idx++;
-                    const t0 = t[idx - 1];
-                    const t1 = t[idx];
-                    const ratio = (tSec - t0) / Math.max(1e-6, (t1 - t0));
-                    curLat = lat[idx - 1] + ratio * (lat[idx] - lat[idx - 1]);
-                    curLng = lng[idx - 1] + ratio * (lng[idx] - lng[idx - 1]);
+            let graphDiv = document.getElementById('gg-diagram');
+            const pObj = (window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null));
+            if (graphDiv && pObj && (s1 || s2)) {
+                if (!graphDiv.data) graphDiv = graphDiv.querySelector('.js-plotly-plot');
+                if (graphDiv && graphDiv.data) {
+                    const updateX = []; const updateY = []; const updateHover = [];
+                    const indices = [5, 6, 7, 8, 9, 10];
+                    indices.forEach((idx) => {
+                        const s = (idx <= 7) ? s1 : s2;
+                        if (!s) {
+                            updateX.push([null]); updateY.push([null]); updateHover.push(null);
+                        } else {
+                            const part = (idx - 5) % 3;
+                            if (part === 0) { // Beam
+                                updateX.push([0, s.curLat]); updateY.push([0, s.curLng]); updateHover.push(null);
+                            } else if (part === 1) { // Trail
+                                updateX.push(s.trailLat); updateY.push(s.trailLng); updateHover.push(null);
+                            } else { // Ball
+                                updateX.push([s.curLat]); updateY.push([s.curLng]);
+                                updateHover.push(`<b>${s.name}</b><br>Lat: ${s.curLat.toFixed(2)}G<br>Long: ${s.curLng.toFixed(2)}G<extra></extra>`);
+                            }
+                        }
+                    });
+                    pObj.restyle(graphDiv, { 'x': updateX, 'y': updateY, 'hovertemplate': updateHover }, indices);
                 }
-                const color = d.color || '#ffffff';
-                const name = d.driver || key;
-
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: [0, curLat],
-                    y: [0, curLng],
-                    line: {color: color, width: 1.5, dash: 'dot'},
-                    opacity: 0.5,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                // Shorter time-window trail (0.8s) for less clutter.
-                const trailWindowSec = 0.8;
-                let start = idx;
-                while (start > 0 && (tSec - t[start]) < trailWindowSec) start--;
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'lines',
-                    x: lat.slice(start, idx + 1),
-                    y: lng.slice(start, idx + 1),
-                    line: {color: color, width: 2.5, shape: 'spline', smoothing: 1.3},
-                    opacity: 0.35,
-                    showlegend: false,
-                    meta: 'hover',
-                    hoverinfo: 'skip'
-                });
-
-                baseData.push({
-                    type: 'scatter',
-                    mode: 'markers',
-                    x: [curLat],
-                    y: [curLng],
-                    marker: {color: color, size: 11, line: {color: 'white', width: 1.5}, symbol: 'diamond'},
-                    name: name,
-                    showlegend: false,
-                    meta: 'hover',
-                    hovertemplate: `<b>${name}</b><br>Lat: %{x:.2f}G<br>Long: %{y:.2f}G<extra></extra>`
-                });
-            };
-
-            addDriver('d1');
-            addDriver('d2');
-            return {...fig, data: baseData};
-        },
-
-        updateTelemetryPlaybackCursor: function(playbackState, miniStore, fig) {
-            if (!playbackState || !miniStore || !miniStore.d1 || !fig || !fig.layout) return window.dash_clientside.no_update;
-            const tSec = playbackState.t;
-            if (tSec === null || tSec === undefined) return window.dash_clientside.no_update;
-
-            const t = miniStore.d1.t || [];
-            const dist = miniStore.d1.dist || [];
-            if (!t.length || t.length !== dist.length) return window.dash_clientside.no_update;
-
-            let cursorDist = dist[0];
-            if (tSec <= t[0]) {
-                cursorDist = dist[0];
-            } else if (tSec >= t[t.length - 1]) {
-                cursorDist = dist[dist.length - 1];
-            } else {
-                let i = 1;
-                while (i < t.length && t[i] < tSec) i++;
-                const t0 = t[i - 1];
-                const t1 = t[i];
-                const ratio = (tSec - t0) / Math.max(1e-6, (t1 - t0));
-                cursorDist = dist[i - 1] + ratio * (dist[i] - dist[i - 1]);
             }
-
-            const layout = {...fig.layout};
-            const shapes = (layout.shapes || []).filter(s => s.name !== 'playback-cursor');
-            shapes.push({
-                type: 'line',
-                name: 'playback-cursor',
-                xref: 'x',
-                yref: 'paper',
-                x0: cursorDist,
-                x1: cursorDist,
-                y0: 0,
-                y1: 1,
-                line: {color: '#bbbbbb', width: 1.5, dash: 'dot'}
-            });
-            layout.shapes = shapes;
-            return {...fig, layout: layout};
+            return window.dash_clientside.no_update;
         },
+
+
 
         toggleFeedbackModal: function(open_clicks, cancel_clicks, refresh_data, is_open) {
             const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
