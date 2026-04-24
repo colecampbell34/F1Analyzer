@@ -4,11 +4,9 @@ import logging
 from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-
 from data import get_shared_data, get_best_lap
 from graphs import _sort_fastest_driver, _build_telemetry_fig, _error_figure
 from callbacks_shared import _timed_callback, _has_valid_lap, _pick_driver_lap
