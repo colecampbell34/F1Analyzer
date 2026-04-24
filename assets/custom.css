@@ -237,3 +237,104 @@ div[class*="tab-container"] {
         opacity: 0.92;
     }
 }
+
+/* Live Telemetry Dashboard Styling */
+.live-dashboard-container {
+    background: rgba(20, 20, 20, 0.9);
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    border-left: 3px solid #ff0000;
+    transition: opacity 0.3s ease;
+}
+
+.live-driver-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 2px 0;
+}
+
+.live-driver-name {
+    font-weight: 900;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex: 0 0 60px;
+}
+
+.live-stats {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    justify-content: flex-end;
+}
+
+.stat-item {
+    color: #888;
+    font-size: 0.6rem;
+    text-align: right;
+    min-width: 55px;
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 3px;
+    justify-content: flex-end;
+}
+
+.stat-val {
+    color: #fff;
+    font-size: 0.9rem;
+    font-weight: 700;
+    font-family: 'Roboto Mono', monospace;
+    line-height: 1;
+    display: inline-block;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Fixed widths to prevent jitter */
+#live-d1-speed, #live-d2-speed { min-width: 32px; }
+#live-d1-gear, #live-d2-gear { min-width: 12px; }
+#live-d1-rpm, #live-d2-rpm { min-width: 52px; }
+
+.stat-item small {
+    font-size: 0.55rem;
+    color: #555;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.live-delta-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 2px 0;
+    border-top: 1px solid #2a2a2a;
+    border-bottom: 1px solid #2a2a2a;
+    margin: 3px 0;
+    background: rgba(255, 255, 255, 0.01);
+}
+
+.delta-label {
+    font-size: 0.6rem;
+    color: #777;
+    margin-right: 8px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.delta-value {
+    font-family: 'Roboto Mono', monospace;
+    font-size: 0.95rem;
+    font-weight: 800;
+    color: #fff;
+    letter-spacing: -0.3px;
+}
+
+/* Row color accents */
+.d1-row { border-bottom: 1px solid rgba(255,255,255,0.05); }
+.d2-row { border-top: 1px solid rgba(255,255,255,0.05); }

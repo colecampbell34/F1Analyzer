@@ -19,39 +19,52 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
         },
 
         updateMiniMap: function(hoverData, miniStore, fig, playbackDisabled) {
+            const dash = document.getElementById('live-telemetry-dashboard');
             if (playbackDisabled === false) return window.dash_clientside.no_update;
-            if (!hoverData || !miniStore || !fig) return window.dash_clientside.no_update;
-            if (!hoverData.points || hoverData.points.length === 0) return window.dash_clientside.no_update;
+            if (!hoverData || !miniStore || !fig || !hoverData.points || hoverData.points.length === 0) {
+                if (dash) dash.style.display = 'none';
+                return window.dash_clientside.no_update;
+            }
             const hoverDist = hoverData.points[0].x;
-            if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
+            if (hoverDist === null || hoverDist === undefined) {
+                if (dash) dash.style.display = 'none';
+                return window.dash_clientside.no_update;
+            }
 
             const d1 = miniStore.d1 || {};
             const d2 = miniStore.d2 || {};
-            const dist = d1.dist || miniStore.dist || [];
+            const dist = d1.dist || [];
             const t1 = d1.t || [];
             if (dist.length < 2 || t1.length !== dist.length) return window.dash_clientside.no_update;
 
-            const interpXY = function(series, tSec) {
-                const t = series.t || [];
-                const x = series.x || [];
-                const y = series.y || [];
-                if (!t.length || t.length !== x.length || t.length !== y.length) return null;
-                if (tSec <= t[0]) return [x[0], y[0]];
-                const lastI = t.length - 1;
-                if (tSec >= t[lastI]) return [x[lastI], y[lastI]];
-                let i = 1;
-                while (i < t.length && t[i] < tSec) i++;
-                const t0 = t[i - 1];
-                const t1v = t[i];
-                const ratio = (tSec - t0) / Math.max(1e-6, (t1v - t0));
+            // Scale hoverDist (meters) to percentage (0-1) for nearestIndex
+            const distMax = d1.dist_max || 1;
+            const normHoverDist = hoverDist / distMax;
+            const bestI = window.dash_clientside.clientside.nearestIndex(dist, normHoverDist);
+            const tSec = t1[bestI];
+
+            const interpXY = function(series, t) {
+                const ts = series.t || [], xs = series.x || [], ys = series.y || [];
+                if (!ts.length) return null;
+                if (t <= ts[0]) return [xs[0], ys[0]];
+                if (t >= ts[ts.length - 1]) return [xs[ts.length - 1], ys[ts.length - 1]];
+                let low = 0, high = ts.length - 1;
+                while (low <= high) {
+                    const mid = (low + high) >>> 1;
+                    if (ts[mid] < t) low = mid + 1;
+                    else if (ts[mid] > t) high = mid - 1;
+                    else return [xs[mid], ys[mid]];
+                }
+                const ratio = (t - ts[low - 1]) / Math.max(1e-6, (ts[low] - ts[low - 1]));
                 return [
-                    x[i - 1] + ratio * (x[i] - x[i - 1]),
-                    y[i - 1] + ratio * (y[i] - y[i - 1])
+                    xs[low - 1] + ratio * (xs[low] - xs[low - 1]),
+                    ys[low - 1] + ratio * (ys[low] - ys[low - 1])
                 ];
             };
+            
+            // Update Live Dashboard during hover (always responsive)
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, true);
 
-            const bestI = window.dash_clientside.clientside.nearestIndex(dist, hoverDist);
-            const tSec = t1[bestI];
             const p1 = interpXY(d1, tSec);
             const p2 = interpXY(d2, tSec);
             if (!p1 || !p2) return window.dash_clientside.no_update;
@@ -144,6 +157,8 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             if (trigger.includes('play-lap-btn')) {
                 tSec = 0; lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause';
+                const dash = document.getElementById('live-telemetry-dashboard');
+                if (dash) delete dash.dataset.lastSecond;
             } else if (trigger.includes('pause-resume-lap-btn')) {
                 if (intervalDisabled) { lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause'; }
                 else { newIntervalDisabled = true; btnText = 'Resume'; }
@@ -154,6 +169,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             }
 
             if (tSec >= maxLap) { tSec = maxLap; newIntervalDisabled = true; btnText = 'Pause'; }
+
+            // Update Live Dashboard (throttled during playback)
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false);
 
             // 1. Update Mini Map
             const p1 = interpXY(miniStore.d1, tSec);
@@ -213,12 +231,19 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                         const ratio = (tSec - tArr[i - 1]) / Math.max(1e-6, (tArr[i] - tArr[i - 1]));
                         cDist = distArr[i - 1] + ratio * (distArr[i] - distArr[i - 1]);
                     }
-                    const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDist, x1: cDist } : s));
+                    // Scale back to meters for the chart cursor
+                    const cDistM = cDist * (d1.dist_max || 1);
+                    const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDistM, x1: cDistM } : s));
                     if (!shapes.some(s => s.name === 'playback-cursor')) {
-                        shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDist, x1: cDist, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
+                        shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDistM, x1: cDistM, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
                     }
                     pObj.relayout(speedDiv, { 'shapes': shapes });
                 }
+            }
+
+            if (newIntervalDisabled && !trigger.includes('pause-resume-lap-btn') && tSec >= maxLap) {
+                 const dash = document.getElementById('live-telemetry-dashboard');
+                 if (dash) dash.style.display = 'none';
             }
 
             return [
@@ -227,6 +252,94 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 btnText, `Lap Time: ${tSec.toFixed(2)}s / ${maxLap.toFixed(2)}s`,
                 {'t': tSec, 'total': maxLap, 'lastUpdate': lastUpdate}
             ];
+        },
+
+        updateLiveDashboard: function(tSec, miniStore, hoverMode) {
+            const dash = document.getElementById('live-telemetry-dashboard');
+            if (!dash) return;
+            if (!miniStore || !miniStore.d1 || !miniStore.d2) {
+                dash.style.display = 'none';
+                delete dash.dataset.lastHalfSecond;
+                return;
+            }
+            if (dash.style.display === 'none') delete dash.dataset.lastHalfSecond;
+            dash.style.display = 'block';
+
+            const binarySearch = function(arr, val) {
+                let low = 0, high = arr.length - 1;
+                while (low <= high) {
+                    const mid = (low + high) >>> 1;
+                    if (arr[mid] < val) low = mid + 1;
+                    else if (arr[mid] > val) high = mid - 1;
+                    else return mid;
+                }
+                return low;
+            };
+
+            const interpMetric = function(series, t, metric) {
+                const ts = series.t || [], m = series[metric] || [];
+                if (!ts.length || ts.length !== m.length) return 0;
+                if (t <= ts[0]) return m[0];
+                if (t >= ts[ts.length - 1]) return m[m.length - 1];
+                const idx = binarySearch(ts, t);
+                const t0 = ts[idx - 1], t1 = ts[idx];
+                const ratio = (t - t0) / Math.max(1e-6, (t1 - t0));
+                return m[idx - 1] + ratio * (m[idx] - m[idx - 1]);
+            };
+
+            const updateDriver = (id, data, t) => {
+                const nameEl = document.getElementById(`live-${id}-name`);
+                const speedEl = document.getElementById(`live-${id}-speed`);
+                const gearEl = document.getElementById(`live-${id}-gear`);
+                const rpmEl = document.getElementById(`live-${id}-rpm`);
+                if (nameEl) { nameEl.innerText = data.name; nameEl.style.color = data.color; }
+                if (speedEl) speedEl.innerText = Math.round(interpMetric(data, t, 'speed'));
+                if (gearEl) gearEl.innerText = Math.round(interpMetric(data, t, 'gear'));
+                if (rpmEl) rpmEl.innerText = Math.round(interpMetric(data, t, 'rpm'));
+            };
+
+            updateDriver('d1', miniStore.d1, tSec);
+            updateDriver('d2', miniStore.d2, tSec);
+
+            // Delta at distance - Throttle to update only twice per second during playback,
+            // but update every frame during hover for responsiveness.
+            const currentHalfSecond = Math.floor(tSec * 2);
+            if (dash.dataset.lastHalfSecond !== String(currentHalfSecond) || hoverMode) {
+                dash.dataset.lastHalfSecond = currentHalfSecond;
+                const d1 = miniStore.d1, d2 = miniStore.d2;
+                const distArr = d1.dist || [], tArr = d1.t || [];
+                const idx = binarySearch(tArr, tSec);
+                const curDist = distArr[idx] || 0;
+
+                const getTimeAtDist = (series, targetD) => {
+                    const d = series.dist || [], t = series.t || [];
+                    if (!d.length) return 0;
+                    if (targetD <= d[0]) return t[0];
+                    if (targetD >= d[d.length - 1]) return t[t.length - 1];
+                    let low = 0, high = d.length - 1;
+                    while (low <= high) {
+                        const mid = (low + high) >>> 1;
+                        if (d[mid] < targetD) low = mid + 1;
+                        else if (d[mid] > targetD) high = mid - 1;
+                        else return t[mid];
+                    }
+                    const ratio = (targetD - d[low - 1]) / Math.max(1e-6, (d[low] - d[low - 1]));
+                    return t[low - 1] + ratio * (t[low] - t[low - 1]);
+                };
+
+                const t2AtDist = getTimeAtDist(d2, curDist);
+                const delta = tSec - t2AtDist;
+                const deltaEl = document.getElementById('live-delta-value');
+                const deltaLabelEl = document.querySelector('.delta-label');
+
+                if (deltaEl && deltaLabelEl) {
+                    const fasterDriver = delta > 0 ? d2.name : d1.name;
+                    deltaLabelEl.innerText = `GAP TO ${fasterDriver}`;
+                    // Reverse sign and color logic: show as +[time] in red if the gap driver is ahead
+                    deltaEl.innerText = (delta > 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
+                    deltaEl.style.color = delta > 0 ? '#00ff00' : '#ff4444';
+                }
+            }
         },
 
         updateGGHover: function(hoverData, ggStore, fig, playbackDisabled) {

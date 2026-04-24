@@ -210,6 +210,29 @@ content = html.Div([
                 ], lg=9, md=8, xs=12),
                 dbc.Col([
                     html.Div("Track Position", style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.75rem', 'marginBottom': '5px'}),
+                    # Live Telemetry Dashboard
+                    html.Div(id='live-telemetry-dashboard', className='live-dashboard-container', style={'display': 'none'}, children=[
+                        html.Div(className='live-driver-row d1-row', children=[
+                            html.Div(id='live-d1-name', className='live-driver-name'),
+                            html.Div(className='live-stats', children=[
+                                html.Div([html.Span(id='live-d1-speed', className='stat-val'), html.Small(" KM/H")], className='stat-item'),
+                                html.Div([html.Span(id='live-d1-gear', className='stat-val'), html.Small(" G")], className='stat-item'),
+                                html.Div([html.Span(id='live-d1-rpm', className='stat-val'), html.Small(" RPM")], className='stat-item'),
+                            ])
+                        ]),
+                        html.Div(id='live-delta-row', className='live-delta-row', children=[
+                            html.Span("GAP", className='delta-label'),
+                            html.Span(id='live-delta-value', className='delta-value')
+                        ]),
+                        html.Div(className='live-driver-row d2-row', children=[
+                            html.Div(id='live-d2-name', className='live-driver-name'),
+                            html.Div(className='live-stats', children=[
+                                html.Div([html.Span(id='live-d2-speed', className='stat-val'), html.Small(" KM/H")], className='stat-item'),
+                                html.Div([html.Span(id='live-d2-gear', className='stat-val'), html.Small(" G")], className='stat-item'),
+                                html.Div([html.Span(id='live-d2-rpm', className='stat-val'), html.Small(" RPM")], className='stat-item'),
+                            ])
+                        ]),
+                    ]),
                     dcc.Graph(id='mini-track-map', style={'height': '250px'}, config={'displayModeBar': False}),
                     html.Hr(style={'margin': '10px 0'}),
                     html.Div("G-Force Traces", style={

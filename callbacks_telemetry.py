@@ -70,6 +70,36 @@ def register_telemetry_callbacks(app):
 
             tel1 = lap1.get_telemetry().add_distance().dropna(subset=['X', 'Y', 'Distance', 'Time'])
             tel2 = lap2.get_telemetry().add_distance().dropna(subset=['X', 'Y', 'Distance', 'Time'])
+            
+            lap1_dist_max = 0
+            lap2_dist_max = 0
+            
+            if not tel1.empty:
+                tel1['Distance'] -= tel1['Distance'].min()
+                lap1_dist_max = tel1['Distance'].max()
+                if lap1_dist_max > 0: tel1['Distance'] /= lap1_dist_max
+                
+                tel1['Time'] -= tel1['Time'].min()
+                t_raw_max = tel1['Time'].max().total_seconds()
+                lap_time1 = float(lap1['LapTime'].total_seconds())
+                if t_raw_max > 0:
+                    tel1['Time'] = (tel1['Time'].dt.total_seconds() / t_raw_max) * lap_time1
+                else:
+                    tel1['Time'] = tel1['Time'].dt.total_seconds()
+                
+            if not tel2.empty:
+                tel2['Distance'] -= tel2['Distance'].min()
+                lap2_dist_max = tel2['Distance'].max()
+                if lap2_dist_max > 0: tel2['Distance'] /= lap2_dist_max
+                
+                tel2['Time'] -= tel2['Time'].min()
+                t_raw_max = tel2['Time'].max().total_seconds()
+                lap_time2 = float(lap2['LapTime'].total_seconds())
+                if t_raw_max > 0:
+                    tel2['Time'] = (tel2['Time'].dt.total_seconds() / t_raw_max) * lap_time2
+                else:
+                    tel2['Time'] = tel2['Time'].dt.total_seconds()
+
             if tel1.empty or tel2.empty:
                 raise PreventUpdate
 
@@ -82,7 +112,10 @@ def register_telemetry_callbacks(app):
                     'x': tel['X'].to_numpy(dtype=float)[::step].tolist(),
                     'y': tel['Y'].to_numpy(dtype=float)[::step].tolist(),
                     'dist': tel['Distance'].to_numpy(dtype=float)[::step].tolist(),
-                    't': tel['Time'].dt.total_seconds().to_numpy(dtype=float)[::step].tolist()
+                    't': tel['Time'].to_numpy(dtype=float)[::step].tolist(),
+                    'speed': tel['Speed'].to_numpy(dtype=float)[::step].tolist(),
+                    'gear': tel['nGear'].to_numpy(dtype=int)[::step].tolist(),
+                    'rpm': tel['RPM'].to_numpy(dtype=int)[::step].tolist()
                 }
 
             d1_data = _sample_for_playback(tel1)
@@ -92,8 +125,8 @@ def register_telemetry_callbacks(app):
 
             store = {
                 'track': {'x': track_x.tolist(), 'y': track_y.tolist()},
-                'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['LapTime'].total_seconds())},
-                'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['LapTime'].total_seconds())},
+                'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['LapTime'].total_seconds()), 'dist_max': float(lap1_dist_max)},
+                'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['LapTime'].total_seconds()), 'dist_max': float(lap2_dist_max)},
                 # Keep top-level arrays for existing hover marker behavior.
                 'x': d1_data['x'],
                 'y': d1_data['y'],
@@ -265,7 +298,7 @@ def register_telemetry_callbacks(app):
             fig.update_layout(
                 xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555'),
                 yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555', scaleanchor="x", scaleratio=1),
-                margin=dict(l=40, r=20, t=55, b=40),
+                margin=dict(l=40, r=20, t=5, b=40),
                 showlegend=False,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
