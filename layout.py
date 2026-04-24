@@ -73,50 +73,70 @@ def _driver_selector(label, dropdown_id, btn_id):
 
 # Sidebar control panel.
 sidebar = html.Div([
-    html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
-    html.P("Session Analysis Dashboard", style={"fontSize": "0.75rem", "color": "#888", "marginBottom": "0.5rem"}),
-    html.Hr(),
-
-    dbc.Label("Year", style={"fontSize": "0.9rem"}),
-    dcc.Dropdown(id='year-dropdown',
-                 options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
-                 value=datetime.now().year,
-                 persistence=True, persistence_type='session',
-                 searchable=True,
-                 style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-
-    dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
-    dcc.Loading(type='dot', color='#ff0000', children=[
-        dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
-                     searchable=True,
-                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-    ]),
-
-    dbc.Label("Session", style={"fontSize": "0.9rem"}),
-    dcc.Loading(type='dot', color='#ff0000', children=[
-        dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
-                     searchable=True,
-                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-    ]),
-
-    # Driver selectors.
-    _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
-    _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
-
-    dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
-               style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
-    html.Hr(),
-    html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
-    dbc.Button("Update Leaderboard", id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
-               style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
+    # Fixed Header
     html.Div([
-        dcc.Loading(type='dot', color='#ff0000', children=[
-            html.Div(id='leaderboard-container')
-        ])
-    ], style={'overflowY': 'auto', 'overflowX': 'hidden', 'scrollbarGutter': 'stable', 'flex': '1', 'minHeight': '0'})
+        html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
+        html.P("Session Analysis Dashboard", style={"fontSize": "0.75rem", "color": "#888", "marginBottom": "0.5rem"}),
+        html.Hr(style={'margin': '0.5rem 0'}),
+    ], style={'flex': '0 0 auto'}),
 
-], style={"padding": "1rem", "backgroundColor": "#111111", "minHeight": "100vh",
-          "display": "flex", "flexDirection": "column"})
+    # Scrollable Content (Controls + Leaderboard)
+    html.Div([
+        dbc.Label("Year", style={"fontSize": "0.9rem"}),
+        dcc.Dropdown(id='year-dropdown',
+                     options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
+                     value=datetime.now().year,
+                     persistence=True, persistence_type='session',
+                     searchable=True,
+                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
+
+        dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
+        dcc.Loading(type='dot', color='#ff0000', children=[
+            dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
+                         searchable=True,
+                         style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
+        ]),
+
+        dbc.Label("Session", style={"fontSize": "0.9rem"}),
+        dcc.Loading(type='dot', color='#ff0000', children=[
+            dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
+                         searchable=True,
+                         style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
+        ]),
+
+        # Driver selectors.
+        _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
+        _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
+
+        dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
+                   style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
+        html.Hr(),
+        html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
+        dbc.Button("Update Leaderboard", id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
+                   style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
+        html.Div([
+            dcc.Loading(type='dot', color='#ff0000', children=[
+                html.Div(id='leaderboard-container')
+            ])
+        ], style={'minHeight': '0'})
+    ], style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
+
+    # Fixed Footer
+    html.Div([
+        html.Hr(style={'margin': '0.5rem 0'}),
+        dbc.Button([html.I(className="fas fa-share-alt me-2"), "Share Comparison"],
+                   id='share-btn', color='info', size='sm', n_clicks=0,
+                   style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '10px'}),
+        html.Div([
+            html.A(html.I(className="fab fa-github fa-lg"), href="https://github.com/colecampbell34/F1Analyzer", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
+            html.A(html.I(className="fab fa-twitter fa-lg"), href="https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url=https://f-1-analyzer--colecampbell34.replit.app", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
+            html.A(html.I(className="fab fa-reddit fa-lg"), href="https://reddit.com/submit?url=https://f-1-analyzer--colecampbell34.replit.app&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
+        ], style={'textAlign': 'center', 'paddingBottom': '5px'})
+    ], style={'flex': '0 0 auto'})
+
+], style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
+          "display": "flex", "flexDirection": "column", "overflow": "hidden"})
+
 
 
 # Main viewing area.
@@ -405,6 +425,18 @@ app_layout = dbc.Container([
             dbc.Button("Submit Feedback", id='submit-feedback-btn', color='danger', n_clicks=0)
         ])
     ], id='feedback-modal', is_open=False, size='lg', centered=True),
+
+    dbc.Toast(
+        "Link copied to clipboard!",
+        id="share-toast",
+        header="Shared",
+        is_open=False,
+        dismissable=True,
+        icon="success",
+        duration=3000,
+        style={"position": "fixed", "top": 10, "right": 10, "width": 250, "zIndex": 9999},
+    ),
+
     dcc.Store(id='dashboard-params-store', storage_type='session'),
     dcc.Store(id='gg-data-store', storage_type='memory'),
     dcc.Store(id='mini-map-store', storage_type='memory'),

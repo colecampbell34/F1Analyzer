@@ -386,3 +386,9 @@ def _register_core_callbacks(app):
         [Output('d1-lap-number', 'style'), Output('d2-lap-number', 'style')],
         [Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value')]
     )
+
+    app.clientside_callback(
+        ClientsideFunction(namespace='clientside', function_name='copyToClipboard'),
+        Output('share-toast', 'is_open'),
+        [Input('share-btn', 'n_clicks')]
+    )

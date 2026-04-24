@@ -21,10 +21,23 @@ logging.getLogger('google.genai').setLevel(logging.WARNING)
 
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.CYBORG],
-    title="F1 Analyzer",
+    external_stylesheets=[dbc.themes.CYBORG, "https://use.fontawesome.com/releases/v5.15.4/css/all.css"],
+    title="F1 Analyzer - Advanced Telemetry Dashboard",
     update_title=None,
-    suppress_callback_exceptions=True
+    suppress_callback_exceptions=True,
+    meta_tags=[
+        {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+        {"rel": "manifest", "href": "/assets/manifest.json"},
+        {"name": "description", "content": "Advanced Formula 1 telemetry and strategy analysis dashboard. Compare driver performance, track dominance, and get AI-powered race insights using FastF1 and Google Gemini."},
+        {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
+        {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
+        {"property": "og:type", "content": "website"},
+        {"property": "og:url", "content": "https://f-1-analyzer--colecampbell34.replit.app"},
+        {"property": "og:image", "content": "https://f-1-analyzer--colecampbell34.replit.app/assets/og-image.png"},
+        {"name": "twitter:card", "content": "summary_large_image"},
+        {"name": "twitter:site", "content": "@F1Analyzer"},
+        {"name": "theme-color", "content": "#ff0000"}
+    ]
 )
 
 Compress(app.server)

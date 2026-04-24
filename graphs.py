@@ -725,28 +725,47 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     weather_data = session.weather_data
     if not weather_data.empty and not session.laps.empty:
         try:
-            lap_times = session.laps.dropna(subset=['Time']).groupby('LapNumber')['Time'].median().reset_index()
-            lap_times.columns = ['LapNumber', 'Time']
-            lap_times = lap_times.sort_values('Time')
+            # Get start and end times for each lap
+            laps_with_times = session.laps.dropna(subset=['Time', 'LapTime']).copy()
+            if not laps_with_times.empty:
+                lap_times_for_bounds = laps_with_times.groupby('LapNumber')['Time'].max().reset_index()
+                lap_times_for_bounds['StartTime'] = laps_with_times.groupby('LapNumber')['Time'].min().values - laps_with_times.groupby('LapNumber')['LapTime'].min().values
+                lap_bounds = laps_with_times.groupby('LapNumber').agg({'StartTime': 'min', 'Time': 'max'}).reset_index()
+                
+                weather_sorted = weather_data.sort_values('Time')
+                
+                # Track Temp plotting (nearest point is fine for a line)
+                lap_times_for_temp = lap_bounds[['LapNumber', 'Time']].copy()
+                merged_temp = pd.merge_asof(lap_times_for_temp.sort_values('Time'), 
+                                               weather_sorted[['Time', 'TrackTemp']],
+                                               on='Time', direction='nearest')
+                
+                fig.add_trace(go.Scatter(
+                    x=merged_temp['LapNumber'], y=merged_temp['TrackTemp'],
+                    mode='lines+markers', name='Track Temp (°C)',
+                    line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
+                ), row=2, col=1)
 
-            weather_sorted = weather_data.sort_values('Time')
-            merged_weather = pd.merge_asof(lap_times, weather_sorted[['Time', 'TrackTemp', 'Rainfall']],
-                                           on='Time', direction='nearest')
+                # Rain detection: Check if ANY rainfall occurred within the lap's time window
+                rain_laps = []
+                rain_weather = weather_sorted[weather_sorted['Rainfall'] == True]
+                
+                if not rain_weather.empty:
+                    for _, lap in lap_bounds.iterrows():
+                        # If any rain timestamp falls between StartTime and Time (end) of the lap
+                        has_rain = rain_weather[(rain_weather['Time'] >= lap['StartTime']) & 
+                                                (rain_weather['Time'] <= lap['Time'])].any().any()
+                        if has_rain:
+                            rain_laps.append(lap['LapNumber'])
 
-            fig.add_trace(go.Scatter(
-                x=merged_weather['LapNumber'], y=merged_weather['TrackTemp'],
-                mode='lines+markers', name='Track Temp (°C)',
-                line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
-            ), row=2, col=1)
-
-            rain_laps = merged_weather[merged_weather['Rainfall'] == True]['LapNumber'].tolist()
-            for lap in rain_laps:
-                fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below",
-                              line_width=0, row='all', col='all')
-            if rain_laps:
-                fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                                         marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
-                                         legend='legend'), row=1, col=1)
+                for lap in rain_laps:
+                    fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below",
+                                  line_width=0, row='all', col='all')
+                
+                if rain_laps:
+                    fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
+                                             marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
+                                             legend='legend'), row=1, col=1)
         except Exception:
             pass
 

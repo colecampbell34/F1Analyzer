@@ -335,6 +335,18 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const d1_style = Object.assign({}, base, {display: (d1_mode === 'specific' ? 'inline-block' : 'none')});
             const d2_style = Object.assign({}, base, {display: (d2_mode === 'specific' ? 'inline-block' : 'none')});
             return [d1_style, d2_style];
+        },
+        
+        copyToClipboard: function(n_clicks) {
+            if (!n_clicks) return false;
+            const url = window.location.href;
+            const el = document.createElement('textarea');
+            el.value = url;
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+            return true;
         }
     }
 });
