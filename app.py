@@ -10,7 +10,7 @@ from flask_compress import Compress
 import threading
 import atexit
 from datetime import datetime
-from flask import jsonify
+from flask import jsonify, request
 
 # Set global log level to WARNING
 logging.basicConfig(level=logging.WARNING)
@@ -44,6 +44,7 @@ Compress(app.server)
 server = app.server
 
 _RUNTIME_INIT_LOCK = threading.Lock()
+_RUNTIME_INIT_STARTED = False
 _RUNTIME_INIT_DONE = False
 
 
@@ -61,12 +62,30 @@ def _init_runtime_background():
             _RUNTIME_INIT_DONE = True
 
 
+def _start_runtime_init_once():
+    """Start lazy runtime initialization once per process."""
+    global _RUNTIME_INIT_STARTED
+    if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
+        return
+
+    with _RUNTIME_INIT_LOCK:
+        if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
+            return
+        _RUNTIME_INIT_STARTED = True
+
+    threading.Thread(target=_init_runtime_background, daemon=True).start()
+
+
 @server.before_request
 def _ensure_runtime_initialized():
-    """Kick off deferred runtime initialization once."""
-    if _RUNTIME_INIT_DONE:
+    """Kick off deferred runtime initialization once, outside health/static probes."""
+    if request.path in ('/health', '/healthz') or request.path.startswith((
+        '/assets/',
+        '/_dash-component-suites/',
+        '/_favicon.ico',
+    )):
         return
-    threading.Thread(target=_init_runtime_background, daemon=True).start()
+    _start_runtime_init_once()
 
 
 @server.route('/health', strict_slashes=False)
@@ -79,7 +98,7 @@ def healthz():
 @server.route('/warmup')
 def warmup():
     """Prime lightweight caches to reduce cold-start request latency."""
-    threading.Thread(target=_init_runtime_background, daemon=True).start()
+    _start_runtime_init_once()
     threading.Thread(target=data.get_event_schedule_cached, args=(datetime.now().year,), daemon=True).start()
     return jsonify({'status': 'warming'}), 200
 

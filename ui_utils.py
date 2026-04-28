@@ -2,7 +2,6 @@ import os
 from datetime import datetime, timezone
 from urllib.parse import parse_qs
 import flask
-import fastf1
 import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
@@ -197,6 +196,7 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
                     color = res_row.iloc[0].get('TeamColor', '')
                     if pd.isna(color) or not color:
                         try:
+                            import fastf1.plotting
                             color = fastf1.plotting.get_team_color(
                                 res_row.iloc[0].get('TeamName', ''), session=session)
                         except Exception:
@@ -258,6 +258,7 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
                 color = row.get('TeamColor', '')
                 if pd.isna(color) or not color:
                     try:
+                        import fastf1.plotting
                         color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
                     except Exception:
                         color = "ffffff"

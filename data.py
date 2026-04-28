@@ -77,16 +77,17 @@ def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
     _ensure_cache_ready()
     import fastf1
-    return fastf1.get_event_schedule(year)
+    return fastf1.get_event_schedule(year, include_testing=False)
 
 
 @lru_cache(maxsize=EVENT_SESSIONS_CACHE_MAXSIZE)
 def get_event_sessions_cached(year, race):
     """LRU-cached session names for a specific event."""
-    _ensure_cache_ready()
-    import fastf1
-
-    event = fastf1.get_event(int(year), str(race))
+    schedule = get_event_schedule_cached(int(year))
+    event_rows = schedule[schedule['EventName'] == str(race)]
+    if event_rows.empty:
+        return tuple()
+    event = event_rows.iloc[0]
     sessions = []
     for idx in range(1, 6):
         session_name = event.get(f'Session{idx}')
@@ -465,7 +466,3 @@ def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
 def clear_old_cache(max_size_gb=2.0):
     """Backward-compatible cache pruning entry point."""
     maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)
-
-
-# Initialize cache on module import
-setup_cache()
