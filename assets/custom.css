@@ -243,8 +243,8 @@ div[class*="tab-container"] {
     background: rgba(20, 20, 20, 0.9);
     border: 1px solid #333;
     border-radius: 6px;
-    padding: 6px 10px;
-    margin-bottom: 8px;
+    padding: 5px 8px;
+    margin-bottom: 6px;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     box-shadow: 0 4px 15px rgba(0,0,0,0.5);
     border-left: 3px solid #ff0000;
@@ -255,39 +255,39 @@ div[class*="tab-container"] {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 2px 0;
+    padding: 1px 0;
 }
 
 .live-driver-name {
     font-weight: 900;
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    flex: 0 0 60px;
+    letter-spacing: 0;
+    flex: 0 0 46px;
 }
 
 .live-stats {
     display: flex;
-    gap: 12px;
+    gap: 7px;
     flex: 1;
     justify-content: flex-end;
 }
 
 .stat-item {
     color: #888;
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     text-align: right;
-    min-width: 55px;
+    min-width: 45px;
     display: flex;
     flex-direction: row;
     align-items: baseline;
-    gap: 3px;
+    gap: 2px;
     justify-content: flex-end;
 }
 
 .stat-val {
     color: #fff;
-    font-size: 0.9rem;
+    font-size: 0.82rem;
     font-weight: 700;
     font-family: 'Roboto Mono', monospace;
     line-height: 1;
@@ -299,10 +299,10 @@ div[class*="tab-container"] {
 /* Fixed widths to prevent jitter */
 #live-d1-speed, #live-d2-speed { min-width: 32px; }
 #live-d1-gear, #live-d2-gear { min-width: 12px; }
-#live-d1-rpm, #live-d2-rpm { min-width: 52px; }
+#live-d1-rpm, #live-d2-rpm { min-width: 44px; }
 
 .stat-item small {
-    font-size: 0.55rem;
+    font-size: 0.5rem;
     color: #555;
     font-weight: 700;
     text-transform: uppercase;
@@ -312,27 +312,27 @@ div[class*="tab-container"] {
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 2px 0;
+    padding: 1px 0;
     border-top: 1px solid #2a2a2a;
     border-bottom: 1px solid #2a2a2a;
-    margin: 3px 0;
+    margin: 2px 0;
     background: rgba(255, 255, 255, 0.01);
 }
 
 .delta-label {
-    font-size: 0.6rem;
+    font-size: 0.55rem;
     color: #777;
-    margin-right: 8px;
+    margin-right: 6px;
     font-weight: 800;
     text-transform: uppercase;
 }
 
 .delta-value {
     font-family: 'Roboto Mono', monospace;
-    font-size: 0.95rem;
+    font-size: 0.82rem;
     font-weight: 800;
     color: #fff;
-    letter-spacing: -0.3px;
+    letter-spacing: 0;
 }
 
 /* Row color accents */

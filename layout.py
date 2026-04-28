@@ -209,7 +209,7 @@ content = html.Div([
                     ])
                 ], lg=9, md=8, xs=12),
                 dbc.Col([
-                    html.Div("Track Position", style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.75rem', 'marginBottom': '5px'}),
+                    html.Div("Track Position", style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.7rem', 'marginBottom': '3px'}),
                     # Live Telemetry Dashboard
                     html.Div(id='live-telemetry-dashboard', className='live-dashboard-container', style={'display': 'none'}, children=[
                         html.Div(className='live-driver-row d1-row', children=[
@@ -233,16 +233,17 @@ content = html.Div([
                             ])
                         ]),
                     ]),
-                    dcc.Graph(id='mini-track-map', style={'height': '250px'}, config={'displayModeBar': False}),
-                    html.Hr(style={'margin': '10px 0'}),
+                    dcc.Graph(id='mini-track-map', style={'height': '200px'}, config={'displayModeBar': False}),
+                    html.Hr(style={'margin': '6px 0'}),
                     html.Div("G-Force Traces", style={
                         'textAlign': 'center',
                         'color': '#888',
-                        'fontSize': '0.75rem',
-                        'marginBottom': '5px'
+                        'fontSize': '0.7rem',
+                        'marginBottom': '3px'
                     }),
-                    dcc.Graph(id='gg-diagram', style={'height': '320px'}, config={'displayModeBar': False})
-                ], lg=3, md=4, xs=12, style={'backgroundColor': '#151515', 'borderRadius': '8px', 'padding': '10px', 'marginTop': '10px'})
+                    dcc.Graph(id='gg-diagram', style={'height': '250px'}, config={'displayModeBar': False})
+                ], lg=3, md=4, xs=12, className='telemetry-sidecar',
+                   style={'backgroundColor': '#151515', 'borderRadius': '8px', 'padding': '8px', 'marginTop': '6px', 'overflow': 'hidden'})
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 

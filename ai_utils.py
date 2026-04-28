@@ -516,6 +516,69 @@ def _calculate_g_and_corners(tel):
         return None
 
 
+def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
+    """Return dashboard-matched delta and Driver DNA context for the selected fastest laps."""
+    lines = ["=== DASHBOARD TELEMETRY DELTA + DRIVER DNA ==="]
+    try:
+        from graphs import _compute_lap_delta, _compute_driver_dna_summary
+
+        tel1 = lap1.get_telemetry().add_distance()
+        tel2 = lap2.get_telemetry().add_distance()
+        if not tel1.empty:
+            tel1 = tel1.copy()
+            tel1['Distance'] -= tel1['Distance'].min()
+        if not tel2.empty:
+            tel2 = tel2.copy()
+            tel2['Distance'] -= tel2['Distance'].min()
+
+        # This matches the telemetry chart/live badge convention:
+        # positive/green means Driver 1 is ahead; negative/red means Driver 1 is behind.
+        delta_time, ref_tel, _ = _compute_lap_delta(lap2, lap1)
+        delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
+        delta_vals = -pd.Series(delta_time).astype(float).to_numpy()
+        valid = np.isfinite(delta_dist) & np.isfinite(delta_vals)
+        delta_dist = delta_dist[valid]
+        delta_vals = delta_vals[valid]
+
+        lines.append(
+            f"Delta convention matches dashboard: {driver1} advantage vs {driver2}; "
+            f"positive/green = {driver1} ahead, negative/red = {driver1} behind."
+        )
+        if len(delta_vals):
+            final_delta = float(delta_vals[-1])
+            max_adv_i = int(np.nanargmax(delta_vals))
+            max_def_i = int(np.nanargmin(delta_vals))
+            lead_changes = int(np.count_nonzero(np.diff(np.signbit(delta_vals))))
+            lines.append(
+                f"Dashboard delta summary: final {driver1} advantage {final_delta:+.3f}s; "
+                f"max {driver1} advantage {delta_vals[max_adv_i]:+.3f}s at {delta_dist[max_adv_i]:.0f}m; "
+                f"max {driver1} deficit {delta_vals[max_def_i]:+.3f}s at {delta_dist[max_def_i]:.0f}m; "
+                f"lead/advantage sign changes: {lead_changes}."
+            )
+
+            pairs = [
+                f"{delta_dist[i]:.0f}m:{delta_vals[i]:+.3f}s"
+                for i in range(len(delta_vals))
+            ]
+            lines.append(f"Full dashboard delta trace ({len(delta_vals)} points); format distance:{driver1}_advantage:")
+            for start in range(0, len(pairs), 12):
+                lines.append("  " + ", ".join(pairs[start:start + 12]))
+        else:
+            lines.append("Dashboard delta trace unavailable.")
+
+        legend, raw1, raw2, norm1, norm2 = _compute_driver_dna_summary(tel1, tel2)
+        lines.append("Driver DNA uses the same fastest-lap telemetry and normalized scores as the dashboard radar.")
+        lines.append("Format: code metric | raw values | radar scores (0-100, 50 = equal).")
+        for (abbr, label), r1, r2, n1, n2 in zip(legend, raw1, raw2, norm1, norm2):
+            lines.append(
+                f"  {abbr} {label}: raw {driver1}={r1:.3f}, {driver2}={r2:.3f}; "
+                f"radar {driver1}={n1:.1f}, {driver2}={n2:.1f}"
+            )
+    except Exception as e:
+        lines.append(f"Dashboard telemetry/DNA context unavailable: {e}")
+    return "\n".join(lines)
+
+
 def _gather_session_context(session, session_type, driver1, driver2):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
     lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
@@ -589,6 +652,10 @@ def _gather_session_context(session, session_type, driver1, driver2):
                 if pd.notna(s1) and pd.notna(s2):
                     lines.append(
                         f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
+
+            lines.append("")
+            lines.append(_get_dashboard_telemetry_context(driver1, driver2, lap1, lap2))
+            lines.append("")
             
             # Fastest-lap telemetry summary.
             for drv, l in [(driver1, lap1), (driver2, lap2)]:

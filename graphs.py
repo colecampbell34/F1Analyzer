@@ -86,6 +86,21 @@ def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
     return (data1, data2) if t1 <= t2 else (data2, data1)
 
 
+def _compute_lap_delta(reference_lap, compare_lap):
+    """Return FastF1's distance-based delta trace for a reference/compare lap pair."""
+    import fastf1.utils
+    delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(reference_lap, compare_lap)
+
+    if not ref_tel.empty:
+        ref_tel = ref_tel.copy()
+        ref_tel['Distance'] -= ref_tel['Distance'].min()
+    if not comp_tel.empty:
+        comp_tel = comp_tel.copy()
+        comp_tel['Distance'] -= comp_tel['Distance'].min()
+
+    return delta_time, ref_tel, comp_tel
+
+
 def _identify_corners(tel1, tel2):
     """Detects corners as local minima in speed and extracts comparison metrics."""
     corners = []
@@ -251,14 +266,22 @@ def _build_mini_map_fig(tel1, hover_data):
     return fig
 
 
-def _build_telemetry_fig(fast_data, slow_data):
+def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_delta_data=None):
     """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
     from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, fast_lap, fast_lbl = fast_data
     slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
 
-    import fastf1.utils
-    delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(fast_lap, slow_lap)
+    if driver1_delta_data is None or driver2_delta_data is None:
+        driver1, driver1_lap = slow_driver, slow_lap
+        driver2, driver2_lap = fast_driver, fast_lap
+    else:
+        driver1, driver1_lap = driver1_delta_data
+        driver2, driver2_lap = driver2_delta_data
+
+    # FastF1 returns compare_time - reference_time. Use Driver 2 as the
+    # reference and invert the sign so positive means Driver 1 is ahead.
+    delta_time, ref_tel, comp_tel = _compute_lap_delta(driver2_lap, driver1_lap)
 
     fast_tel = _downsample(fast_tel)
     slow_tel = _downsample(slow_tel)
@@ -270,13 +293,69 @@ def _build_telemetry_fig(fast_data, slow_data):
     )
 
     # Row 1: Time Delta
+    delta_values = -pd.Series(delta_time).astype(float).to_numpy()
+    delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
+    delta_ahead = np.where(delta_values >= 0, delta_values, np.nan)
+    delta_behind = np.where(delta_values < 0, delta_values, np.nan)
+    finite_delta = delta_values[np.isfinite(delta_values)]
+    delta_tick_kwargs = {}
+    if len(finite_delta):
+        max_abs_delta = float(np.nanmax(np.abs(finite_delta)))
+        if max_abs_delta > 0:
+            tick_vals = np.linspace(-max_abs_delta, max_abs_delta, 5)
+
+            def _inverted_tick_label(value):
+                shown = -float(value)
+                if abs(shown) < 0.005:
+                    shown = 0.0
+                return f"{shown:+.2f}" if shown != 0 else "0.00"
+
+            delta_tick_kwargs = {
+                'tickmode': 'array',
+                'tickvals': tick_vals.tolist(),
+                'ticktext': [_inverted_tick_label(v) for v in tick_vals],
+            }
+
     fig.add_trace(
-        go.Scatter(x=ref_tel['Distance'], y=delta_time, mode='lines', name="Time Delta", line=dict(color='white')),
+        go.Scatter(
+            x=delta_dist,
+            y=delta_ahead,
+            mode='lines',
+            name=f"-",
+            line=dict(color='#00c853', width=2),
+            connectgaps=False,
+            hovertemplate=(
+                f"Distance: %{{x:.0f}} m<br>"
+                f"{driver1} gap: %{{y:.3f}} s<br>"
+            )
+        ),
         row=1, col=1)
-    fig.add_annotation(xref="paper", yref="y domain", x=0.94, y=1, text=f"{fast_driver} faster", showarrow=False,
-                       xanchor="left")
-    fig.add_annotation(xref="paper", yref="y domain", x=0.94, y=0, text=f"{slow_driver} faster", showarrow=False,
-                       xanchor="left")
+    fig.add_trace(
+        go.Scatter(
+            x=delta_dist,
+            y=delta_behind,
+            mode='lines',
+            name=f"+",
+            line=dict(color='#ff4444', width=2),
+            connectgaps=False,
+            hovertemplate=(
+                f"Distance: %{{x:.0f}} m<br>"
+                f"{driver1} gap: %{{y:.3f}} s<br>"
+            )
+        ),
+        row=1, col=1)
+    fig.add_annotation(
+        xref="paper", yref="y domain", x=0.995, y=0.92,
+        text=f" {driver1} ahead",
+        showarrow=False, xanchor="right",
+        font=dict(size=10, color='#60e890')
+    )
+    fig.add_annotation(
+        xref="paper", yref="y domain", x=0.995, y=0.08,
+        text=f" {driver1} behind",
+        showarrow=False, xanchor="right",
+        font=dict(size=10, color='#ff7777')
+    )
 
     # Row 2: Speed
     fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_driver} Speed',
@@ -311,7 +390,15 @@ def _build_telemetry_fig(fast_data, slow_data):
         uirevision='telemetry'
     )
 
-    fig.update_yaxes(title_text="Delta (s)", row=1, col=1)
+    fig.update_yaxes(
+        title_text=f"Time Delta (s)",
+        zeroline=True,
+        zerolinecolor='#bbbbbb',
+        zerolinewidth=1,
+        row=1,
+        col=1,
+        **delta_tick_kwargs
+    )
     fig.update_yaxes(title_text="Speed (km/h)", row=2, col=1)
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
@@ -550,53 +637,52 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
     return fig
 
 
-def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
-    """Computes and builds a normalized Driver DNA radar chart.
+DNA_CATEGORY_LABELS = [
+    'Top Speed (km/h)',
+    'Corner Speed <220 (km/h)',
+    'Full Throttle (%)',
+    'Throttle Ramp (p90 Δ)',
+    'Brake Usage (%)',
+    'Brake Intensity (avg %)',
+    'Gear Diversity (entropy)',
+]
 
-    Returns:
-        (fig, legend_map): Plotly figure + list of (letter, long_label) tuples for UI legend.
-    """
-    DNA_CATEGORY_LABELS = [
-        'Top Speed (km/h)',
-        'Corner Speed <220 (km/h)',
-        'Full Throttle (%)',
-        'Throttle Ramp (p90 Δ)',
-        'Brake Usage (%)',
-        'Brake Intensity (avg %)',
-        'Gear Diversity (entropy)',
-    ]
+DNA_ABBRS = ['TS', 'CS', 'FT', 'TR', 'BU', 'BI', 'GD']
 
-    def get_values(tel):
-        if tel is None or getattr(tel, 'empty', False):
-            return [0.0] * len(DNA_CATEGORY_LABELS)
 
-        speed_under_220 = tel[tel['Speed'] < 220]['Speed']
-        brake_nonzero = tel[tel['Brake'] > 0.05]['Brake']
-        throttle = tel['Throttle'].to_numpy(dtype=float)
-        throttle_smooth = np.clip(np.diff(throttle, prepend=throttle[0]), 0, None)
-        gear_counts = tel['nGear'].value_counts(normalize=True, dropna=True)
-        gear_entropy = float(-(gear_counts * np.log2(gear_counts)).sum()) if not gear_counts.empty else 0.0
-        computed = {
-            'Top Speed (km/h)': float(tel['Speed'].max()),
-            'Corner Speed <220 (km/h)': float(speed_under_220.mean()) if not speed_under_220.empty else 100.0,
-            'Full Throttle (%)': float((tel['Throttle'] >= 99).mean() * 100.0),
-            'Throttle Ramp (p90 Δ)': float(np.percentile(throttle_smooth, 90)),
-            'Brake Usage (%)': float((tel['Brake'] > 0.05).mean() * 100.0),
-            'Brake Intensity (avg %)': float(brake_nonzero.mean() * 100.0) if not brake_nonzero.empty else 0.0,
-            'Gear Diversity (entropy)': float(gear_entropy),
-        }
-        return [computed[name] for name in DNA_CATEGORY_LABELS]
+def _driver_dna_legend():
+    """Return the short labels and long labels used by the Driver DNA chart."""
+    abbrs = DNA_ABBRS[:]
+    if len(abbrs) != len(DNA_CATEGORY_LABELS):
+        abbrs = [chr(ord('A') + i) for i in range(len(DNA_CATEGORY_LABELS))]
+    return list(zip(abbrs, DNA_CATEGORY_LABELS))
 
-    categories_long = DNA_CATEGORY_LABELS[:]
-    abbrs = ['TS', 'CS', 'FT', 'TR', 'BU', 'BI', 'GD']
-    if len(abbrs) != len(categories_long):
-        # Fallback: A/B/C… if the abbreviations ever drift.
-        abbrs = [chr(ord('A') + i) for i in range(len(categories_long))]
-    legend_map = list(zip(abbrs, categories_long))
 
-    raw1 = get_values(tel1)
-    raw2 = get_values(tel2)
+def _compute_driver_dna_raw(tel):
+    """Return raw Driver DNA metrics using the same source data as the radar chart."""
+    if tel is None or getattr(tel, 'empty', False):
+        return [0.0] * len(DNA_CATEGORY_LABELS)
 
+    speed_under_220 = tel[tel['Speed'] < 220]['Speed']
+    brake_nonzero = tel[tel['Brake'] > 0.05]['Brake']
+    throttle = tel['Throttle'].to_numpy(dtype=float)
+    throttle_smooth = np.clip(np.diff(throttle, prepend=throttle[0]), 0, None)
+    gear_counts = tel['nGear'].value_counts(normalize=True, dropna=True)
+    gear_entropy = float(-(gear_counts * np.log2(gear_counts)).sum()) if not gear_counts.empty else 0.0
+    computed = {
+        'Top Speed (km/h)': float(tel['Speed'].max()),
+        'Corner Speed <220 (km/h)': float(speed_under_220.mean()) if not speed_under_220.empty else 100.0,
+        'Full Throttle (%)': float((tel['Throttle'] >= 99).mean() * 100.0),
+        'Throttle Ramp (p90 Δ)': float(np.percentile(throttle_smooth, 90)),
+        'Brake Usage (%)': float((tel['Brake'] > 0.05).mean() * 100.0),
+        'Brake Intensity (avg %)': float(brake_nonzero.mean() * 100.0) if not brake_nonzero.empty else 0.0,
+        'Gear Diversity (entropy)': float(gear_entropy),
+    }
+    return [computed[name] for name in DNA_CATEGORY_LABELS]
+
+
+def _normalize_driver_dna(raw1, raw2):
+    """Return the normalized 0-100 radar scores for a pair of raw DNA metric lists."""
     # Compressed, symmetric scoring around 50:
     # - 50 means "roughly equal"
     # - scores move toward 50 for small differences (so the chart isn't wildly different
@@ -613,6 +699,25 @@ def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
             d = float(np.tanh(rel / k))
         norm1.append(50.0 + amp * d)
         norm2.append(50.0 - amp * d)
+    return norm1, norm2
+
+
+def _compute_driver_dna_summary(tel1, tel2):
+    """Return legend, raw values, and normalized chart values for Driver DNA."""
+    raw1 = _compute_driver_dna_raw(tel1)
+    raw2 = _compute_driver_dna_raw(tel2)
+    norm1, norm2 = _normalize_driver_dna(raw1, raw2)
+    return _driver_dna_legend(), raw1, raw2, norm1, norm2
+
+
+def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
+    """Computes and builds a normalized Driver DNA radar chart.
+
+    Returns:
+        (fig, legend_map): Plotly figure + list of (letter, long_label) tuples for UI legend.
+    """
+    legend_map, _, _, norm1, norm2 = _compute_driver_dna_summary(tel1, tel2)
+    abbrs = [abbr for abbr, _ in legend_map]
 
     # Close the loop explicitly so the first and last points connect around the horn.
     categories_closed = abbrs + [abbrs[0]] if abbrs else abbrs

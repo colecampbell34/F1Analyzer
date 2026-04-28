@@ -33,15 +33,26 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             const d1 = miniStore.d1 || {};
             const d2 = miniStore.d2 || {};
-            const dist = d1.dist || [];
-            const t1 = d1.t || [];
-            if (dist.length < 2 || t1.length !== dist.length) return window.dash_clientside.no_update;
 
-            // Scale hoverDist (meters) to percentage (0-1) for nearestIndex
-            const distMax = d1.dist_max || 1;
-            const normHoverDist = hoverDist / distMax;
-            const bestI = window.dash_clientside.clientside.nearestIndex(dist, normHoverDist);
-            const tSec = t1[bestI];
+            const getTimeAtDistance = function(series, distanceMeters) {
+                const dist = series.dist || [], times = series.t || [];
+                if (dist.length < 2 || dist.length !== times.length) return 0;
+                const target = distanceMeters / Math.max(1e-6, (series.dist_max || 1));
+                if (target <= dist[0]) return times[0];
+                if (target >= dist[dist.length - 1]) return times[times.length - 1];
+                let low = 0, high = dist.length - 1;
+                while (low <= high) {
+                    const mid = (low + high) >>> 1;
+                    if (dist[mid] < target) low = mid + 1;
+                    else if (dist[mid] > target) high = mid - 1;
+                    else return times[mid];
+                }
+                const ratio = (target - dist[low - 1]) / Math.max(1e-6, (dist[low] - dist[low - 1]));
+                return times[low - 1] + ratio * (times[low] - times[low - 1]);
+            };
+
+            const refSeries = (miniStore.delta && miniStore.delta.reference === 'd1') ? d1 : d2;
+            const tSec = getTimeAtDistance(refSeries, hoverDist);
 
             const interpXY = function(series, t) {
                 const ts = series.t || [], xs = series.x || [], ys = series.y || [];
@@ -63,7 +74,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             };
             
             // Update Live Dashboard during hover (always responsive)
-            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, true);
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, true, hoverDist);
 
             const p1 = interpXY(d1, tSec);
             const p2 = interpXY(d2, tSec);
@@ -146,6 +157,17 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 return [x[idx - 1] + ratio * (x[idx] - x[idx - 1]), y[idx - 1] + ratio * (y[idx] - y[idx - 1])];
             };
 
+            const interpMetric = function(series, t, metric) {
+                const ts = series.t || [], values = series[metric] || [];
+                if (!ts.length || ts.length !== values.length) return 0;
+                if (t <= ts[0]) return values[0];
+                if (t >= ts[ts.length - 1]) return values[values.length - 1];
+                const idx = binarySearch(ts, t);
+                const t0 = ts[idx - 1], t1 = ts[idx];
+                const ratio = (t - t0) / Math.max(1e-6, (t1 - t0));
+                return values[idx - 1] + ratio * (values[idx] - values[idx - 1]);
+            };
+
             const d1Lap = miniStore.d1.lap_s || (miniStore.d1.t?.length ? miniStore.d1.t[miniStore.d1.t.length - 1] : 0);
             const d2Lap = miniStore.d2.lap_s || (miniStore.d2.t?.length ? miniStore.d2.t[miniStore.d2.t.length - 1] : 0);
             const maxLap = Math.max(d1Lap, d2Lap);
@@ -158,7 +180,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             if (trigger.includes('play-lap-btn')) {
                 tSec = 0; lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause';
                 const dash = document.getElementById('live-telemetry-dashboard');
-                if (dash) delete dash.dataset.lastSecond;
+                if (dash) delete dash.dataset.lastHalfSecond;
             } else if (trigger.includes('pause-resume-lap-btn')) {
                 if (intervalDisabled) { lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause'; }
                 else { newIntervalDisabled = true; btnText = 'Resume'; }
@@ -171,7 +193,13 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             if (tSec >= maxLap) { tSec = maxLap; newIntervalDisabled = true; btnText = 'Pause'; }
 
             // Update Live Dashboard (throttled during playback)
-            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false);
+            const deltaRef = (miniStore.delta && miniStore.delta.reference === 'd1') ? miniStore.d1 : miniStore.d2;
+            const playbackDistM = interpMetric(
+                deltaRef,
+                Math.min(tSec, deltaRef.lap_s || tSec),
+                'dist'
+            ) * (deltaRef.dist_max || 1);
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false, playbackDistM);
 
             // 1. Update Mini Map
             const p1 = interpXY(miniStore.d1, tSec);
@@ -193,21 +221,30 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 const t = d.t, lat = d.lat, lng = d.long;
                 if (tSec <= t[0]) return { curLat: lat[0], curLng: lng[0], trailLat: [lat[0]], trailLng: [lng[0]], name: d.driver };
                 const idx = Math.min(t.length - 1, binarySearch(t, tSec));
+                const curLat = interpMetric(d, tSec, 'lat');
+                const curLng = interpMetric(d, tSec, 'long');
                 const trailWindow = 0.8; let start = idx;
                 while (start > 0 && (tSec - t[start]) < trailWindow) start--;
-                return { curLat: lat[idx], curLng: lng[idx], trailLat: lat.slice(start, idx + 1), trailLng: lng.slice(start, idx + 1), name: d.driver };
+                return {
+                    curLat: curLat,
+                    curLng: curLng,
+                    trailLat: lat.slice(start, idx + 1).concat([curLat]),
+                    trailLng: lng.slice(start, idx + 1).concat([curLng]),
+                    name: d.driver
+                };
             };
-            const s1 = getGGState('d1'), s2 = getGGState('d2');
+            const s1 = ggStore ? getGGState('d1') : null;
+            const s2 = ggStore ? getGGState('d2') : null;
             let ggDiv = document.getElementById('gg-diagram');
             if (ggDiv && (s1 || s2)) {
                 if (!ggDiv.data) ggDiv = ggDiv.querySelector('.js-plotly-plot') || ggDiv;
                 if (ggDiv.data) {
-                    const ux = [], uy = [], uh = [], idxs = [5, 6, 7, 8, 9, 10];
+                    const ux = [], uy = [], uh = [], idxs = [7, 8, 9, 10, 11, 12];
                     idxs.forEach(i => {
-                        const s = (i <= 7) ? s1 : s2;
+                        const s = (i <= 9) ? s1 : s2;
                         if (!s) { ux.push([null]); uy.push([null]); uh.push(null); }
                         else {
-                            const p = (i - 5) % 3;
+                            const p = (i - 7) % 3;
                             if (p === 0) { ux.push([0, s.curLat]); uy.push([0, s.curLng]); uh.push(null); }
                             else if (p === 1) { ux.push(s.trailLat); uy.push(s.trailLng); uh.push(null); }
                             else { ux.push([s.curLat]); uy.push([s.curLng]); uh.push(`<b>${s.name}</b><br>${s.curLat.toFixed(2)}G, ${s.curLng.toFixed(2)}G<extra></extra>`); }
@@ -222,7 +259,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             if (speedDiv) {
                 if (!speedDiv.layout) speedDiv = speedDiv.querySelector('.js-plotly-plot') || speedDiv;
                 if (speedDiv.layout) {
-                    const d1 = miniStore.d1, distArr = d1.dist || [], tArr = d1.t || [];
+                    const ref = deltaRef, distArr = ref.dist || [], tArr = ref.t || [];
                     let cDist = 0;
                     if (tSec <= tArr[0]) cDist = distArr[0];
                     else if (tSec >= tArr[tArr.length - 1]) cDist = distArr[distArr.length - 1];
@@ -232,7 +269,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                         cDist = distArr[i - 1] + ratio * (distArr[i] - distArr[i - 1]);
                     }
                     // Scale back to meters for the chart cursor
-                    const cDistM = cDist * (d1.dist_max || 1);
+                    const cDistM = cDist * (ref.dist_max || 1);
                     const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDistM, x1: cDistM } : s));
                     if (!shapes.some(s => s.name === 'playback-cursor')) {
                         shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDistM, x1: cDistM, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
@@ -254,7 +291,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             ];
         },
 
-        updateLiveDashboard: function(tSec, miniStore, hoverMode) {
+        updateLiveDashboard: function(tSec, miniStore, hoverMode, deltaDistanceMeters) {
             const dash = document.getElementById('live-telemetry-dashboard');
             if (!dash) return;
             if (!miniStore || !miniStore.d1 || !miniStore.d2) {
@@ -306,38 +343,43 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const currentHalfSecond = Math.floor(tSec * 2);
             if (dash.dataset.lastHalfSecond !== String(currentHalfSecond) || hoverMode) {
                 dash.dataset.lastHalfSecond = currentHalfSecond;
-                const d1 = miniStore.d1, d2 = miniStore.d2;
-                const distArr = d1.dist || [], tArr = d1.t || [];
-                const idx = binarySearch(tArr, tSec);
-                const curDist = distArr[idx] || 0;
-
-                const getTimeAtDist = (series, targetD) => {
-                    const d = series.dist || [], t = series.t || [];
-                    if (!d.length) return 0;
-                    if (targetD <= d[0]) return t[0];
-                    if (targetD >= d[d.length - 1]) return t[t.length - 1];
+                const getDeltaAtDistance = (targetD) => {
+                    const delta = miniStore.delta || {};
+                    const d = delta.dist || [], values = delta.value || [];
+                    if (d.length < 2 || d.length !== values.length) return null;
+                    if (targetD <= d[0]) return values[0];
+                    if (targetD >= d[d.length - 1]) return values[values.length - 1];
                     let low = 0, high = d.length - 1;
                     while (low <= high) {
                         const mid = (low + high) >>> 1;
                         if (d[mid] < targetD) low = mid + 1;
                         else if (d[mid] > targetD) high = mid - 1;
-                        else return t[mid];
+                        else return values[mid];
                     }
                     const ratio = (targetD - d[low - 1]) / Math.max(1e-6, (d[low] - d[low - 1]));
-                    return t[low - 1] + ratio * (t[low] - t[low - 1]);
+                    return values[low - 1] + ratio * (values[low] - values[low - 1]);
                 };
 
-                const t2AtDist = getTimeAtDist(d2, curDist);
-                const delta = tSec - t2AtDist;
+                const d1 = miniStore.d1, d2 = miniStore.d2;
+                const primaryName = (miniStore.delta && miniStore.delta.primary) || d1.name;
+                const secondaryName = (miniStore.delta && miniStore.delta.secondary) || d2.name;
+                let targetDistance = deltaDistanceMeters;
+                if (targetDistance === null || targetDistance === undefined) {
+                    const refSeries = (miniStore.delta && miniStore.delta.reference === 'd1') ? d1 : d2;
+                    targetDistance = interpMetric(
+                        refSeries,
+                        Math.min(tSec, refSeries.lap_s || tSec),
+                        'dist'
+                    ) * (refSeries.dist_max || 1);
+                }
+                const delta = getDeltaAtDistance(targetDistance);
                 const deltaEl = document.getElementById('live-delta-value');
                 const deltaLabelEl = document.querySelector('.delta-label');
 
-                if (deltaEl && deltaLabelEl) {
-                    const fasterDriver = delta > 0 ? d2.name : d1.name;
-                    deltaLabelEl.innerText = `GAP TO ${fasterDriver}`;
-                    // Reverse sign and color logic: show as +[time] in red if the gap driver is ahead
-                    deltaEl.innerText = (delta > 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
-                    deltaEl.style.color = delta > 0 ? '#00ff00' : '#ff4444';
+                if (deltaEl && deltaLabelEl && delta !== null) {
+                    deltaLabelEl.innerText = `${primaryName || 'D1'} GAP TO ${secondaryName || 'D2'}`;
+                    deltaEl.innerText = (delta >= 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
+                    deltaEl.style.color = delta >= 0 ? '#00ff00' : '#ff4444';
                 }
             }
         },
@@ -356,11 +398,30 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 const lng = d.long || [];
                 if (dist.length < 5) return null;
                 const idx = window.dash_clientside.clientside.nearestIndex(dist, hoverDist);
-                const start = Math.max(0, idx - 8);
+
+                const interpolateByDistance = function(series, targetD, metric) {
+                    const dArr = series.dist || [], values = series[metric] || [];
+                    if (!dArr.length || dArr.length !== values.length) return 0;
+                    if (targetD <= dArr[0]) return values[0];
+                    if (targetD >= dArr[dArr.length - 1]) return values[values.length - 1];
+                    let low = 0, high = dArr.length - 1;
+                    while (low <= high) {
+                        const mid = (low + high) >>> 1;
+                        if (dArr[mid] < targetD) low = mid + 1;
+                        else if (dArr[mid] > targetD) high = mid - 1;
+                        else return values[mid];
+                    }
+                    const ratio = (targetD - dArr[low - 1]) / Math.max(1e-6, (dArr[low] - dArr[low - 1]));
+                    return values[low - 1] + ratio * (values[low] - values[low - 1]);
+                };
+
+                const curLat = interpolateByDistance(d, hoverDist, 'lat');
+                const curLng = interpolateByDistance(d, hoverDist, 'long');
+                const start = Math.max(0, idx - 12);
                 return {
-                    curLat: lat[idx], curLng: lng[idx],
-                    trailLat: lat.slice(start, idx + 1),
-                    trailLng: lng.slice(start, idx + 1),
+                    curLat: curLat, curLng: curLng,
+                    trailLat: lat.slice(start, idx + 1).concat([curLat]),
+                    trailLng: lng.slice(start, idx + 1).concat([curLng]),
                     name: d.driver || key
                 };
             };
@@ -374,13 +435,13 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 if (!graphDiv.data) graphDiv = graphDiv.querySelector('.js-plotly-plot');
                 if (graphDiv && graphDiv.data) {
                     const updateX = []; const updateY = []; const updateHover = [];
-                    const indices = [5, 6, 7, 8, 9, 10];
+                    const indices = [7, 8, 9, 10, 11, 12];
                     indices.forEach((idx) => {
-                        const s = (idx <= 7) ? s1 : s2;
+                        const s = (idx <= 9) ? s1 : s2;
                         if (!s) {
                             updateX.push([null]); updateY.push([null]); updateHover.push(null);
                         } else {
-                            const part = (idx - 5) % 3;
+                            const part = (idx - 7) % 3;
                             if (part === 0) { // Beam
                                 updateX.push([0, s.curLat]); updateY.push([0, s.curLng]); updateHover.push(null);
                             } else if (part === 1) { // Trail

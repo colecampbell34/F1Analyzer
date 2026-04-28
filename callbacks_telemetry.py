@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from data import get_shared_data, get_best_lap
-from graphs import _sort_fastest_driver, _build_telemetry_fig, _error_figure
+from graphs import _sort_fastest_driver, _build_telemetry_fig, _error_figure, _compute_lap_delta
 from callbacks_shared import _timed_callback, _has_valid_lap, _pick_driver_lap
 from ui_utils import _friendly_error
 
@@ -43,7 +43,12 @@ def register_telemetry_callbacks(app):
                 if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
 
                 fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
-                return _build_telemetry_fig(fast_data, slow_data)
+                return _build_telemetry_fig(
+                    fast_data,
+                    slow_data,
+                    driver1_delta_data=(d1, lap1),
+                    driver2_delta_data=(d2, lap2),
+                )
             except Exception as e:
                 logging.error(f"Telemetry Error: {e}")
                 return _error_figure(_friendly_error(e))
@@ -122,11 +127,23 @@ def register_telemetry_callbacks(app):
             d2_data = _sample_for_playback(tel2)
             track_x = tel1['X'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
             track_y = tel1['Y'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
+            # Positive delta means Driver 1 is ahead of Driver 2 at that point.
+            delta_time, ref_tel, _ = _compute_lap_delta(lap2, lap1)
+            delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
+            delta_vals = -pd.Series(delta_time).astype(float).to_numpy()
+            valid_delta = np.isfinite(delta_dist) & np.isfinite(delta_vals)
 
             store = {
                 'track': {'x': track_x.tolist(), 'y': track_y.tolist()},
                 'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['LapTime'].total_seconds()), 'dist_max': float(lap1_dist_max)},
                 'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['LapTime'].total_seconds()), 'dist_max': float(lap2_dist_max)},
+                'delta': {
+                    'dist': delta_dist[valid_delta].tolist(),
+                    'value': delta_vals[valid_delta].tolist(),
+                    'primary': d1,
+                    'secondary': d2,
+                    'reference': 'd2',
+                },
                 # Keep top-level arrays for existing hover marker behavior.
                 'x': d1_data['x'],
                 'y': d1_data['y'],
@@ -223,24 +240,51 @@ def register_telemetry_callbacks(app):
         def calculate_g_series(tel):
             # Return (t, dist, lat_g, long_g) arrays.
             t = tel['Time'].dt.total_seconds()
-            dt = t.diff().fillna(0.1).to_numpy(dtype=float)
-            dt = np.where(dt <= 1e-3, 1e-3, dt)
+            t_sec = t.to_numpy(dtype=float)
+            if len(t_sec) < 5:
+                return t_sec, tel['Distance'].to_numpy(dtype=float), np.zeros(len(t_sec)), np.zeros(len(t_sec))
+            for idx in range(1, len(t_sec)):
+                if not np.isfinite(t_sec[idx]) or t_sec[idx] <= t_sec[idx - 1]:
+                    t_sec[idx] = t_sec[idx - 1] + 1e-3
 
-            v_ms = (tel['Speed'].to_numpy(dtype=float) / 3.6)
-            accel_ms2 = np.diff(v_ms, prepend=v_ms[0]) / dt
-            long_g = np.clip(accel_ms2 * 0.1019, -6.0, 6.0)
+            def smooth(values, window=11):
+                series = (
+                    pd.Series(values)
+                    .replace([np.inf, -np.inf], np.nan)
+                    .interpolate(limit_direction='both')
+                    .ffill()
+                    .bfill()
+                )
+                if series.isna().all():
+                    return np.zeros(len(series), dtype=float)
+                return (
+                    series
+                    .rolling(window=window, center=True, min_periods=1)
+                    .median()
+                    .rolling(window=window, center=True, min_periods=1)
+                    .mean()
+                    .to_numpy(dtype=float)
+                )
 
-            x = tel['X'].to_numpy(dtype=float)
-            y = tel['Y'].to_numpy(dtype=float)
-            dx = np.diff(x, prepend=x[0])
-            dy = np.diff(y, prepend=y[0])
-            heading = np.arctan2(dy, dx)
-            d_heading = np.diff(heading, prepend=heading[0])
-            d_heading = (d_heading + np.pi) % (2 * np.pi) - np.pi
-            lat_g = np.clip((v_ms * (d_heading / dt)) * 0.1019, -6.0, 6.0)
+            v_ms = smooth(tel['Speed'].to_numpy(dtype=float) / 3.6, window=9)
+            x = smooth(tel['X'].to_numpy(dtype=float), window=7)
+            y = smooth(tel['Y'].to_numpy(dtype=float), window=7)
+
+            accel_ms2 = np.gradient(v_ms, t_sec, edge_order=1)
+            long_g = smooth(accel_ms2 * 0.1019, window=13)
+
+            dx = np.gradient(x, t_sec, edge_order=1)
+            dy = np.gradient(y, t_sec, edge_order=1)
+            heading = np.unwrap(np.arctan2(dy, dx))
+            yaw_rate = np.gradient(heading, t_sec, edge_order=1)
+            lat_g = smooth((v_ms * yaw_rate) * 0.1019, window=13)
+
+            # Ignore occasional telemetry timestamp/position spikes that otherwise make
+            # the marker jump around the friction circle.
+            lat_g = np.clip(lat_g, -5.5, 5.5)
+            long_g = np.clip(long_g, -5.5, 5.5)
 
             dist = tel['Distance'].to_numpy(dtype=float)
-            t_sec = t.to_numpy(dtype=float)
             return t_sec, dist, lat_g, long_g
 
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
@@ -290,19 +334,39 @@ def register_telemetry_callbacks(app):
                 fig.add_trace(go.Scatter(
                     x=r0 * np.cos(th), y=r0 * np.sin(th),
                     mode='lines',
-                    line=dict(color='#444', dash='dot', width=1),
+                    line=dict(color='#3a3a3a', dash='dot', width=1),
                     showlegend=False,
                     hoverinfo='skip'
                 ))
+            fig.add_trace(go.Scatter(
+                x=[-5.5, 5.5], y=[0, 0],
+                mode='lines',
+                line=dict(color='#555', width=1),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+            fig.add_trace(go.Scatter(
+                x=[0, 0], y=[-5.5, 5.5],
+                mode='lines',
+                line=dict(color='#555', width=1),
+                showlegend=False,
+                hoverinfo='skip'
+            ))
 
             fig.update_layout(
-                xaxis=dict(title="Lateral G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555'),
-                yaxis=dict(title="Longitudinal G", range=[-6, 6], gridcolor='#333', zerolinecolor='#555', scaleanchor="x", scaleratio=1),
-                margin=dict(l=40, r=20, t=5, b=40),
+                xaxis=dict(title="Lateral G", range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False),
+                yaxis=dict(title="Longitudinal G", range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, scaleanchor="x", scaleratio=1),
+                margin=dict(l=36, r=14, t=18, b=34),
                 showlegend=False,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
-                template='plotly_dark'
+                template='plotly_dark',
+                annotations=[
+                    dict(text="ACCEL", x=0.5, y=0.99, xref="paper", yref="paper", showarrow=False, font=dict(size=10, color="#777")),
+                    dict(text="BRAKE", x=0.5, y=0.01, xref="paper", yref="paper", showarrow=False, font=dict(size=10, color="#777")),
+                    dict(text="LEFT", x=0.02, y=0.5, xref="paper", yref="paper", showarrow=False, textangle=-90, font=dict(size=10, color="#777")),
+                    dict(text="RIGHT", x=0.98, y=0.5, xref="paper", yref="paper", showarrow=False, textangle=90, font=dict(size=10, color="#777")),
+                ]
             )
 
             # Add placeholder traces for 2 drivers (Beam, Trail, Ball each)
@@ -318,8 +382,8 @@ def register_telemetry_callbacks(app):
                 # Trail
                 fig.add_trace(go.Scatter(
                     x=[], y=[], mode='lines',
-                    line=dict(color=color, width=2.5, shape='spline', smoothing=1.3),
-                    opacity=0.35, showlegend=False, meta='hover', hoverinfo='skip'
+                    line=dict(color=color, width=3, shape='spline', smoothing=1.2),
+                    opacity=0.45, showlegend=False, meta='hover', hoverinfo='skip'
                 ))
                 # Ball
                 fig.add_trace(go.Scatter(
@@ -339,4 +403,3 @@ def register_telemetry_callbacks(app):
          State('lap-playback-interval', 'disabled')],
         prevent_initial_call=True
     )
-
