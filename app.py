@@ -5,7 +5,7 @@ from layout import app_layout
 from callbacks import register_callbacks
 import data
 from feedback import setup_feedback_storage
-from ai_utils import flush_ai_cache
+from ai_cache import flush_ai_cache
 from flask_compress import Compress
 import threading
 import atexit

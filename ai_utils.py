@@ -1,10 +1,4 @@
 import os
-import json
-import time
-import hashlib
-import threading
-from datetime import datetime, timezone
-from collections import defaultdict
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
@@ -22,166 +16,6 @@ GEMINI_MODELS = [
     'gemini-2.5-flash-lite',
     'gemini-2.5-flash'
 ]
-
-# Shared rate-limit lock.
-_RATE_LIMIT_LOCK = threading.Lock()
-
-# Per-user daily rate limit.
-_USER_DAILY_USAGE = defaultdict(int)  # IP → count
-USER_DAILY_LIMIT = 10
-_daily_reset_date = None
-
-# Disk-backed AI response cache.
-_AI_CACHE_DIR = 'ai_cache'
-_AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
-_AI_CACHE_LOCK = threading.Lock()
-_AI_RESPONSE_CACHE = {}  # cache_key → response_text
-MAX_CACHE_SIZE = 100
-_AI_CACHE_FLUSH_SECONDS = 30
-_AI_CACHE_RETENTION_DAYS = 10
-_AI_CACHE_DIRTY = False
-_AI_CACHE_LAST_FLUSH = 0.0
-
-
-def _load_cache_from_disk():
-    """Load the AI response cache from disk on startup."""
-    global _AI_RESPONSE_CACHE
-    try:
-        if os.path.exists(_AI_CACHE_FILE):
-            with open(_AI_CACHE_FILE, 'r', encoding='utf-8') as f:
-                raw = json.load(f)
-
-            if isinstance(raw, dict):
-                # Backward compatibility: legacy payload was {cache_key: response_text}
-                if raw and all(isinstance(v, str) for v in raw.values()):
-                    now_ts = time.time()
-                    _AI_RESPONSE_CACHE = {
-                        key: {'response': val, 'stored_at': now_ts}
-                        for key, val in raw.items()
-                    }
-                else:
-                    _AI_RESPONSE_CACHE = raw
-            else:
-                _AI_RESPONSE_CACHE = {}
-
-            # Drop stale entries, then enforce max size by oldest timestamp.
-            _prune_ai_cache_unlocked()
-    except (json.JSONDecodeError, IOError):
-        _AI_RESPONSE_CACHE = {}
-
-
-def _save_cache_to_disk():
-    """Persist the AI response cache to disk."""
-    try:
-        os.makedirs(_AI_CACHE_DIR, exist_ok=True)
-        with open(_AI_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(_AI_RESPONSE_CACHE, f, ensure_ascii=False)
-    except IOError:
-        pass
-
-
-def _prune_ai_cache_unlocked():
-    """Prune stale and overflow cache entries. Caller must hold _AI_CACHE_LOCK."""
-    now_ts = time.time()
-    if _AI_CACHE_RETENTION_DAYS > 0:
-        cutoff = now_ts - (_AI_CACHE_RETENTION_DAYS * 86400)
-        stale_keys = [
-            k for k, v in _AI_RESPONSE_CACHE.items()
-            if isinstance(v, dict) and float(v.get('stored_at', 0)) < cutoff
-        ]
-        for key in stale_keys:
-            del _AI_RESPONSE_CACHE[key]
-
-    if len(_AI_RESPONSE_CACHE) > MAX_CACHE_SIZE:
-        keys_by_age = sorted(
-            _AI_RESPONSE_CACHE.keys(),
-            key=lambda k: float(_AI_RESPONSE_CACHE.get(k, {}).get('stored_at', 0))
-        )
-        overflow = len(_AI_RESPONSE_CACHE) - MAX_CACHE_SIZE
-        for key in keys_by_age[:overflow]:
-            del _AI_RESPONSE_CACHE[key]
-
-
-def _maybe_flush_cache_unlocked(force=False):
-    """Flush cache to disk at most once per interval unless forced."""
-    global _AI_CACHE_DIRTY, _AI_CACHE_LAST_FLUSH
-    now_ts = time.time()
-    if not _AI_CACHE_DIRTY:
-        return
-    if not force and (now_ts - _AI_CACHE_LAST_FLUSH) < _AI_CACHE_FLUSH_SECONDS:
-        return
-    _save_cache_to_disk()
-    _AI_CACHE_LAST_FLUSH = now_ts
-    _AI_CACHE_DIRTY = False
-
-
-# Load cache on import.
-_load_cache_from_disk()
-
-
-def flush_ai_cache():
-    """Best-effort public flush hook for graceful shutdown paths."""
-    with _AI_CACHE_LOCK:
-        _maybe_flush_cache_unlocked(force=True)
-
-
-def check_user_limit(ip):
-    """Checks and increments the daily request count for a specific IP.
-    
-    Returns (allowed, current_count).
-    """
-    global _daily_reset_date
-    today = datetime.now(timezone.utc).date()
-
-    with _RATE_LIMIT_LOCK:
-        # Reset daily counters at midnight UTC.
-        if _daily_reset_date != today:
-            _USER_DAILY_USAGE.clear()
-            _daily_reset_date = today
-
-        current_usage = _USER_DAILY_USAGE[ip]
-        if current_usage >= USER_DAILY_LIMIT:
-            return False, current_usage
-
-        _USER_DAILY_USAGE[ip] += 1
-        return True, _USER_DAILY_USAGE[ip]
-
-
-def _cache_key(session_context, question):
-    """Generate a cache key from full session context + normalized question.
-
-    Uses SHA-256 of the full context string to avoid collisions between
-    sessions with similar headers (e.g. same drivers at consecutive races).
-    """
-    q_normalized = question.lower().strip()
-    raw = (session_context or '') + '||' + q_normalized
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-
-def get_cached_response(session_context, question):
-    """Returns cached response if an exact normalized match exists, else None."""
-    key = _cache_key(session_context, question)
-    with _AI_CACHE_LOCK:
-        item = _AI_RESPONSE_CACHE.get(key)
-        if isinstance(item, dict):
-            return item.get('response')
-        if isinstance(item, str):
-            return item
-        return None
-
-
-def store_cached_response(session_context, question, response):
-    """Store a response in the cache and persist to disk. Evicts oldest entries if cache is full."""
-    global _AI_CACHE_DIRTY
-    with _AI_CACHE_LOCK:
-        key = _cache_key(session_context, question)
-        _AI_RESPONSE_CACHE[key] = {
-            'response': response,
-            'stored_at': time.time()
-        }
-        _prune_ai_cache_unlocked()
-        _AI_CACHE_DIRTY = True
-        _maybe_flush_cache_unlocked()
 
 
 def build_ai_prompt(session_context, question, history=None):
@@ -520,7 +354,8 @@ def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
     """Return dashboard-matched delta and Driver DNA context for the selected fastest laps."""
     lines = ["=== DASHBOARD TELEMETRY DELTA + DRIVER DNA ==="]
     try:
-        from graphs import _compute_lap_delta, _compute_driver_dna_summary
+        from graph_shared import _compute_lap_delta
+        from graphs import _compute_driver_dna_summary
 
         tel1 = lap1.get_telemetry().add_distance()
         tel2 = lap2.get_telemetry().add_distance()
