@@ -1,7 +1,7 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 from datetime import datetime
-from graphs import GRAPH_CONFIG
+from graph_shared import GRAPH_CONFIG
 from ai_utils import AI_ENABLED
 
 
@@ -103,6 +103,10 @@ sidebar = html.Div([
                          searchable=True,
                          style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
         ]),
+        dbc.Button([html.I(className="fas fa-history me-2"), "Latest Race"],
+                   id='latest-race-btn', color='danger', size='sm', n_clicks=0,
+                   title='Select the most recent completed race and default to the top two drivers',
+                   style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '0.75rem'}),
 
         # Driver selectors.
         _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
@@ -199,7 +203,7 @@ content = html.Div([
     html.Hr(),
 
     dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
-        dcc.Tab(label='Telemetry', value='tab-telemetry', children=[
+        dcc.Tab(id='tab-telemetry-control', label='Telemetry', value='tab-telemetry', children=[
             DISCLAIMER,
             telemetry_controls,
             dbc.Row([
@@ -247,7 +251,7 @@ content = html.Div([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(label='Track Map', value='tab-trackmap', children=[
+        dcc.Tab(id='tab-trackmap-control', label='Track Map', value='tab-trackmap', children=[
             DISCLAIMER,
             html.Div([
                 dbc.Label("Overlay Mode:", style={"fontSize": "0.8rem", "color": "#aaa", "marginRight": "10px"}),
@@ -282,7 +286,7 @@ content = html.Div([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(label='Strategy', value='tab-strategy', children=[
+        dcc.Tab(id='tab-strategy-control', label='Strategy', value='tab-strategy', children=[
             DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
@@ -292,7 +296,7 @@ content = html.Div([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(label='Race', value='tab-race', children=[
+        dcc.Tab(id='tab-race-control', label='Race', value='tab-race', children=[
             DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
@@ -302,14 +306,14 @@ content = html.Div([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(label='Grid Pace', value='tab-gridpace', children=[
+        dcc.Tab(id='tab-gridpace-control', label='Grid Pace', value='tab-gridpace', children=[
             DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(label='AI Analysis', value='tab-ai', children=[
+        dcc.Tab(id='tab-ai-control', label='AI Analysis', value='tab-ai', children=[
             html.Div([
                 html.Div([
                     dbc.InputGroup([
@@ -462,6 +466,7 @@ app_layout = dbc.Container([
     ),
 
     dcc.Store(id='dashboard-params-store', storage_type='session'),
+    dcc.Store(id='latest-race-store', storage_type='memory'),
     dcc.Store(id='gg-data-store', storage_type='memory'),
     dcc.Store(id='mini-map-store', storage_type='memory'),
     dcc.Store(id='lap-playback-store', storage_type='memory'),

@@ -100,6 +100,15 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
     .content-col {
         padding-bottom: 4rem !important;
     }
+
+    #main-title {
+        font-size: 1.05rem;
+        margin-top: 0.65rem !important;
+    }
+
+    .sidebar-col > div {
+        border-bottom: 1px solid #333;
+    }
 }
 
 /* Tabs: horizontal scroll on narrow screens instead of truncation */
@@ -224,6 +233,12 @@ div[class*="tab-container"] {
 #feedback-review-panel .card-text,
 #feedback-review-panel .list-group-item {
     color: #e3e3e3;
+}
+
+.tab--disabled,
+.tab[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 @media (max-width: 768px) {
