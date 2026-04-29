@@ -68,7 +68,14 @@ def _driver_selector(label, dropdown_id, btn_id):
                       style={'fontSize': '0.65rem', 'color': '#888', 'marginLeft': '2px',
                              'display': 'none'}),
         ], style={'display': 'flex', 'alignItems': 'center'}),
-    ], style={'marginBottom': '0.75rem'})
+    ], className='sidebar-driver-selector', style={'marginBottom': '0.75rem'})
+
+
+def _control_field(label, child, extra_class=''):
+    return html.Div([
+        dbc.Label(label, className='sidebar-control-label', style={"fontSize": "0.9rem"}),
+        child
+    ], className=f"sidebar-control-field {extra_class}".strip())
 
 
 # Sidebar control panel.
@@ -78,34 +85,34 @@ sidebar = html.Div([
         html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
         html.P("Session Analysis Dashboard", style={"fontSize": "0.75rem", "color": "#888", "marginBottom": "0.5rem"}),
         html.Hr(style={'margin': '0.5rem 0'}),
-    ], style={'flex': '0 0 auto'}),
+    ], className='sidebar-header', style={'flex': '0 0 auto'}),
 
     # Scrollable Content (Controls + Leaderboard)
     html.Div([
-        dbc.Label("Year", style={"fontSize": "0.9rem"}),
-        dcc.Dropdown(id='year-dropdown',
-                     options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
-                     value=datetime.now().year,
-                     persistence=True, persistence_type='session',
-                     searchable=True,
-                     style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
+        _control_field("Year", dcc.Dropdown(
+            id='year-dropdown',
+            options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
+            value=datetime.now().year,
+            persistence=True, persistence_type='session',
+            searchable=True,
+            style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}
+        ), 'year-field'),
 
-        dbc.Label("Grand Prix", style={"fontSize": "0.9rem"}),
-        dcc.Loading(type='dot', color='#ff0000', children=[
+        _control_field("Grand Prix", dcc.Loading(type='dot', color='#ff0000', children=[
             dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
                          searchable=True,
                          style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-        ]),
+        ]), 'race-field'),
 
-        dbc.Label("Session", style={"fontSize": "0.9rem"}),
-        dcc.Loading(type='dot', color='#ff0000', children=[
+        _control_field("Session", dcc.Loading(type='dot', color='#ff0000', children=[
             dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
                          searchable=True,
                          style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-        ]),
+        ]), 'session-field'),
         dbc.Button([html.I(className="fas fa-history me-2"), "Latest Race"],
                    id='latest-race-btn', color='danger', size='sm', n_clicks=0,
                    title='Select the most recent completed race and default to the top two drivers',
+                   className='sidebar-latest-btn',
                    style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '0.75rem'}),
 
         # Driver selectors.
@@ -113,17 +120,20 @@ sidebar = html.Div([
         _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
 
         dbc.Button("Update Dashboard", id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
+                   className='sidebar-update-btn',
                    style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
-        html.Hr(),
-        html.H4("Session Leaderboard", style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
+        html.Hr(className='sidebar-divider'),
+        html.H4("Session Leaderboard", className='sidebar-leaderboard-title',
+                style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
         dbc.Button("Update Leaderboard", id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
+                   className='sidebar-leaderboard-btn',
                    style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
         html.Div([
             dcc.Loading(type='dot', color='#ff0000', children=[
                 html.Div(id='leaderboard-container')
             ])
-        ], style={'minHeight': '0'})
-    ], style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
+        ], className='sidebar-leaderboard', style={'minHeight': '0'})
+    ], className='sidebar-controls', style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
 
     # Fixed Footer
     html.Div([
@@ -136,9 +146,9 @@ sidebar = html.Div([
             html.A(html.I(className="fab fa-twitter fa-lg"), href="https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url=https://f-1-analyzer--colecampbell34.replit.app", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
             html.A(html.I(className="fab fa-reddit fa-lg"), href="https://reddit.com/submit?url=https://f-1-analyzer--colecampbell34.replit.app&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
         ], style={'textAlign': 'center', 'paddingBottom': '5px'})
-    ], style={'flex': '0 0 auto'})
+    ], className='sidebar-footer', style={'flex': '0 0 auto'})
 
-], style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
+], className='sidebar-panel', style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
           "display": "flex", "flexDirection": "column", "overflow": "hidden"})
 
 

@@ -53,7 +53,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
 /* Responsive adjustments */
 @media (max-width: 768px) {
     .display-6 {
-        font-size: 1.2rem !important;
+        font-size: 1.05rem !important;
     }
 
     .tab-content .graph-container {
@@ -92,8 +92,123 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
     }
 
     /* Avoid the left-panel card forcing full viewport height on phones. */
-    .sidebar-col > div {
+    .sidebar-col > div,
+    .sidebar-panel {
         min-height: auto !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    .sidebar-panel {
+        padding: 0.55rem 0.65rem !important;
+    }
+
+    .sidebar-header h2,
+    .sidebar-header p,
+    .sidebar-header hr,
+    .sidebar-footer hr,
+    .sidebar-footer > div {
+        display: none !important;
+    }
+
+    .sidebar-controls {
+        display: grid !important;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-auto-flow: row dense;
+        gap: 0.45rem 0.55rem;
+        padding-right: 0 !important;
+        margin-bottom: 0.45rem !important;
+        overflow: visible !important;
+    }
+
+    .sidebar-control-field,
+    .sidebar-driver-selector {
+        margin-bottom: 0 !important;
+    }
+
+    .race-field,
+    .sidebar-driver-selector,
+    .sidebar-divider,
+    .sidebar-leaderboard-title,
+    .sidebar-leaderboard-btn,
+    .sidebar-leaderboard {
+        grid-column: 1 / -1;
+    }
+
+    .sidebar-latest-btn,
+    .sidebar-update-btn {
+        margin: 0 !important;
+        min-height: 34px;
+    }
+
+    .sidebar-control-label,
+    .sidebar-driver-selector label {
+        font-size: 0.72rem !important;
+        line-height: 1;
+        margin-bottom: 0.18rem !important;
+        color: #bbb;
+    }
+
+    .sidebar-controls .Select-control,
+    .sidebar-controls .Select-placeholder,
+    .sidebar-controls .Select-value,
+    .sidebar-controls .Select-input {
+        min-height: 32px !important;
+        height: 32px !important;
+        line-height: 32px !important;
+        font-size: 0.78rem !important;
+    }
+
+    .sidebar-controls .Select-menu-outer {
+        font-size: 0.82rem !important;
+    }
+
+    .sidebar-driver-selector > div {
+        align-items: stretch !important;
+    }
+
+    .sidebar-driver-selector button {
+        min-width: 34px;
+        padding: 0 0.45rem !important;
+    }
+
+    .teammate-label {
+        display: none !important;
+    }
+
+    .sidebar-divider {
+        margin: 0.15rem 0 !important;
+    }
+
+    .sidebar-leaderboard-title {
+        font-size: 0.82rem !important;
+        margin: 0 !important;
+    }
+
+    .sidebar-leaderboard-btn {
+        margin: 0 !important;
+        min-height: 32px;
+    }
+
+    .sidebar-leaderboard {
+        max-height: 138px;
+        overflow-y: auto;
+        border: 1px solid #2d2d2d;
+        border-radius: 6px;
+        padding: 0 0.35rem;
+        background: #101010;
+    }
+
+    .sidebar-footer {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.35rem;
+    }
+
+    .sidebar-footer #share-btn {
+        margin-bottom: 0 !important;
+        min-height: 32px;
     }
 
     /* Keep content clear of the floating feedback button. */
@@ -101,9 +216,39 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
         padding-bottom: 4rem !important;
     }
 
+    .content-col > div {
+        padding: 0.5rem !important;
+    }
+
     #main-title {
-        font-size: 1.05rem;
-        margin-top: 0.65rem !important;
+        font-size: 0.98rem;
+        margin-top: 0.45rem !important;
+        margin-bottom: 0.35rem !important;
+    }
+
+    #speed-graph,
+    [id="2d-dominance-graph"],
+    #grid-pace-graph {
+        height: 56vh !important;
+    }
+
+    #strategy-graph,
+    #deg-graph,
+    #race-gaps-graph,
+    #pit-stops-graph {
+        height: 42vh !important;
+    }
+
+    #mini-track-map {
+        height: 145px !important;
+    }
+
+    #gg-diagram {
+        height: 190px !important;
+    }
+
+    .telemetry-sidecar {
+        padding: 6px !important;
     }
 
     .sidebar-col > div {
