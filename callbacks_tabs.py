@@ -2,21 +2,21 @@
 import dash
 import logging
 from dash import dcc, html
-from dash.dependencies import Input, Output, State
-import pandas as pd
+from dash.dependencies import Input, Output
 
 from data import (
-    get_shared_data, get_best_lap, is_qualifying, is_race, is_practice,
+    get_shared_data, is_qualifying, is_race, is_practice,
     load_session_with_preload,
 )
 from graphs import (
-    _sort_fastest_driver, _build_dominance_fig, _build_strategy_fig,
+    _build_dominance_fig, _build_strategy_fig,
     _build_deg_fig, _build_race_gaps_fig, _build_grid_pace_fig,
-    _build_pit_stops_fig, _error_figure, _not_applicable_figure,
-    _build_driver_radar,
+    _build_pit_stops_fig, _build_driver_radar,
 )
+from graph_shared import _sort_fastest_driver, _error_figure, _not_applicable_figure
 from callbacks_shared import _timed_callback
 from ui_utils import _friendly_error
+from telemetry_prep import prepare_selected_lap_comparison
 
 
 def register_tab_callbacks(app):
@@ -33,21 +33,12 @@ def register_tab_callbacks(app):
             return dash.no_update, dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                # Track map needs lap + telemetry data.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-                lap1 = get_best_lap(session, d1)
-                lap2 = get_best_lap(session, d2)
-                if lap1 is None or pd.isna(lap1.get('LapTime')):
-                    raise ValueError(f"{d1} did not set a valid lap for track map analysis.")
-                if lap2 is None or pd.isna(lap2.get('LapTime')):
-                    raise ValueError(f"{d2} did not set a valid lap for track map analysis.")
-
-                tel1 = lap1.get_telemetry().add_distance()
-                tel2 = lap2.get_telemetry().add_distance()
-                if not tel1.empty:
-                    tel1['Distance'] -= tel1['Distance'].min()
-                if not tel2.empty:
-                    tel2['Distance'] -= tel2['Distance'].min()
+                cmp = prepare_selected_lap_comparison(params)
+                session = cmp['session']
+                d1, d2 = cmp['d1'], cmp['d2']
+                lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']
+                lap1, lap2 = cmp['lap1'], cmp['lap2']
+                tel1, tel2 = cmp['tel1'], cmp['tel2']
 
                 fast_data, slow_data = _sort_fastest_driver(
                     d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2

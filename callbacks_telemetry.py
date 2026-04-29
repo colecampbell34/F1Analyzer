@@ -7,10 +7,11 @@ from dash.exceptions import PreventUpdate
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from data import get_shared_data, get_best_lap
-from graphs import _sort_fastest_driver, _build_telemetry_fig, _error_figure, _compute_lap_delta
-from callbacks_shared import _timed_callback, _has_valid_lap, _pick_driver_lap
+from graphs import _build_telemetry_fig
+from graph_shared import _sort_fastest_driver, _error_figure, _compute_lap_delta
+from callbacks_shared import _timed_callback
 from ui_utils import _friendly_error
+from telemetry_prep import prepare_selected_lap_comparison
 
 
 def register_telemetry_callbacks(app):
@@ -28,19 +29,11 @@ def register_telemetry_callbacks(app):
             return dash.no_update
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-                lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-                lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
-
-                if not _has_valid_lap(lap1, pd):
-                    raise ValueError(f"{d1} did not set a valid lap.")
-                if not _has_valid_lap(lap2, pd):
-                    raise ValueError(f"{d2} did not set a valid lap.")
-
-                tel1 = lap1.get_telemetry().add_distance()
-                tel2 = lap2.get_telemetry().add_distance()
-                if not tel1.empty: tel1['Distance'] -= tel1['Distance'].min()
-                if not tel2.empty: tel2['Distance'] -= tel2['Distance'].min()
+                cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
+                d1, d2 = cmp['d1'], cmp['d2']
+                lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']
+                lap1, lap2 = cmp['lap1'], cmp['lap2']
+                tel1, tel2 = cmp['tel1'], cmp['tel2']
 
                 fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
                 return _build_telemetry_fig(
@@ -66,15 +59,13 @@ def register_telemetry_callbacks(app):
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update, dash.no_update
         try:
-            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
-
-            if lap1 is None or pd.isna(lap1.get('LapTime')) or lap2 is None or pd.isna(lap2.get('LapTime')):
-                raise PreventUpdate
-
-            tel1 = lap1.get_telemetry().add_distance().dropna(subset=['X', 'Y', 'Distance', 'Time'])
-            tel2 = lap2.get_telemetry().add_distance().dropna(subset=['X', 'Y', 'Distance', 'Time'])
+            cmp = prepare_selected_lap_comparison(
+                params, d1_mode, d2_mode, d1_lap_num, d2_lap_num, drop_xy_time=True
+            )
+            d1, d2 = cmp['d1'], cmp['d2']
+            c1, c2 = cmp['c1'], cmp['c2']
+            lap1, lap2 = cmp['lap1'], cmp['lap2']
+            tel1, tel2 = cmp['tel1'], cmp['tel2']
             
             lap1_dist_max = 0
             lap2_dist_max = 0
@@ -288,21 +279,10 @@ def register_telemetry_callbacks(app):
             return t_sec, dist, lat_g, long_g
 
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
-            session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=True)
-
-            lap1 = _pick_driver_lap(session, d1, d1_mode, d1_lap_num, get_best_lap)
-            lap2 = _pick_driver_lap(session, d2, d2_mode, d2_lap_num, get_best_lap)
-            if not _has_valid_lap(lap1, pd):
-                raise PreventUpdate
-            if not _has_valid_lap(lap2, pd):
-                raise PreventUpdate
-
-            tel1 = lap1.get_telemetry().add_distance()
-            tel2 = lap2.get_telemetry().add_distance()
-            if not tel1.empty:
-                tel1['Distance'] -= tel1['Distance'].min()
-            if not tel2.empty:
-                tel2['Distance'] -= tel2['Distance'].min()
+            cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
+            d1, d2 = cmp['d1'], cmp['d2']
+            c1, c2 = cmp['c1'], cmp['c2']
+            tel1, tel2 = cmp['tel1'], cmp['tel2']
 
             t1, dist1, lat1, long1 = calculate_g_series(tel1)
             t2, dist2, lat2, long2 = calculate_g_series(tel2)

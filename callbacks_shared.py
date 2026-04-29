@@ -13,6 +13,8 @@ VALID_TABS = {
     'tab-telemetry', 'tab-trackmap', 'tab-strategy',
     'tab-race', 'tab-gridpace', 'tab-ai'
 }
+VALID_LAP_MODES = {'fastest', 'specific'}
+VALID_TRACKMAP_MODES = {'dominance', 'braking', 'speed'}
 
 CALLBACK_TIMING_THRESHOLD_MS = float(os.getenv('CALLBACK_TIMING_THRESHOLD_MS', '400'))
 LOG_ALL_CALLBACKS = os.getenv('LOG_ALL_CALLBACKS') == '1'
@@ -35,6 +37,16 @@ def _pick_driver_lap(session, driver, mode, lap_num, get_best_lap):
         specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
         if not specific.empty:
             return specific.iloc[0]
+        available = sorted(
+            int(lap)
+            for lap in drv_laps['LapNumber'].dropna().unique().tolist()
+        )
+        if available:
+            raise ValueError(
+                f"{driver} lap {int(lap_num)} is not available. "
+                f"Available laps: {available[0]}-{available[-1]}."
+            )
+        raise ValueError(f"{driver} has no available laps for this session.")
     return get_best_lap(session, driver)
 
 
@@ -64,10 +76,25 @@ def _parse_url_state(url_search):
     if state['tab'] not in VALID_TABS:
         state['tab'] = None
 
+    for key in ('d1_lap_mode', 'd2_lap_mode'):
+        value = (query_params.get(key) or [None])[0]
+        state[key] = value if value in VALID_LAP_MODES else None
+
+    for key in ('d1_lap', 'd2_lap'):
+        raw_lap = (query_params.get(key) or [None])[0]
+        try:
+            lap_num = int(raw_lap) if raw_lap not in (None, '') else None
+            state[key] = lap_num if lap_num and lap_num > 0 else None
+        except (TypeError, ValueError):
+            state[key] = None
+
+    trackmap_mode = (query_params.get('trackmap') or [None])[0]
+    state['trackmap_mode'] = trackmap_mode if trackmap_mode in VALID_TRACKMAP_MODES else None
+
     return state
 
 
-def _build_url_search(params, active_tab):
+def _build_url_search(params, active_tab, ui_state=None):
     query = {
         'year': params.get('year'),
         'race': params.get('race'),
@@ -77,6 +104,15 @@ def _build_url_search(params, active_tab):
     }
     if active_tab in VALID_TABS:
         query['tab'] = active_tab
+    ui_state = ui_state or {}
+    for key in ('d1_lap_mode', 'd2_lap_mode'):
+        if ui_state.get(key) == 'specific':
+            query[key] = 'specific'
+    for key in ('d1_lap', 'd2_lap'):
+        if ui_state.get(key):
+            query[key] = int(ui_state[key])
+    if ui_state.get('trackmap_mode') in VALID_TRACKMAP_MODES:
+        query['trackmap'] = ui_state['trackmap_mode']
 
     clean_query = {key: value for key, value in query.items() if value not in (None, '')}
     return f"?{urlencode(clean_query)}" if clean_query else ""

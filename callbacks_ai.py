@@ -1,7 +1,7 @@
 """AI analysis callbacks: session context building, question answering, history navigation."""
 import dash
 import logging
-from dash import dcc, ClientsideFunction
+from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import flask
@@ -9,15 +9,27 @@ import random
 
 from data import load_session_with_preload
 from ai_utils import (
-    _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS,
-    get_cached_response, store_cached_response, build_ai_prompt,
-    check_user_limit, USER_DAILY_LIMIT,
+    _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS, AI_ENABLED,
+    build_ai_prompt,
 )
+from ai_cache import get_cached_response, store_cached_response, check_user_limit, USER_DAILY_LIMIT
 from callbacks_shared import _timed_callback, _trim_history
 
 
 def register_ai_callbacks(app):
     """Register AI analysis callbacks."""
+
+    @app.callback(
+        [Output('ai-ask-button', 'disabled'),
+         Output('ai-question-input', 'placeholder')],
+        [Input('session-context-store', 'data'), Input('main-tabs', 'value')]
+    )
+    def update_ai_input_state(session_context, active_tab):
+        if not AI_ENABLED:
+            return True, "AI Analysis is not configured."
+        if active_tab == 'tab-ai' and not session_context:
+            return True, "Loading AI context for the selected session..."
+        return False, 'Ask about this session... (e.g. "What was the optimal strategy in this race?")'
 
     @app.callback(
         Output('session-context-store', 'data', allow_duplicate=True),
@@ -150,6 +162,7 @@ def register_ai_callbacks(app):
 
                 except Exception as e:
                     last_error = str(e)
+                    logging.warning(f"AI model failed; trying fallback model={model_name} error={last_error}")
                     # Try next model on failure.
                     continue
 
