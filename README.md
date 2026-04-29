@@ -1,44 +1,101 @@
-# 🏎️ F1 Analyzer
+# F1 Analyzer
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![Dash](https://img.shields.io/badge/Dash-2.14+-008bb4.svg)](https://dash.plotly.com/)
 [![FastF1](https://img.shields.io/badge/FastF1-3.3+-red.svg)](https://github.com/theOehrly/FastF1)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An advanced Formula 1 telemetry and strategy analysis dashboard powered by **Google Gemini AI**. Compare driver performance, visualize track dominance, and get deep technical insights into every F1 session.
+An advanced Formula 1 telemetry and strategy analysis dashboard powered by Google Gemini AI. Compare driver performance, visualize track dominance, review race strategy, and ask data-grounded questions about a loaded session.
 
 **Try it out:** [https://f-1-analyzer--colecampbell34.replit.app](https://f-1-analyzer--colecampbell34.replit.app)
 
-## 🌟 Key Features
+## Key Features
 
-- **📊 Advanced Telemetry Traces**: Compare speed, throttle, braking, and gear usage with millisecond precision.
-- **🛣️ 2D Track Dominance Maps**: See exactly where drivers gain or lose time through high-resolution micro-sector analysis.
-- **📈 Strategy & Race Pace**: Analyze tyre compounds, pit windows, and track conditions with live overlays.
-- **🤖 AI Race Engineer**: Chat with an integrated Gemini-powered assistant that has full context of the session data.
-- **🏁 Session Leaderboards**: Instant access to live timing and results for any GP since 2018.
-- **📱 Mobile Friendly**: Responsive design optimized for both desktop and mobile viewing.
+- Latest Race shortcut that selects the most recent completed race and defaults to the top two drivers.
+- Telemetry traces for speed, throttle, braking, gears, delta, mini-map playback, and G-force.
+- Track maps for dominance, braking, and speed overlays.
+- Strategy, race gap, pit stop, tyre degradation, and grid pace views.
+- AI analysis with session-specific telemetry, weather, messages, and lap context.
+- Shareable URLs that preserve session, drivers, active tab, lap mode, lap numbers, and track-map mode.
+- Feedback capture with optional admin review and CSV export.
 
-## 🚀 Getting Seen & Sharing
+## Sharing
 
-F1 Analyzer is built for the F1 community. Here is how you can help it grow:
+Use the Share Comparison button to copy a direct link to the current analysis. Shared links include:
 
-1.  **Share Findings**: Use the **"Share Comparison"** button in the sidebar to copy a direct link to your current analysis.
-2.  **Reddit & Twitter**: Found an interesting strategy or a massive telemetry gap? Share it on r/formula1 or Twitter and tag your favorite F1 analysts!
-3.  **GitHub Stars**: If you find this tool useful, consider leaving a ⭐ on the repository to help others discover it.
+- Year, race, session, drivers
+- Active tab
+- Specific lap modes and lap numbers
+- Track map overlay mode
 
-## 🛠️ Technical Stack
+## Technical Stack
 
-- **Data**: [FastF1](https://github.com/theOehrly/FastF1) (Open-source F1 data API)
-- **UI**: [Dash](https://dash.plotly.com/) & [Plotly](https://plotly.com/python/)
-- **AI**: [Google Gemini Pro](https://deepmind.google/technologies/gemini/)
-- **Styling**: Dash Bootstrap Components (Cyborg Theme)
+- Data: FastF1, Pandas, NumPy, SciPy
+- UI: Dash, Plotly, Dash Bootstrap Components
+- AI: Google Gemini via `google-genai`
+- Runtime: Flask, Gunicorn, Flask-Compress
 
-## 💻 Local Setup
+## Project Structure
+
+- `app.py` - Dash app setup, Flask server, health/warmup routes, runtime init.
+- `layout.py` - Sidebar, tabs, modals, stores, and page structure.
+- `callbacks.py` - Core dropdowns, URL sync, latest-race defaults, summary/status callbacks.
+- `callbacks_telemetry.py` - Telemetry chart, mini-map, G-force, and playback callbacks.
+- `callbacks_tabs.py` - Track map, strategy, race, and grid pace callbacks.
+- `callbacks_ai.py` - AI context loading, question handling, and history callbacks.
+- `callbacks_feedback.py` - Feedback modal, inbox, and CSV callbacks.
+- `data.py` - FastF1 loading, caching, preloading, pruning, and schedule helpers.
+- `telemetry_prep.py` - Shared selected-lap telemetry preparation.
+- `graph_shared.py` - Shared graph config, colors, error figures, and graph helpers.
+- `graphs.py` - Feature-specific Plotly figure builders.
+- `ai_utils.py` - Gemini prompt construction and session context building.
+- `ai_cache.py` - AI response cache and per-user rate limiting.
+- `ui_utils.py` - UI formatting helpers, summaries, leaderboard, and feedback rendering.
+
+## Local Setup
 
 1. Clone the repo: `git clone https://github.com/colecampbell34/F1Analyzer.git`
 2. Install dependencies: `pip install -r requirements.txt`
-3. Create a `.env` file with your `GOOGLE_API_KEY`.
+3. Create a `.env` file with your AI key if you want AI enabled.
 4. Run the app: `python app.py`
+
+
+## Environment Variables
+
+- `GEMINI_API_KEY` - Enables AI Analysis.
+- `FEEDBACK_ADMIN_TOKEN` - Enables the feedback inbox and CSV export for authorized admins.
+- `CALLBACK_TIMING_THRESHOLD_MS` - Logs callbacks slower than this threshold. Default: `400`.
+- `LOG_ALL_CALLBACKS=1` - Logs every timed callback.
+- `LOG_SESSION_LOADING=1` - Logs session preload/load behavior.
+
+## Runtime Data
+
+- `f1_cache/` stores FastF1 cache data and is pruned automatically.
+- `ai_cache/responses.json` stores cached AI answers for repeated questions/context.
+- `feedback/entries.jsonl` stores feedback submissions with hashed reporter IPs.
+
+These directories are runtime artifacts and should not be committed.
+
+## Testing
+
+Run the current test suite with:
+
+```bash
+python3 -m unittest discover -s tests -q
+```
+
+## Deployment
+
+Example Gunicorn command:
+
+```bash
+gunicorn app:server --bind 0.0.0.0:5000 --timeout 300 --workers 2 --threads 4 --worker-class gthread
+```
+
+The app exposes:
+
+- `/health` and `/healthz` for cheap liveness checks.
+- `/warmup` to start background runtime initialization and schedule cache warming.
 
 ---
 
