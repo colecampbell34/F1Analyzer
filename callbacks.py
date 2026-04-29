@@ -15,8 +15,8 @@ import logging
 
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
-    get_event_sessions_cached,
-    load_session_summary, preload_session, is_race
+    get_event_sessions_cached, get_latest_race_session_default,
+    load_session_summary, preload_session, is_race, is_qualifying, is_practice
 )
 from ui_utils import _friendly_error, _build_leaderboard_children
 from callbacks_shared import (
@@ -72,11 +72,45 @@ def _register_core_callbacks(app):
         return dash.no_update
 
     @app.callback(
+        [Output('d1-lap-mode', 'value'), Output('d2-lap-mode', 'value'),
+         Output('d1-lap-number', 'value'), Output('d2-lap-number', 'value'),
+         Output('trackmap-mode', 'value')],
+        Input('url', 'search')
+    )
+    def hydrate_view_state_from_url(url_search):
+        if not url_search:
+            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        url_state = _parse_url_state(url_search)
+        return (
+            url_state.get('d1_lap_mode') or dash.no_update,
+            url_state.get('d2_lap_mode') or dash.no_update,
+            url_state.get('d1_lap') or dash.no_update,
+            url_state.get('d2_lap') or dash.no_update,
+            url_state.get('trackmap_mode') or dash.no_update,
+        )
+
+    @app.callback(
+        [Output('latest-race-store', 'data'),
+         Output('year-dropdown', 'value', allow_duplicate=True)],
+        Input('latest-race-btn', 'n_clicks'),
+        prevent_initial_call=True
+    )
+    def select_latest_race(n_clicks):
+        if not n_clicks:
+            raise PreventUpdate
+
+        latest = get_latest_race_session_default()
+        if not latest:
+            raise PreventUpdate
+
+        return latest, latest['year']
+
+    @app.callback(
         [Output('race-dropdown', 'options'), Output('race-dropdown', 'value')],
-        [Input('year-dropdown', 'value')],
+        [Input('year-dropdown', 'value'), Input('latest-race-store', 'data')],
         State('url', 'search')
     )
-    def update_races(year, url_search):
+    def update_races(year, latest_race, url_search):
         if not year:
             return [], None
 
@@ -91,6 +125,13 @@ def _register_core_callbacks(app):
             race_names = schedule['EventName'].tolist()
             options = [{'label': name, 'value': name} for name in race_names]
 
+            if (
+                latest_race
+                and int(latest_race.get('year')) == int(year)
+                and latest_race.get('race') in race_names
+            ):
+                return options, latest_race['race']
+
             if url_state.get('race') and url_state['race'] in race_names:
                 return options, url_state['race']
 
@@ -101,10 +142,10 @@ def _register_core_callbacks(app):
 
     @app.callback(
         [Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
-        [Input('race-dropdown', 'value')],
+        [Input('race-dropdown', 'value'), Input('latest-race-store', 'data')],
         [State('year-dropdown', 'value'), State('url', 'search')]
     )
-    def update_sessions(race, year, url_search):
+    def update_sessions(race, latest_race, year, url_search):
         if not race or not year:
             return [], None
 
@@ -116,6 +157,14 @@ def _register_core_callbacks(app):
                 return [], None
 
             options = [{'label': s, 'value': s} for s in sessions]
+            if (
+                latest_race
+                and int(latest_race.get('year')) == int(year)
+                and latest_race.get('race') == race
+                and latest_race.get('session_type') in sessions
+            ):
+                return options, latest_race['session_type']
+
             if url_state.get('session') and url_state['session'] in sessions:
                 return options, url_state['session']
 
@@ -337,17 +386,52 @@ def _register_core_callbacks(app):
 
     @app.callback(
         Output('url', 'search', allow_duplicate=True),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value'),
+         Input('d1-lap-number', 'value'), Input('d2-lap-number', 'value'),
+         Input('trackmap-mode', 'value')],
         State('url', 'search'),
         prevent_initial_call=True
     )
-    def sync_url_with_dashboard(params, active_tab, current_search):
+    def sync_url_with_dashboard(params, active_tab, d1_mode, d2_mode, d1_lap, d2_lap, trackmap_mode, current_search):
         if not params:
             raise PreventUpdate
-        new_search = _build_url_search(params, active_tab)
+        new_search = _build_url_search(params, active_tab, {
+            'd1_lap_mode': d1_mode,
+            'd2_lap_mode': d2_mode,
+            'd1_lap': d1_lap,
+            'd2_lap': d2_lap,
+            'trackmap_mode': trackmap_mode,
+        })
         if new_search == (current_search or ''):
             return dash.no_update
         return new_search
+
+    @app.callback(
+        [Output('tab-strategy-control', 'disabled'),
+         Output('tab-race-control', 'disabled')],
+        Input('session-dropdown', 'value')
+    )
+    def update_tab_availability(session_type):
+        if not session_type:
+            return False, False
+        strategy_disabled = is_qualifying(session_type) or is_practice(session_type)
+        race_disabled = not is_race(session_type)
+        return strategy_disabled, race_disabled
+
+    @app.callback(
+        Output('main-tabs', 'value', allow_duplicate=True),
+        [Input('session-dropdown', 'value'), Input('main-tabs', 'value')],
+        prevent_initial_call=True
+    )
+    def move_from_unavailable_tab(session_type, active_tab):
+        if not session_type:
+            raise PreventUpdate
+        if active_tab == 'tab-strategy' and (is_qualifying(session_type) or is_practice(session_type)):
+            return 'tab-telemetry'
+        if active_tab == 'tab-race' and not is_race(session_type):
+            return 'tab-telemetry'
+        raise PreventUpdate
 
     @app.callback(
         [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),
