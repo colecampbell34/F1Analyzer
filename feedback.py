@@ -3,6 +3,7 @@ import json
 import uuid
 import hashlib
 import threading
+import logging
 from datetime import datetime, timezone
 
 _FEEDBACK_LOCK = threading.Lock()
@@ -118,6 +119,10 @@ def store_feedback_entry(payload, raw_ip=None, user_agent=None):
         with open(_FEEDBACK_FILE, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=True) + '\n')
 
+    logging.info(
+        "[feedback] stored id=%s category=%s rating=%s tab=%s context=%s",
+        entry['id'], entry['category'], entry['rating'], entry['active_tab'], entry['context_loaded']
+    )
     return entry
 
 

@@ -4,6 +4,7 @@ import threading
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from functools import lru_cache
 import pandas as pd
 
@@ -94,6 +95,68 @@ def get_event_sessions_cached(year, race):
         if pd.notna(session_name) and session_name:
             sessions.append(str(session_name))
     return tuple(sessions)
+
+
+def _coerce_utc_timestamp(value):
+    """Return a timezone-aware UTC Timestamp or None for missing/unparseable values."""
+    if value is None or pd.isna(value):
+        return None
+    try:
+        ts = pd.Timestamp(value)
+        if pd.isna(ts):
+            return None
+        if ts.tzinfo is None:
+            return ts.tz_localize(timezone.utc)
+        return ts.tz_convert(timezone.utc)
+    except Exception:
+        return None
+
+
+def get_latest_race_session_default(now=None, first_year=2018):
+    """Return the latest past race-session default as {year, race, session_type}.
+
+    FastF1 schedules include future events, so this intentionally filters by
+    session/event date before choosing the most recent Race. If a Race date is
+    unavailable, EventDate is used as a conservative fallback.
+    """
+    now_ts = _coerce_utc_timestamp(now) or pd.Timestamp(datetime.now(timezone.utc))
+    candidates = []
+
+    for year in range(now_ts.year, int(first_year) - 1, -1):
+        try:
+            schedule = get_event_schedule_cached(int(year))
+        except Exception:
+            continue
+        if schedule is None or schedule.empty:
+            continue
+
+        if 'EventFormat' in schedule.columns:
+            schedule = schedule[schedule['EventFormat'] != 'testing'].copy()
+        for _, event in schedule.iterrows():
+            race_name = event.get('EventName')
+            if not race_name:
+                continue
+
+            session_date = None
+            for idx in range(1, 6):
+                if event.get(f'Session{idx}') == 'Race':
+                    session_date = (
+                        _coerce_utc_timestamp(event.get(f'Session{idx}DateUtc'))
+                        or _coerce_utc_timestamp(event.get(f'Session{idx}Date'))
+                    )
+                    break
+            if session_date is None:
+                session_date = _coerce_utc_timestamp(event.get('EventDate'))
+
+            if session_date is not None and session_date <= now_ts:
+                candidates.append((session_date, int(year), str(race_name), 'Race'))
+
+    if not candidates:
+        return None
+
+    _, year, race, session_type = max(candidates, key=lambda item: item[0])
+    logging.info("[latest_default] year=%s race=%s session=%s", year, race, session_type)
+    return {'year': year, 'race': race, 'session_type': session_type}
 
 
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
@@ -357,7 +420,7 @@ def _compute_labels_colors(year, race, session_type, d1, d2):
     """
     session = load_session_summary(year, race, session_type, include_laps=False)
 
-    from graphs import _get_driver_colors
+    from graph_shared import _get_driver_colors
     c1, c2 = _get_driver_colors(d1, d2, session)
     try:
         if session.results is not None and not session.results.empty:
