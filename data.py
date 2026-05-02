@@ -20,8 +20,11 @@ except ImportError:  # pragma: no cover - non-POSIX fallback
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
+_SESSION_PRELOAD_JOBS = {}
 _GRANULAR_LOAD_LOCK = threading.Lock()
 _MAX_TRACKED_PRELOAD_FUTURES = 12
+_MAX_TRACKED_PRELOAD_JOBS = 24
+_PRELOAD_JOB_TTL_SECONDS = 900
 _CACHE_DIR = 'f1_cache'
 _CACHE_SETUP_LOCK = threading.Lock()
 _CACHE_READY = False
@@ -211,6 +214,126 @@ def _session_preload_key(year, race, session_name, laps, telemetry, weather, mes
     )
 
 
+def _preload_job_id(key):
+    return "|".join(str(part) for part in key)
+
+
+def _preload_profile(laps, telemetry, weather, messages):
+    if telemetry and weather and messages:
+        return "ai-context"
+    if telemetry:
+        return "telemetry"
+    if weather:
+        return "weather"
+    if laps:
+        return "laps"
+    return "summary"
+
+
+def _cleanup_preload_jobs_locked(now=None):
+    now = now or time.time()
+    if len(_SESSION_PRELOAD_JOBS) <= _MAX_TRACKED_PRELOAD_JOBS:
+        return
+    stale = [
+        job_id for job_id, job in _SESSION_PRELOAD_JOBS.items()
+        if now - float(job.get('updated_at', job.get('created_at', now))) > _PRELOAD_JOB_TTL_SECONDS
+        and job.get('status') in ('ready', 'error')
+    ]
+    for job_id in stale:
+        _SESSION_PRELOAD_JOBS.pop(job_id, None)
+    if len(_SESSION_PRELOAD_JOBS) > _MAX_TRACKED_PRELOAD_JOBS:
+        ordered = sorted(
+            _SESSION_PRELOAD_JOBS.items(),
+            key=lambda item: float(item[1].get('updated_at', item[1].get('created_at', 0)))
+        )
+        overflow = len(_SESSION_PRELOAD_JOBS) - _MAX_TRACKED_PRELOAD_JOBS
+        for job_id, _ in ordered[:overflow]:
+            _SESSION_PRELOAD_JOBS.pop(job_id, None)
+
+
+def _ensure_preload_job_locked(key, status='queued', future=None):
+    now = time.time()
+    job_id = _preload_job_id(key)
+    job = _SESSION_PRELOAD_JOBS.get(job_id)
+    if job is None:
+        job = {
+            'id': job_id,
+            'year': key[0],
+            'race': key[1],
+            'session': key[2],
+            'laps': key[3],
+            'telemetry': key[4],
+            'weather': key[5],
+            'messages': key[6],
+            'profile': _preload_profile(key[3], key[4], key[5], key[6]),
+            'status': status,
+            'created_at': now,
+            'updated_at': now,
+            'error': '',
+        }
+        _SESSION_PRELOAD_JOBS[job_id] = job
+    else:
+        job['status'] = status
+        job['updated_at'] = now
+    if future is not None:
+        job['future'] = future
+    return job
+
+
+def _safe_job_view(job):
+    if not job:
+        return {'status': 'idle'}
+    clean = {
+        key: value for key, value in job.items()
+        if key != 'future'
+    }
+    return clean
+
+
+def _run_preload_job(key):
+    job_id = _preload_job_id(key)
+    with _SESSION_PRELOAD_LOCK:
+        job = _SESSION_PRELOAD_JOBS.get(job_id)
+        if job is not None:
+            job['status'] = 'loading'
+            job['updated_at'] = time.time()
+    try:
+        from perf_monitor import record_session_event
+        record_session_event('preload', key=job_id, status='loading')
+    except Exception:
+        pass
+
+    try:
+        result = _load_session_granular_cached(
+            key[0], key[1], key[2], key[3], key[4], key[5], key[6]
+        )
+        with _SESSION_PRELOAD_LOCK:
+            job = _SESSION_PRELOAD_JOBS.get(job_id)
+            if job is not None:
+                job['status'] = 'ready'
+                job['updated_at'] = time.time()
+                job['error'] = ''
+        try:
+            from perf_monitor import record_session_event
+            record_session_event('preload', key=job_id, status='ready')
+        except Exception:
+            pass
+        return result
+    except Exception as exc:
+        with _SESSION_PRELOAD_LOCK:
+            job = _SESSION_PRELOAD_JOBS.get(job_id)
+            if job is not None:
+                job['status'] = 'error'
+                job['updated_at'] = time.time()
+                job['error'] = str(exc)[:240]
+        try:
+            from perf_monitor import record_session_event
+            record_session_event('preload', key=job_id, status='error', error=exc)
+        except Exception:
+            pass
+        raise
+
+
 def preload_session(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """Start loading a session profile in the background."""
     if not all([year, race, session_name]):
@@ -218,6 +341,7 @@ def preload_session(year, race, session_name, laps=True, telemetry=False, weathe
 
     key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
     with _SESSION_PRELOAD_LOCK:
+        _cleanup_preload_jobs_locked()
         if len(_SESSION_PRELOAD_FUTURES) > _MAX_TRACKED_PRELOAD_FUTURES:
             done_keys = [k for k, fut in _SESSION_PRELOAD_FUTURES.items() if fut.done()]
             for old_key in done_keys[: len(_SESSION_PRELOAD_FUTURES) - _MAX_TRACKED_PRELOAD_FUTURES]:
@@ -225,17 +349,20 @@ def preload_session(year, race, session_name, laps=True, telemetry=False, weathe
         future = _SESSION_PRELOAD_FUTURES.get(key)
         # If no future or previous failed, start requested profile preload.
         if future is None or (future.done() and future.exception() is not None):
-            future = _SESSION_PRELOAD_EXECUTOR.submit(
-                _load_session_granular_cached, key[0], key[1], key[2], key[3], key[4], key[5], key[6]
-            )
+            _ensure_preload_job_locked(key, status='queued')
+            future = _SESSION_PRELOAD_EXECUTOR.submit(_run_preload_job, key)
             _SESSION_PRELOAD_FUTURES[key] = future
+            _ensure_preload_job_locked(key, status='queued', future=future)
             if LOG_SESSION_LOADING:
                 logging.info(
                     "[session] preload started "
                     f"year={key[0]} race={key[1]} session={key[2]} "
                     f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
                 )
+        elif future.done() and future.exception() is None:
+            _ensure_preload_job_locked(key, status='ready', future=future)
         elif LOG_SESSION_LOADING:
+            _ensure_preload_job_locked(key, status='loading', future=future)
             logging.info(
                 "[session] preload reused "
                 f"year={key[0]} race={key[1]} session={key[2]} "
@@ -271,6 +398,86 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
             f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
         )
     return _load_session_granular_cached(key[0], key[1], key[2], laps, telemetry, weather, messages)
+
+
+def get_preload_status(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
+    """Return a JSON-safe status for a preload profile without loading data."""
+    if not all([year, race, session_name]):
+        return {'status': 'idle'}
+    key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
+    job_id = _preload_job_id(key)
+    with _SESSION_PRELOAD_LOCK:
+        job = _SESSION_PRELOAD_JOBS.get(job_id)
+        if job is None:
+            future = _SESSION_PRELOAD_FUTURES.get(key)
+            if future is None:
+                return {
+                    'id': job_id,
+                    'year': key[0],
+                    'race': key[1],
+                    'session': key[2],
+                    'laps': key[3],
+                    'telemetry': key[4],
+                    'weather': key[5],
+                    'messages': key[6],
+                    'profile': _preload_profile(key[3], key[4], key[5], key[6]),
+                    'status': 'idle',
+                    'error': '',
+                }
+            status = 'ready' if future.done() and future.exception() is None else 'loading'
+            job = _ensure_preload_job_locked(key, status=status, future=future)
+        elif job.get('future') is not None:
+            future = job['future']
+            if future.done():
+                try:
+                    future.exception()
+                except Exception:
+                    pass
+                job['status'] = 'ready' if future.exception() is None else 'error'
+                job['updated_at'] = time.time()
+        return _safe_job_view(job)
+
+
+def get_preload_status_for_tab(params, active_tab):
+    """Map a dashboard tab to the profile it should preload/load."""
+    if not params:
+        return {'status': 'idle'}
+    kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
+    if active_tab in ('tab-telemetry', 'tab-trackmap'):
+        kwargs['telemetry'] = True
+    elif active_tab in ('tab-strategy', 'tab-gridpace'):
+        kwargs['weather'] = True
+    elif active_tab == 'tab-ai':
+        kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
+    return get_preload_status(
+        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+    )
+
+
+def get_preload_registry_snapshot():
+    """Return a compact snapshot of tracked preload jobs."""
+    with _SESSION_PRELOAD_LOCK:
+        jobs = [_safe_job_view(job) for job in _SESSION_PRELOAD_JOBS.values()]
+    jobs.sort(key=lambda item: float(item.get('updated_at', item.get('created_at', 0))), reverse=True)
+    return jobs[:_MAX_TRACKED_PRELOAD_JOBS]
+
+
+def get_cache_stats():
+    """Return cheap cache stats for the admin perf panel."""
+    stats = {
+        'cache_dir': _CACHE_DIR,
+        'cache_ready': _CACHE_READY,
+        'cache_size_bytes': 0,
+        'session_cache': _load_session_granular_cached.cache_info()._asdict(),
+        'summary_cache': _load_session_summary_cached.cache_info()._asdict(),
+        'schedule_cache': get_event_schedule_cached.cache_info()._asdict(),
+    }
+    try:
+        if os.path.exists(_CACHE_DIR):
+            stats['cache_size_bytes'] = _cache_size_bytes(_CACHE_DIR)
+    except Exception:
+        stats['cache_size_bytes'] = 0
+    return stats
 
 
 def load_session_summary(year, race, session_name, include_laps=False):

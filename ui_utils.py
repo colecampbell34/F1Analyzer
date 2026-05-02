@@ -6,6 +6,7 @@ import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
 from data import get_best_lap, is_practice
+from ux_helpers import get_glossary_definition
 
 def _friendly_error(e):
     """Translate cryptic FastF1/network errors to user-friendly messages."""
@@ -146,6 +147,95 @@ def _build_feedback_review_panel(entries):
         summary_cards,
         feedback_body
     ])
+
+
+def _format_bytes(num_bytes):
+    try:
+        value = float(num_bytes or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    for unit in ('B', 'KB', 'MB', 'GB'):
+        if value < 1024 or unit == 'GB':
+            return f"{value:.1f} {unit}" if unit != 'B' else f"{int(value)} B"
+        value /= 1024
+
+
+def _build_perf_review_panel(snapshot, jobs, cache_stats):
+    """Build an admin-only lightweight performance panel."""
+    slow = snapshot.get('recent_slow_callbacks') or []
+    callbacks = snapshot.get('callbacks_by_name') or []
+    jobs = jobs or []
+    cache_stats = cache_stats or {}
+
+    top_callbacks = callbacks[:6]
+    callback_rows = [
+        html.Div([
+            html.Strong(row.get('name', 'callback'), style={'color': '#eee'}),
+            html.Span(
+                f" count {row.get('count', 0)} | avg {row.get('avg_ms', 0)}ms | max {row.get('max_ms', 0)}ms",
+                style={'color': '#aaa', 'float': 'right'}
+            )
+        ], style={'padding': '0.25rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.82rem'})
+        for row in top_callbacks
+    ] or [html.Div("No callback timings recorded yet.", style={'color': '#888', 'fontSize': '0.85rem'})]
+
+    job_rows = [
+        html.Div([
+            html.Strong(f"{job.get('profile', 'profile')} ", style={'color': '#eee'}),
+            html.Span(f"{job.get('year')} {job.get('race')} {job.get('session')}", style={'color': '#bbb'}),
+            dbc.Badge(job.get('status', 'idle'), color={
+                'ready': 'success',
+                'loading': 'info',
+                'queued': 'secondary',
+                'error': 'danger',
+                'idle': 'dark'
+            }.get(job.get('status'), 'secondary'), className='ms-2')
+        ], style={'padding': '0.25rem 0', 'borderBottom': '1px solid #333', 'fontSize': '0.82rem'})
+        for job in jobs[:8]
+    ] or [html.Div("No preload jobs tracked yet.", style={'color': '#888', 'fontSize': '0.85rem'})]
+
+    cache_info = cache_stats.get('session_cache') or {}
+    cache_text = (
+        f"FastF1 cache {_format_bytes(cache_stats.get('cache_size_bytes'))} | "
+        f"session hits {cache_info.get('hits', 0)} misses {cache_info.get('misses', 0)}"
+    )
+
+    return html.Div([
+        html.H5("Performance", style={'marginTop': '1rem'}),
+        dbc.Row([
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Callbacks", style={'color': '#999'}),
+                html.H4(str(snapshot.get('callback_count', 0)))
+            ])), md=3, xs=6),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Slow Recent", style={'color': '#999'}),
+                html.H4(str(len(slow)))
+            ])), md=3, xs=6),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Preload Jobs", style={'color': '#999'}),
+                html.H4(str(len(jobs)))
+            ])), md=3, xs=6),
+            dbc.Col(dbc.Card(dbc.CardBody([
+                html.Div("Cache", style={'color': '#999'}),
+                html.H4(_format_bytes(cache_stats.get('cache_size_bytes')))
+            ])), md=3, xs=6),
+        ], className='g-2 mb-3'),
+        html.Div(cache_text, style={'color': '#aaa', 'fontSize': '0.85rem', 'marginBottom': '0.75rem'}),
+        dbc.Row([
+            dbc.Col([
+                html.H6("Callback Timing"),
+                html.Div(callback_rows)
+            ], md=6, xs=12),
+            dbc.Col([
+                html.H6("Preload Status"),
+                html.Div(job_rows)
+            ], md=6, xs=12),
+        ], className='g-3')
+    ])
+
+
+def _glossary_tooltip_text(term):
+    return get_glossary_definition(term)
 
 def _build_leaderboard_children(session, session_name, year=None, race=None):
     _is_practice = is_practice(session_name)

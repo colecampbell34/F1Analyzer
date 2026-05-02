@@ -8,6 +8,7 @@ import data
 import ui_utils
 import ai_cache
 import callbacks_shared
+import ux_helpers
 from flask import Flask
 
 
@@ -90,12 +91,54 @@ class TestUrlState(unittest.TestCase):
         self.assertEqual(parsed["d1_lap"], 12)
         self.assertEqual(parsed["trackmap_mode"], "speed")
 
+    def test_url_round_trip_includes_experience_mode(self):
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+        search = callbacks_shared._build_url_search(params, "tab-telemetry", {"mode": "engineer"})
+        parsed = callbacks_shared._parse_url_state(search)
+        self.assertEqual(parsed["mode"], "engineer")
+
     def test_invalid_url_view_state_is_ignored(self):
-        parsed = callbacks_shared._parse_url_state("?tab=bad&d1_lap_mode=bad&d1_lap=-2&trackmap=bad")
+        parsed = callbacks_shared._parse_url_state("?tab=bad&d1_lap_mode=bad&d1_lap=-2&trackmap=bad&mode=bad")
         self.assertIsNone(parsed["tab"])
         self.assertIsNone(parsed["d1_lap_mode"])
         self.assertIsNone(parsed["d1_lap"])
         self.assertIsNone(parsed["trackmap_mode"])
+        self.assertIsNone(parsed["mode"])
+
+
+class TestUxHelpers(unittest.TestCase):
+    def test_experience_mode_normalizes_to_beginner(self):
+        self.assertEqual(ux_helpers.normalize_experience_mode("ENGINEER"), "engineer")
+        self.assertEqual(ux_helpers.normalize_experience_mode("bad"), "beginner")
+
+    def test_glossary_and_empty_state(self):
+        self.assertIn("Time gap", ux_helpers.get_glossary_definition("delta"))
+        self.assertIn("Top 2", ux_helpers.empty_state_text("Race", "beginner"))
+
+    def test_comparison_shortcuts_pick_teammate_and_closest(self):
+        driver_info = [
+            {"abbr": "VER", "team": "Red Bull"},
+            {"abbr": "PER", "team": "Red Bull"},
+            {"abbr": "NOR", "team": "McLaren"},
+        ]
+        d1, d2 = ux_helpers.get_comparison_shortcut_pair(
+            "teammates", driver_info, current_driver1="VER"
+        )
+        self.assertEqual((d1, d2), ("VER", "PER"))
+
+        results = pd.DataFrame([
+            {"Abbreviation": "VER", "Position": 1, "Time": pd.Timedelta(seconds=0)},
+            {"Abbreviation": "NOR", "Position": 2, "Time": pd.Timedelta(seconds=2.1)},
+            {"Abbreviation": "LEC", "Position": 3, "Time": pd.Timedelta(seconds=2.7)},
+        ])
+        d1, d2 = ux_helpers.get_comparison_shortcut_pair("closest", driver_info, results=results)
+        self.assertEqual((d1, d2), ("NOR", "LEC"))
 
 
 class TestLapSelection(unittest.TestCase):
@@ -149,6 +192,53 @@ class TestLatestRaceDefault(unittest.TestCase):
             "race": "Latest Grand Prix",
             "session_type": "Race",
         })
+
+
+class TestPreloadJobs(unittest.TestCase):
+    def setUp(self):
+        with data._SESSION_PRELOAD_LOCK:
+            data._SESSION_PRELOAD_FUTURES.clear()
+            data._SESSION_PRELOAD_JOBS.clear()
+
+    def test_preload_dedupes_and_reports_ready(self):
+        with patch.object(data, "_load_session_granular_cached", return_value="session") as loader:
+            first = data.preload_session(2025, "British Grand Prix", "Race", telemetry=True)
+            second = data.preload_session(2025, "British Grand Prix", "Race", telemetry=True)
+            self.assertIs(first, second)
+            self.assertEqual(first.result(timeout=2), "session")
+            status = data.get_preload_status(2025, "British Grand Prix", "Race", telemetry=True)
+
+        self.assertEqual(status["status"], "ready")
+        self.assertEqual(loader.call_count, 1)
+
+    def test_preload_job_cleanup_removes_stale_completed_jobs(self):
+        now = 1000.0
+        with data._SESSION_PRELOAD_LOCK:
+            for idx in range(data._MAX_TRACKED_PRELOAD_JOBS + 2):
+                data._SESSION_PRELOAD_JOBS[str(idx)] = {
+                    "id": str(idx),
+                    "status": "ready",
+                    "created_at": now - data._PRELOAD_JOB_TTL_SECONDS - idx - 1,
+                    "updated_at": now - data._PRELOAD_JOB_TTL_SECONDS - idx - 1,
+                }
+            data._cleanup_preload_jobs_locked(now=now)
+            self.assertLessEqual(len(data._SESSION_PRELOAD_JOBS), data._MAX_TRACKED_PRELOAD_JOBS)
+
+
+class TestApiValidation(unittest.TestCase):
+    def test_preload_status_requires_params(self):
+        import app as app_module
+        client = app_module.server.test_client()
+        response = client.get("/api/preload-status")
+        self.assertEqual(response.status_code, 400)
+
+    def test_perf_requires_admin_token_and_returns_snapshot(self):
+        import app as app_module
+        client = app_module.server.test_client()
+        with patch.dict(os.environ, {"FEEDBACK_ADMIN_TOKEN": "secret"}, clear=False):
+            response = client.get("/api/perf", headers={"X-Feedback-Admin-Token": "secret"})
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("perf", response.get_json())
 
 
 if __name__ == "__main__":
