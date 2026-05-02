@@ -11,6 +11,9 @@ import threading
 import atexit
 from datetime import datetime
 from flask import jsonify, request
+import pandas as pd
+from ui_utils import _feedback_admin_authorized
+from perf_monitor import get_perf_snapshot
 
 # Set global log level to WARNING
 logging.basicConfig(level=logging.WARNING)
@@ -101,6 +104,101 @@ def warmup():
     _start_runtime_init_once()
     threading.Thread(target=data.get_event_schedule_cached, args=(datetime.now().year,), daemon=True).start()
     return jsonify({'status': 'warming'}), 200
+
+
+def _api_bool(value, default=False):
+    if value is None:
+        return default
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _api_session_args(source):
+    try:
+        year = int(source.get('year'))
+    except (TypeError, ValueError):
+        year = None
+    race = source.get('race')
+    session_name = source.get('session') or source.get('session_type')
+    if not year or not race or not session_name:
+        return None, jsonify({'error': 'year, race, and session are required'}), 400
+    return (year, str(race), str(session_name)), None, None
+
+
+@server.route('/api/session-summary')
+def api_session_summary():
+    args, error_response, status = _api_session_args(request.args)
+    if error_response is not None:
+        return error_response, status
+    year, race, session_name = args
+    try:
+        session = data.load_session_summary(year, race, session_name, include_laps=False)
+        drivers = data.get_driver_info(session)
+        results = []
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            for _, row in session.results.iterrows():
+                abbr = row.get('Abbreviation')
+                if not isinstance(abbr, str) or len(abbr) != 3:
+                    continue
+                pos = row.get('Position')
+                results.append({
+                    'abbr': abbr,
+                    'position': int(pos) if pd.notna(pos) else None,
+                    'team': row.get('TeamName') if isinstance(row.get('TeamName'), str) else '',
+                    'status': row.get('Status') if isinstance(row.get('Status'), str) else '',
+                })
+        return jsonify({
+            'year': year,
+            'race': race,
+            'session': session_name,
+            'drivers': drivers,
+            'results': results[:24],
+        })
+    except Exception as exc:
+        logging.warning("[api] session-summary failed: %s", exc)
+        return jsonify({'error': str(exc)}), 502
+
+
+@server.route('/api/preload-session', methods=['POST'])
+def api_preload_session():
+    payload = request.get_json(silent=True) or {}
+    args, error_response, status = _api_session_args(payload)
+    if error_response is not None:
+        return error_response, status
+    year, race, session_name = args
+    kwargs = {
+        'laps': _api_bool(payload.get('laps'), True),
+        'telemetry': _api_bool(payload.get('telemetry'), False),
+        'weather': _api_bool(payload.get('weather'), False),
+        'messages': _api_bool(payload.get('messages'), False),
+    }
+    data.preload_session(year, race, session_name, **kwargs)
+    return jsonify(data.get_preload_status(year, race, session_name, **kwargs)), 202
+
+
+@server.route('/api/preload-status')
+def api_preload_status():
+    args, error_response, status = _api_session_args(request.args)
+    if error_response is not None:
+        return error_response, status
+    year, race, session_name = args
+    kwargs = {
+        'laps': _api_bool(request.args.get('laps'), True),
+        'telemetry': _api_bool(request.args.get('telemetry'), False),
+        'weather': _api_bool(request.args.get('weather'), False),
+        'messages': _api_bool(request.args.get('messages'), False),
+    }
+    return jsonify(data.get_preload_status(year, race, session_name, **kwargs))
+
+
+@server.route('/api/perf')
+def api_perf():
+    if not _feedback_admin_authorized(request.query_string.decode('utf-8')):
+        return jsonify({'error': 'admin token required'}), 403
+    return jsonify({
+        'perf': get_perf_snapshot(),
+        'preload_jobs': data.get_preload_registry_snapshot(),
+        'cache': data.get_cache_stats(),
+    })
 
 
 atexit.register(flush_ai_cache)
