@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from urllib.parse import parse_qs, urlencode
 
 import dash
+from ux_helpers import VALID_EXPERIENCE_MODES, normalize_experience_mode
 
 # Max AI Q&A exchanges kept in browser session storage.
 MAX_AI_HISTORY = 20
@@ -90,6 +91,8 @@ def _parse_url_state(url_search):
 
     trackmap_mode = (query_params.get('trackmap') or [None])[0]
     state['trackmap_mode'] = trackmap_mode if trackmap_mode in VALID_TRACKMAP_MODES else None
+    mode = (query_params.get('mode') or [None])[0]
+    state['mode'] = normalize_experience_mode(mode) if mode in VALID_EXPERIENCE_MODES else None
 
     return state
 
@@ -113,6 +116,8 @@ def _build_url_search(params, active_tab, ui_state=None):
             query[key] = int(ui_state[key])
     if ui_state.get('trackmap_mode') in VALID_TRACKMAP_MODES:
         query['trackmap'] = ui_state['trackmap_mode']
+    if ui_state.get('mode') in VALID_EXPERIENCE_MODES:
+        query['mode'] = ui_state['mode']
 
     clean_query = {key: value for key, value in query.items() if value not in (None, '')}
     return f"?{urlencode(clean_query)}" if clean_query else ""
@@ -135,3 +140,13 @@ def _timed_callback(name, **fields):
                 f"[timing] callback={name} trigger={trigger} ms={elapsed_ms:.1f}"
                 f"{(' ' + field_text) if field_text else ''}"
             )
+        try:
+            from perf_monitor import record_callback_timing
+            record_callback_timing(
+                name,
+                elapsed_ms,
+                fields=fields,
+                trigger=getattr(dash.ctx, 'triggered_id', None)
+            )
+        except Exception:
+            pass

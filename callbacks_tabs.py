@@ -82,7 +82,17 @@ def register_tab_callbacks(app):
                 dna_ui = html.Div(
                     [
                         html.H6(
-                            "Driver DNA",
+                            [
+                                html.Span("Driver DNA"),
+                                html.Span(
+                                    "?",
+                                    className="help-tip tip-intermediate",
+                                    title=(
+                                        "Driver DNA summarizes relative driving traits from the selected laps. "
+                                        "It is normalized between the two drivers, so use it as a shape comparison rather than an absolute rating."
+                                    )
+                                )
+                            ],
                             style={
                                 'textAlign': 'center',
                                 'color': '#ff4444',

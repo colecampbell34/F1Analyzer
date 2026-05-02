@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 import pandas as pd
 
 from feedback import store_feedback_entry, load_feedback_entries
-from ui_utils import _feedback_admin_authorized, _build_feedback_review_panel
+from ui_utils import _feedback_admin_authorized, _build_feedback_review_panel, _build_perf_review_panel
+from perf_monitor import get_perf_snapshot
+from data import get_preload_registry_snapshot, get_cache_stats
 
 
 def register_feedback_callbacks(app):
@@ -96,19 +98,28 @@ def register_feedback_callbacks(app):
 
     @app.callback(
         [Output('feedback-review-panel', 'children'),
-         Output('feedback-review-controls', 'style')],
+         Output('feedback-review-controls', 'style'),
+         Output('perf-review-panel', 'children'),
+         Output('perf-review-controls', 'style')],
         [Input('url', 'search'),
          Input('feedback-refresh-store', 'data'),
-         Input('refresh-feedback-review-btn', 'n_clicks')]
+         Input('refresh-feedback-review-btn', 'n_clicks'),
+         Input('refresh-perf-review-btn', 'n_clicks')]
     )
-    def update_feedback_review_panel(url_search, refresh_data, refresh_clicks):
+    def update_feedback_review_panel(url_search, refresh_data, refresh_clicks, perf_clicks):
         if not _feedback_admin_authorized(url_search):
-            return [], {'display': 'none'}
-        return _build_feedback_review_panel(load_feedback_entries(limit=100)), {
+            return [], {'display': 'none'}, [], {'display': 'none'}
+        control_style = {
             'display': 'flex',
             'gap': '0.5rem',
             'marginBottom': '1rem'
         }
+        return (
+            _build_feedback_review_panel(load_feedback_entries(limit=100)),
+            control_style,
+            _build_perf_review_panel(get_perf_snapshot(), get_preload_registry_snapshot(), get_cache_stats()),
+            control_style
+        )
 
     @app.callback(
         Output('feedback-download', 'data'),

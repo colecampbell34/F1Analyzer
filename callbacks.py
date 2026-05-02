@@ -16,9 +16,16 @@ import logging
 from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     get_event_sessions_cached, get_latest_race_session_default,
-    load_session_summary, preload_session, is_race, is_qualifying, is_practice
+    load_session_summary, preload_session, is_race, is_qualifying, is_practice,
+    get_preload_status_for_tab
 )
 from ui_utils import _friendly_error, _build_leaderboard_children
+from ux_helpers import (
+    DEFAULT_EXPERIENCE_MODE,
+    VALID_EXPERIENCE_MODES,
+    get_comparison_shortcut_pair,
+    normalize_experience_mode,
+)
 from callbacks_shared import (
     _timed_callback,
     _parse_url_state,
@@ -44,6 +51,62 @@ def register_callbacks(app):
 
 def _register_core_callbacks(app):
     """Core navigation, dropdown, and dashboard param callbacks."""
+
+    @app.callback(
+        Output('experience-mode-store', 'data'),
+        [Input('url', 'search'),
+         Input('experience-mode-control', 'value'),
+         Input('mobile-experience-mode-control', 'value')],
+        State('experience-mode-store', 'data')
+    )
+    def sync_experience_mode(url_search, desktop_mode, mobile_mode, stored_mode):
+        trigger_id = dash.ctx.triggered_id
+        if trigger_id == 'experience-mode-control' and desktop_mode in VALID_EXPERIENCE_MODES:
+            return desktop_mode
+        if trigger_id == 'mobile-experience-mode-control' and mobile_mode in VALID_EXPERIENCE_MODES:
+            return mobile_mode
+
+        url_state = _parse_url_state(url_search)
+        if url_state.get('mode'):
+            return url_state['mode']
+        return normalize_experience_mode(stored_mode, DEFAULT_EXPERIENCE_MODE)
+
+    @app.callback(
+        [Output('experience-mode-control', 'value'),
+         Output('mobile-experience-mode-control', 'value')],
+        Input('experience-mode-store', 'data')
+    )
+    def render_experience_mode_controls(mode):
+        mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
+        return mode, mode
+
+    @app.callback(
+        Output('app-root', 'className'),
+        [Input('experience-mode-store', 'data'), Input('replay-focus-store', 'data')]
+    )
+    def update_app_root_class(mode, replay_focus):
+        mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
+        classes = ['app-root', f'app-mode-{mode}']
+        if replay_focus:
+            classes.append('replay-focus-active')
+        return ' '.join(classes)
+
+    @app.callback(
+        [Output('replay-focus-store', 'data'),
+         Output('replay-focus-btn', 'children'),
+         Output('replay-focus-btn', 'outline')],
+        [Input('replay-focus-btn', 'n_clicks'), Input('main-tabs', 'value')],
+        State('replay-focus-store', 'data'),
+        prevent_initial_call=True
+    )
+    def toggle_replay_focus(n_clicks, active_tab, current):
+        trigger_id = dash.ctx.triggered_id
+        if trigger_id == 'main-tabs' and active_tab != 'tab-telemetry':
+            return False, 'Replay Focus', True
+        if trigger_id != 'replay-focus-btn':
+            raise PreventUpdate
+        next_value = not bool(current)
+        return next_value, ('Exit Focus' if next_value else 'Replay Focus'), (not next_value)
 
     @app.callback(
         Output('year-dropdown', 'value'),
@@ -218,6 +281,43 @@ def _register_core_callbacks(app):
             return [], None, [], None
 
     @app.callback(
+        [Output('driver1-dropdown', 'value', allow_duplicate=True),
+         Output('driver2-dropdown', 'value', allow_duplicate=True)],
+        [Input('shortcut-top-two', 'n_clicks'),
+         Input('shortcut-closest', 'n_clicks'),
+         Input('mobile-shortcut-top-two', 'n_clicks'),
+         Input('mobile-shortcut-closest', 'n_clicks')],
+        [State('session-dropdown', 'value'), State('year-dropdown', 'value'),
+         State('race-dropdown', 'value'), State('driver1-dropdown', 'value'),
+         State('driver2-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def apply_comparison_shortcut(*args):
+        session_type, year, race, current_d1, current_d2 = args[-5:]
+        if not all([session_type, year, race]):
+            raise PreventUpdate
+        trigger_id = dash.ctx.triggered_id
+        if not trigger_id:
+            raise PreventUpdate
+        shortcut = str(trigger_id).replace('mobile-', '').replace('shortcut-', '').replace('-', '_')
+        try:
+            driver_info = _load_drivers_fast(int(year), race, session_type)
+            session = load_session_summary(year, race, session_type, include_laps=False)
+            d1, d2 = get_comparison_shortcut_pair(
+                shortcut,
+                driver_info,
+                current_driver1=current_d1,
+                current_driver2=current_d2,
+                results=getattr(session, 'results', None)
+            )
+            if not d1 or not d2:
+                raise PreventUpdate
+            return d1, d2
+        except Exception as e:
+            logging.error(f"Comparison Shortcut Error: {e}")
+            raise PreventUpdate
+
+    @app.callback(
         Output('update-dashboard-btn', 'n_clicks'),
         [Input('url', 'search')],
         [State('update-dashboard-btn', 'n_clicks'),
@@ -311,13 +411,14 @@ def _register_core_callbacks(app):
     @app.callback(
         [Output('dashboard-params-store', 'data'), Output('error-dialog', 'displayed'),
          Output('error-dialog', 'message')],
-        [Input('update-dashboard-btn', 'n_clicks')],
+        [Input('update-dashboard-btn', 'n_clicks'),
+         Input('mobile-update-dashboard-btn', 'n_clicks')],
         [State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
          State('session-dropdown', 'value'), State('race-dropdown', 'value'),
          State('year-dropdown', 'value'), State('main-tabs', 'value')]
     )
-    def update_dashboard_params(n_clicks, driver1, driver2, session_type, race, year, active_tab):
-        if not n_clicks:
+    def update_dashboard_params(n_clicks, mobile_clicks, driver1, driver2, session_type, race, year, active_tab):
+        if not ((n_clicks or 0) + (mobile_clicks or 0)):
             return dash.no_update, False, ""
         missing = _missing_required_fields({
             'Year': year,
@@ -385,15 +486,102 @@ def _register_core_callbacks(app):
                 return f"{year} {race} | Data Unavailable", ""
 
     @app.callback(
+        Output('mobile-session-summary', 'children'),
+        [Input('dashboard-params-store', 'data'),
+         Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
+         Input('session-dropdown', 'value'),
+         Input('driver1-dropdown', 'value'), Input('driver2-dropdown', 'value')]
+    )
+    def update_mobile_session_summary(params, year, race, session_type, d1, d2):
+        if params:
+            return (
+                f"{params['year']} {str(params['race']).replace('Grand Prix', 'GP')} | "
+                f"{params['session_type']} | {params['driver1']} vs {params['driver2']}"
+            )
+        parts = [str(part) for part in [year, race, session_type] if part]
+        drivers = ' vs '.join(str(part) for part in [d1, d2] if part)
+        if parts and drivers:
+            return f"{' | '.join(parts)} | {drivers}"
+        if parts:
+            return ' | '.join(parts)
+        return "Choose a session and comparison"
+
+    @app.callback(
+        [Output('loading-status-banner', 'children'),
+         Output('loading-status-banner', 'className'),
+         Output('preload-status-store', 'data')],
+        [Input('dashboard-params-store', 'data'),
+         Input('main-tabs', 'value'),
+         Input('preload-status-interval', 'n_intervals')]
+    )
+    def update_loading_status(params, active_tab, _n):
+        if not params:
+            return (
+                [
+                    html.Span("Select a session and update the dashboard."),
+                    html.Span(
+                        '?',
+                        className='help-tip tip-intermediate',
+                        title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
+                    )
+                ],
+                "loading-status-banner status-idle",
+                {'status': 'idle'}
+            )
+        status = get_preload_status_for_tab(params, active_tab)
+        state = status.get('status', 'idle')
+        profile = status.get('profile', 'session')
+        session_label = f"{params['year']} {params['race']} {params['session_type']}"
+        if state in ('queued', 'loading'):
+            text = f"Loading {profile} data for {session_label}..."
+        elif state == 'ready':
+            text = f"Ready: {profile} data is cached for {session_label}."
+        elif state == 'error':
+            text = f"Could not load {profile} data: {status.get('error') or 'unknown error'}"
+        else:
+            text = f"Ready to load {profile} data for {session_label}."
+        return [
+            html.Span(text),
+            html.Span(
+                '?',
+                className='help-tip tip-intermediate',
+                title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
+            )
+        ], f"loading-status-banner status-{state}", status
+
+    @app.callback(
+        Output('graph-summary', 'children'),
+        [Input('dashboard-params-store', 'data'),
+         Input('main-tabs', 'value'),
+         Input('experience-mode-store', 'data')]
+    )
+    def update_graph_summary(params, active_tab, mode):
+        if not params:
+            return "No chart loaded yet. Select a session and two drivers."
+        tab_label = {
+            'tab-telemetry': 'telemetry',
+            'tab-trackmap': 'track map',
+            'tab-strategy': 'strategy',
+            'tab-race': 'race analysis',
+            'tab-gridpace': 'grid pace',
+            'tab-ai': 'AI analysis',
+        }.get(active_tab, 'analysis')
+        return (
+            f"{tab_label.title()} view for {params['year']} {params['race']} "
+            f"{params['session_type']}, comparing {params['driver1']} and {params['driver2']} "
+            f"in {normalize_experience_mode(mode)} mode."
+        )
+
+    @app.callback(
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value'),
          Input('d1-lap-number', 'value'), Input('d2-lap-number', 'value'),
-         Input('trackmap-mode', 'value')],
+         Input('trackmap-mode', 'value'), Input('experience-mode-store', 'data')],
         State('url', 'search'),
         prevent_initial_call=True
     )
-    def sync_url_with_dashboard(params, active_tab, d1_mode, d2_mode, d1_lap, d2_lap, trackmap_mode, current_search):
+    def sync_url_with_dashboard(params, active_tab, d1_mode, d2_mode, d1_lap, d2_lap, trackmap_mode, mode, current_search):
         if not params:
             raise PreventUpdate
         new_search = _build_url_search(params, active_tab, {
@@ -402,6 +590,7 @@ def _register_core_callbacks(app):
             'd1_lap': d1_lap,
             'd2_lap': d2_lap,
             'trackmap_mode': trackmap_mode,
+            'mode': normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE),
         })
         if new_search == (current_search or ''):
             return dash.no_update
@@ -474,5 +663,13 @@ def _register_core_callbacks(app):
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='copyToClipboard'),
         Output('share-toast', 'is_open'),
-        [Input('share-btn', 'n_clicks')]
+        [Input('share-btn', 'n_clicks'), Input('mobile-share-btn', 'n_clicks')]
+    )
+
+    app.clientside_callback(
+        ClientsideFunction(namespace='clientside', function_name='downloadActiveChart'),
+        Output('export-status', 'children', allow_duplicate=True),
+        Input('download-active-chart-btn', 'n_clicks'),
+        [State('main-tabs', 'value'), State('main-title', 'children')],
+        prevent_initial_call=True
     )
