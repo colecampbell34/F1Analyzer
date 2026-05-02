@@ -221,7 +221,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
     }
 
     #main-title {
-        font-size: 0.98rem;
+        font-size: 1.08rem;
         margin-top: 0.45rem !important;
         margin-bottom: 0.35rem !important;
     }
@@ -498,3 +498,301 @@ div[class*="tab-container"] {
 /* Row color accents */
 .d1-row { border-bottom: 1px solid rgba(255,255,255,0.05); }
 .d2-row { border-top: 1px solid rgba(255,255,255,0.05); }
+
+.experience-mode-wrap {
+    margin-top: 0.55rem;
+}
+
+.experience-mode-control {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+
+.experience-mode-label {
+    border: 1px solid #333;
+    border-radius: 6px;
+    padding: 0.18rem 0.42rem;
+    background: #171717;
+    color: #bbb;
+    cursor: pointer;
+}
+
+.experience-mode-input:checked + .experience-mode-label,
+.experience-mode-label:has(input:checked) {
+    color: #fff;
+    border-color: #ff4444;
+    background: #2a1414;
+}
+
+.comparison-shortcuts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    margin-bottom: 0.7rem;
+}
+
+.comparison-shortcuts .btn {
+    min-height: 30px;
+    font-size: 0.72rem;
+    padding: 0.22rem 0.35rem;
+}
+
+.comparison-shortcuts .btn-outline-secondary,
+.export-actions .btn-outline-secondary {
+    background: #263238;
+    border-color: #546e7a;
+    color: #f1f7fa;
+}
+
+.comparison-shortcuts .btn-outline-secondary:hover,
+.comparison-shortcuts .btn-outline-secondary:focus,
+.export-actions .btn-outline-secondary:hover,
+.export-actions .btn-outline-secondary:focus {
+    background: #37474f;
+    border-color: #78909c;
+    color: #fff;
+}
+
+#main-title {
+    margin-top: 0.35rem !important;
+    margin-bottom: 0.25rem !important;
+    font-size: 1.35rem;
+}
+
+.dashboard-action-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.55rem;
+    margin: 0.15rem 0 0.25rem;
+}
+
+.loading-status-banner {
+    flex: 1 1 auto;
+    min-height: 28px;
+    display: flex;
+    align-items: center;
+    padding: 0.22rem 0.5rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #cfcfcf;
+    background: #151515;
+    font-size: 0.82rem;
+}
+
+.status-loading,
+.status-queued {
+    border-color: #0d6efd;
+    color: #d9e9ff;
+}
+
+.status-ready {
+    border-color: #198754;
+    color: #d8f6e4;
+}
+
+.status-error {
+    border-color: #dc3545;
+    color: #ffd9dd;
+}
+
+.export-actions {
+    display: flex;
+    gap: 0.4rem;
+    flex: 0 0 auto;
+}
+
+.export-status {
+    min-height: 0;
+    color: #aaa;
+    font-size: 0.78rem;
+    text-align: right;
+    margin-top: -0.35rem;
+    margin-bottom: 0;
+}
+
+.glossary-term {
+    color: #f3f3f3;
+    text-decoration: underline dotted #777;
+    text-underline-offset: 0.16rem;
+    cursor: help;
+}
+
+.label-with-tip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+}
+
+.help-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-left: 0.28rem;
+    border-radius: 50%;
+    border: 1px solid #607d8b;
+    background: #1b2a30;
+    color: #eaf7fb;
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1;
+    cursor: help;
+    vertical-align: middle;
+}
+
+.tab-label-with-tip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.22rem;
+}
+
+.tab-label-with-tip .help-tip {
+    width: 14px;
+    height: 14px;
+    margin-left: 0.16rem;
+    font-size: 0.6rem;
+    border-color: rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.22);
+    color: #fff;
+}
+
+.btn .help-tip {
+    width: 14px;
+    height: 14px;
+    margin-left: 0.34rem;
+    font-size: 0.62rem;
+    border-color: rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.18);
+    color: #fff;
+}
+
+.app-mode-engineer .help-tip,
+.app-mode-intermediate .tip-beginner-only {
+    display: none !important;
+}
+
+.app-mode-beginner .sidebar-footer > div {
+    display: none;
+}
+
+.mobile-companion {
+    display: none;
+}
+
+.mobile-brand {
+    color: #ff4444;
+    font-weight: 800;
+    font-size: 0.9rem;
+}
+
+.mobile-session-summary {
+    color: #ccc;
+    font-size: 0.76rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mobile-action-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+}
+
+.replay-focus-active .sidebar-col {
+    display: none !important;
+}
+
+.replay-focus-active .content-col {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+}
+
+.replay-focus-active #main-title,
+.replay-focus-active .dashboard-action-row {
+    display: none !important;
+}
+
+.replay-focus-active #speed-graph {
+    height: 76vh !important;
+}
+
+.replay-focus-active .telemetry-sidecar {
+    background: #101010 !important;
+}
+
+.btn:focus-visible,
+.Select-control:focus-within,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: 2px solid #f5c542 !important;
+    outline-offset: 2px;
+}
+
+.sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+@media (max-width: 768px) {
+    .mobile-companion {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.45rem;
+        padding: 0.55rem;
+        border: 1px solid #333;
+        border-radius: 8px;
+        background: #111;
+        margin-bottom: 0.5rem;
+    }
+
+    .mobile-companion .experience-mode-control {
+        justify-content: space-between;
+    }
+
+    .mobile-companion .comparison-shortcuts {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        margin-bottom: 0;
+    }
+
+    .mobile-companion .comparison-shortcuts .btn {
+        font-size: 0.66rem;
+        min-height: 30px;
+        padding: 0.18rem 0.2rem;
+    }
+
+    .dashboard-action-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .export-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .export-status {
+        text-align: left;
+    }
+
+    .replay-focus-active .content-col {
+        padding-bottom: 0.5rem !important;
+    }
+
+    .replay-focus-active #speed-graph {
+        height: 62vh !important;
+    }
+}

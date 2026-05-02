@@ -511,8 +511,10 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return [d1_style, d2_style];
         },
         
-        copyToClipboard: function(n_clicks) {
-            if (!n_clicks) return false;
+        copyToClipboard: function(n_clicks, mobile_clicks) {
+            const ctx = window.dash_clientside.callback_context || {};
+            const trigger = (ctx.triggered && ctx.triggered[0] && ctx.triggered[0].prop_id) || '';
+            if (!trigger || ((n_clicks || 0) + (mobile_clicks || 0)) === 0) return false;
             const url = window.location.href;
             const el = document.createElement('textarea');
             el.value = url;
@@ -521,6 +523,47 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             document.execCommand('copy');
             document.body.removeChild(el);
             return true;
+        },
+
+        graphIdForTab: function(activeTab) {
+            const ids = {
+                'tab-telemetry': 'speed-graph',
+                'tab-trackmap': '2d-dominance-graph',
+                'tab-strategy': 'strategy-graph',
+                'tab-race': 'race-gaps-graph',
+                'tab-gridpace': 'grid-pace-graph'
+            };
+            return ids[activeTab] || null;
+        },
+
+        safeFilename: function(text) {
+            return String(text || 'f1-analysis')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 80) || 'f1-analysis';
+        },
+
+        downloadActiveChart: function(n_clicks, activeTab, title) {
+            if (!n_clicks) return window.dash_clientside.no_update;
+            const graphId = window.dash_clientside.clientside.graphIdForTab(activeTab);
+            if (!graphId) return 'No downloadable chart is active on this tab.';
+            const container = document.getElementById(graphId);
+            const plot = container ? (container.querySelector('.js-plotly-plot') || container) : null;
+            const pObj = (window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null));
+            if (!plot || !pObj || !plot.data) return 'Chart is not ready to download yet.';
+            const filename = window.dash_clientside.clientside.safeFilename(title || graphId);
+            try {
+                pObj.downloadImage(plot, {
+                    format: 'png',
+                    width: 1600,
+                    height: 900,
+                    filename: filename
+                });
+                return 'Chart download started.';
+            } catch (err) {
+                return 'Chart download failed. Try again after the chart finishes loading.';
+            }
         }
     }
 });
