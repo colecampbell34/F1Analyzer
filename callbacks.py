@@ -17,7 +17,7 @@ from data import (
     _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
     get_event_sessions_cached, get_latest_race_session_default,
     load_session_summary, preload_session, is_race, is_qualifying, is_practice,
-    get_preload_status_for_tab
+    get_preload_status_for_tab, get_preload_kwargs_for_tab
 )
 from ui_utils import _friendly_error, _build_leaderboard_children
 from ux_helpers import (
@@ -438,13 +438,7 @@ def _register_core_callbacks(app):
                           f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
             return dash.no_update, True, msg
 
-        preload_kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
-        if active_tab in ('tab-telemetry', 'tab-trackmap'):
-            preload_kwargs['telemetry'] = True
-        elif active_tab in ('tab-strategy', 'tab-gridpace'):
-            preload_kwargs['weather'] = True
-        elif active_tab == 'tab-ai':
-            preload_kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
+        preload_kwargs = get_preload_kwargs_for_tab(active_tab)
         preload_session(year, race, session_type, **preload_kwargs)
 
         params = {'year': year, 'race': race, 'session_type': session_type,

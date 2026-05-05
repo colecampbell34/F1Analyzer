@@ -5,7 +5,7 @@ import flask
 import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
-from data import get_best_lap, is_practice
+from data import get_best_lap, is_practice, resolve_team_color
 from ux_helpers import get_glossary_definition
 
 def _friendly_error(e):
@@ -279,20 +279,19 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
             lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
                 fastest_lap['LapTime']) else pd.NaT
 
-            color = "ffffff"
+            team_name = ''
+            raw_color = None
             if getattr(session, 'results', None) is not None and not session.results.empty:
                 res_row = session.results[session.results['Abbreviation'] == drv]
                 if not res_row.empty:
-                    color = res_row.iloc[0].get('TeamColor', '')
-                    if pd.isna(color) or not color:
-                        try:
-                            import fastf1.plotting
-                            color = fastf1.plotting.get_team_color(
-                                res_row.iloc[0].get('TeamName', ''), session=session)
-                        except Exception:
-                            pass
-            if not str(color).startswith('#'):
-                color = f"#{color}"
+                    team_name = res_row.iloc[0].get('TeamName', '')
+                    raw_color = res_row.iloc[0].get('TeamColor', None)
+            color = resolve_team_color(
+                team_name,
+                session=session,
+                raw_color=raw_color,
+                fallback_identifier=drv,
+            )
 
             drivers_data.append({'Abbreviation': drv, 'LapTime': lap_time, 'TeamColor': color})
 
@@ -345,15 +344,12 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
                 pos = row.get('Position', '?')
                 pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
 
-                color = row.get('TeamColor', '')
-                if pd.isna(color) or not color:
-                    try:
-                        import fastf1.plotting
-                        color = fastf1.plotting.get_team_color(row.get('TeamName', ''), session=session)
-                    except Exception:
-                        color = "ffffff"
-                if not str(color).startswith('#'):
-                    color = f"#{color}"
+                color = resolve_team_color(
+                    row.get('TeamName', ''),
+                    session=session,
+                    raw_color=row.get('TeamColor', None),
+                    fallback_identifier=abbr,
+                )
 
                 raw_time = None
                 for col in ['Time', 'Q3', 'Q2', 'Q1', 'SQ3', 'SQ2', 'SQ1']:

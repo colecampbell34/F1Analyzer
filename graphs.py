@@ -175,6 +175,53 @@ def _build_mini_map_fig(tel1, hover_data):
     return fig
 
 
+def _split_delta_by_sign(delta_dist, delta_values):
+    """Split delta into ahead/behind traces that meet exactly at zero crossings."""
+    ahead_x, ahead_y = [], []
+    behind_x, behind_y = [], []
+    prev_x, prev_y = None, None
+
+    for raw_x, raw_y in zip(delta_dist, delta_values):
+        x = float(raw_x) if np.isfinite(raw_x) else np.nan
+        y = float(raw_y) if np.isfinite(raw_y) else np.nan
+
+        if not np.isfinite(x) or not np.isfinite(y):
+            ahead_x.append(x)
+            ahead_y.append(np.nan)
+            behind_x.append(x)
+            behind_y.append(np.nan)
+            prev_x, prev_y = None, None
+            continue
+
+        if prev_x is not None and (prev_y >= 0) != (y >= 0):
+            denom = y - prev_y
+            ratio = 0.0 if denom == 0 else -prev_y / denom
+            cross_x = prev_x + ratio * (x - prev_x)
+
+            ahead_x.append(cross_x)
+            ahead_y.append(0.0)
+            behind_x.append(cross_x)
+            behind_y.append(0.0)
+
+        ahead_x.append(x)
+        behind_x.append(x)
+        if y >= 0:
+            ahead_y.append(y)
+            behind_y.append(np.nan)
+        else:
+            ahead_y.append(np.nan)
+            behind_y.append(y)
+
+        prev_x, prev_y = x, y
+
+    return (
+        np.asarray(ahead_x, dtype=float),
+        np.asarray(ahead_y, dtype=float),
+        np.asarray(behind_x, dtype=float),
+        np.asarray(behind_y, dtype=float),
+    )
+
+
 def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_delta_data=None):
     """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
     from plotly.subplots import make_subplots
@@ -204,8 +251,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     # Row 1: Time Delta
     delta_values = -pd.Series(delta_time).astype(float).to_numpy()
     delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
-    delta_ahead = np.where(delta_values >= 0, delta_values, np.nan)
-    delta_behind = np.where(delta_values < 0, delta_values, np.nan)
+    delta_ahead_x, delta_ahead, delta_behind_x, delta_behind = _split_delta_by_sign(delta_dist, delta_values)
     finite_delta = delta_values[np.isfinite(delta_values)]
     delta_tick_kwargs = {}
     if len(finite_delta):
@@ -227,7 +273,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     fig.add_trace(
         go.Scatter(
-            x=delta_dist,
+            x=delta_ahead_x,
             y=delta_ahead,
             mode='lines',
             name=f"-",
@@ -241,7 +287,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
         row=1, col=1)
     fig.add_trace(
         go.Scatter(
-            x=delta_dist,
+            x=delta_behind_x,
             y=delta_behind,
             mode='lines',
             name=f"+",

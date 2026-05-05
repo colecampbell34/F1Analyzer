@@ -8,10 +8,11 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from graphs import _build_telemetry_fig
-from graph_shared import _sort_fastest_driver, _error_figure, _compute_lap_delta
+from graph_shared import _sort_fastest_driver, _error_figure, _loading_figure, _compute_lap_delta
 from callbacks_shared import _timed_callback
 from ui_utils import _friendly_error
 from telemetry_prep import prepare_selected_lap_comparison
+from data import ensure_preload_for_tab
 
 
 def register_telemetry_callbacks(app):
@@ -20,13 +21,20 @@ def register_telemetry_callbacks(app):
     @app.callback(
         Output('speed-graph', 'figure'),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
+         Input('update-laps-btn', 'n_clicks'), Input('preload-status-store', 'data')],
         [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
          State('d1-lap-number', 'value'), State('d2-lap-number', 'value')]
     )
-    def update_telemetry(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+    def update_telemetry(params, active_tab, n_laps, _preload_status, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
         if not params or active_tab != 'tab-telemetry':
             return dash.no_update
+        status = ensure_preload_for_tab(params, active_tab)
+        if status.get('status') in ('queued', 'loading', 'idle'):
+            return _loading_figure(
+                f"Loading telemetry data for {params['year']} {params['race']} {params['session_type']}..."
+            )
+        if status.get('status') == 'error':
+            return _error_figure(_friendly_error(status.get('error') or 'Session data failed to load.'))
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
@@ -49,14 +57,16 @@ def register_telemetry_callbacks(app):
     @app.callback(
         [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
+         Input('update-laps-btn', 'n_clicks'), Input('preload-status-store', 'data')],
         [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
          State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
         prevent_initial_call=True
     )
-    def update_mini_map_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+    def update_mini_map_base(params, active_tab, n_laps, _preload_status, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
         """Precompute track polyline once; hover only moves marker."""
         if not params or active_tab != 'tab-telemetry':
+            return dash.no_update, dash.no_update
+        if ensure_preload_for_tab(params, active_tab).get('status') != 'ready':
             return dash.no_update, dash.no_update
         try:
             cmp = prepare_selected_lap_comparison(
@@ -218,14 +228,16 @@ def register_telemetry_callbacks(app):
     @app.callback(
         [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
+         Input('update-laps-btn', 'n_clicks'), Input('preload-status-store', 'data')],
         [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
          State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
         prevent_initial_call=True,
     )
-    def update_gg_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+    def update_gg_base(params, active_tab, n_laps, _preload_status, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
         """Build base friction-circle figure and cache G-series for hover."""
         if not params or active_tab != 'tab-telemetry':
+            return dash.no_update, dash.no_update
+        if ensure_preload_for_tab(params, active_tab).get('status') != 'ready':
             return dash.no_update, dash.no_update
 
         def calculate_g_series(tel):

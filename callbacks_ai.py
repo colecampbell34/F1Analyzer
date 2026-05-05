@@ -7,7 +7,7 @@ from dash.exceptions import PreventUpdate
 import flask
 import random
 
-from data import load_session_with_preload
+from data import load_session_with_preload, ensure_preload_for_tab
 from ai_utils import (
     _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS, AI_ENABLED,
     build_ai_prompt,
@@ -33,11 +33,12 @@ def register_ai_callbacks(app):
 
     @app.callback(
         Output('session-context-store', 'data', allow_duplicate=True),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('preload-status-store', 'data')],
         [State('session-context-store', 'data')],
         prevent_initial_call=True
     )
-    def update_ai_session_context(params, active_tab, current_context):
+    def update_ai_session_context(params, active_tab, _preload_status, current_context):
         if not params or active_tab != 'tab-ai':
             return dash.no_update
 
@@ -47,6 +48,13 @@ def register_ai_callbacks(app):
 
         if isinstance(current_context, str) and current_context.startswith(f"{context_header}\n\n"):
             return dash.no_update
+
+        status = ensure_preload_for_tab(params, active_tab)
+        if status.get('status') in ('queued', 'loading', 'idle'):
+            return dash.no_update
+        if status.get('status') == 'error':
+            logging.error(f"AI Context Preload Error: {status.get('error')}")
+            return ""
 
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:

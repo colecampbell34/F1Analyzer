@@ -3,6 +3,8 @@ import shutil
 import threading
 import time
 import logging
+import hashlib
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -36,6 +38,43 @@ SESSION_SUMMARY_CACHE_MAXSIZE = 12
 EVENT_SCHEDULE_CACHE_MAXSIZE = 20
 EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
+TEAM_COLOR_FALLBACKS = {
+    # Current/recent canonical and feed-specific names.
+    'mercedes': '#00D7B6',
+    'mclaren': '#F47600',
+    'redbull': '#4781D7',
+    'redbullracing': '#4781D7',
+    'ferrari': '#ED1131',
+    'alpine': '#00A1E8',
+    'alpinef1team': '#00A1E8',
+    'williams': '#1868DB',
+    'haas': '#9C9FA2',
+    'haasf1team': '#9C9FA2',
+    'audi': '#F50537',
+    'racingbulls': '#6C98FF',
+    'rb': '#6C98FF',
+    'rbf1team': '#6C98FF',
+    'astonmartin': '#229971',
+    'cadillac': '#909090',
+    'cadillacf1team': '#909090',
+    # Older aliases still reachable in historical sessions.
+    'alphatauri': '#2B4562',
+    'alfaromeo': '#900000',
+    'sauber': '#52E252',
+    'stakesauber': '#52E252',
+    'kicksauber': '#52E252',
+    'renault': '#FFF500',
+    'tororosso': '#469BFF',
+    'racingpoint': '#F596C8',
+    'forceindia': '#F596C8',
+}
+
+_COLOR_FALLBACK_PALETTE = (
+    '#00D7B6', '#F47600', '#4781D7', '#ED1131', '#00A1E8',
+    '#1868DB', '#9C9FA2', '#F50537', '#6C98FF', '#229971',
+    '#B46CFF', '#FFD166'
+)
+
 
 
 # --- SESSION TYPE HELPERS ---
@@ -52,6 +91,86 @@ def is_race(session_type):
 def is_practice(session_type):
     """Check if a session type is any form of practice."""
     return any(p in session_type for p in ['Practice', 'FP'])
+
+
+def _normalize_color_value(value):
+    """Return a CSS hex color or None for missing/invalid FastF1 color values."""
+    if value is None or pd.isna(value):
+        return None
+    color = str(value).strip()
+    if not color or color.lower() in ('none', 'nan'):
+        return None
+    if color.startswith('#'):
+        color = color[1:]
+    if len(color) == 3 and all(ch in '0123456789abcdefABCDEF' for ch in color):
+        color = ''.join(ch * 2 for ch in color)
+    if len(color) != 6 or not all(ch in '0123456789abcdefABCDEF' for ch in color):
+        return None
+    return f"#{color.upper()}"
+
+
+def _team_color_key(team_name):
+    return re.sub(r'[^a-z0-9]+', '', str(team_name or '').lower())
+
+
+def _stable_fallback_color(identifier):
+    digest = hashlib.sha1(str(identifier or 'unknown').encode('utf-8')).hexdigest()
+    return _COLOR_FALLBACK_PALETTE[int(digest[:2], 16) % len(_COLOR_FALLBACK_PALETTE)]
+
+
+def resolve_team_color(team_name, session=None, raw_color=None, fallback_identifier=None):
+    """Resolve a readable team color even when live FastF1 metadata omits TeamColor."""
+    raw = _normalize_color_value(raw_color)
+    if raw and raw.lower() != '#ffffff':
+        return raw
+
+    team_key = _team_color_key(team_name)
+    mapped = TEAM_COLOR_FALLBACKS.get(team_key)
+    if mapped:
+        return mapped
+
+    if team_name:
+        try:
+            import fastf1.plotting
+            plotted = _normalize_color_value(
+                fastf1.plotting.get_team_color(str(team_name), session=session)
+            )
+            if plotted and plotted.lower() != '#ffffff':
+                return plotted
+        except Exception:
+            pass
+
+    if raw:
+        return raw
+    return _stable_fallback_color(fallback_identifier or team_name)
+
+
+def resolve_driver_color(driver_abbr, session):
+    """Resolve a driver's team color with production-safe fallbacks."""
+    team = ''
+    raw_color = None
+    try:
+        if getattr(session, 'results', None) is not None and not session.results.empty:
+            row = session.results[session.results['Abbreviation'] == driver_abbr]
+            if not row.empty:
+                team = row.iloc[0].get('TeamName', '')
+                raw_color = row.iloc[0].get('TeamColor', None)
+    except Exception:
+        pass
+
+    color = resolve_team_color(team, session=session, raw_color=raw_color, fallback_identifier=driver_abbr)
+    if color and color.lower() != '#ffffff':
+        return color
+
+    try:
+        import fastf1.plotting
+        plotted = _normalize_color_value(fastf1.plotting.get_driver_color(driver_abbr, session))
+        if plotted and plotted.lower() != '#ffffff':
+            return plotted
+    except Exception:
+        pass
+
+    return color or _stable_fallback_color(driver_abbr)
 
 
 def setup_cache():
@@ -438,10 +557,8 @@ def get_preload_status(year, race, session_name, laps=True, telemetry=False, wea
         return _safe_job_view(job)
 
 
-def get_preload_status_for_tab(params, active_tab):
-    """Map a dashboard tab to the profile it should preload/load."""
-    if not params:
-        return {'status': 'idle'}
+def get_preload_kwargs_for_tab(active_tab):
+    """Map a dashboard tab to the data streams needed for that view."""
     kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
     if active_tab in ('tab-telemetry', 'tab-trackmap'):
         kwargs['telemetry'] = True
@@ -449,9 +566,35 @@ def get_preload_status_for_tab(params, active_tab):
         kwargs['weather'] = True
     elif active_tab == 'tab-ai':
         kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
+    return kwargs
+
+
+def get_preload_status_for_tab(params, active_tab):
+    """Return preload status for the dashboard tab's data profile."""
+    if not params:
+        return {'status': 'idle'}
+    kwargs = get_preload_kwargs_for_tab(active_tab)
     return get_preload_status(
         params.get('year'), params.get('race'), params.get('session_type'), **kwargs
     )
+
+
+def ensure_preload_for_tab(params, active_tab):
+    """Start the tab's preload profile if needed and return its status."""
+    if not params:
+        return {'status': 'idle'}
+    kwargs = get_preload_kwargs_for_tab(active_tab)
+    status = get_preload_status(
+        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+    )
+    if status.get('status') == 'idle':
+        preload_session(
+            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+        )
+        status = get_preload_status(
+            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+        )
+    return status
 
 
 def get_preload_registry_snapshot():
@@ -529,15 +672,12 @@ def get_driver_info(session):
         full_name = f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip()
         team = row.get('TeamName', '')
 
-        color = row.get('TeamColor', '')
-        if pd.isna(color) or not color:
-            try:
-                import fastf1.plotting
-                color = fastf1.plotting.get_team_color(team, session=session)
-            except Exception:
-                color = 'ffffff'
-        if not str(color).startswith('#'):
-            color = f"#{color}"
+        color = resolve_team_color(
+            team,
+            session=session,
+            raw_color=row.get('TeamColor', None),
+            fallback_identifier=abbr,
+        )
 
         drivers.append({
             'abbr': abbr,
@@ -608,14 +748,7 @@ def get_best_lap(session, driver_abbr):
 
 def get_single_driver_color(driver_abbr, session):
     """Fetch a single driver's team color with fallback."""
-    try:
-        import fastf1.plotting
-        color = fastf1.plotting.get_driver_color(driver_abbr, session)
-        if not color.startswith('#'):
-            color = f'#{color}'
-        return color
-    except (KeyError, ValueError):
-        return '#ffffff'
+    return resolve_driver_color(driver_abbr, session)
 
 
 @lru_cache(maxsize=16)
@@ -627,8 +760,9 @@ def _compute_labels_colors(year, race, session_type, d1, d2):
     """
     session = load_session_summary(year, race, session_type, include_laps=False)
 
-    from graph_shared import _get_driver_colors
-    c1, c2 = _get_driver_colors(d1, d2, session)
+    c1, c2 = resolve_driver_color(d1, session), resolve_driver_color(d2, session)
+    if c1.lower() == c2.lower():
+        c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
     try:
         if session.results is not None and not session.results.empty:
             res1 = session.results[session.results['Abbreviation'] == d1]

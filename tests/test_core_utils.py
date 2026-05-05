@@ -3,12 +3,14 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
+import numpy as np
 
 import data
 import ui_utils
 import ai_cache
 import callbacks_shared
 import ux_helpers
+import graphs
 from flask import Flask
 
 
@@ -27,6 +29,35 @@ class TestSessionTypeHelpers(unittest.TestCase):
         self.assertTrue(data.is_practice("Practice 1"))
         self.assertTrue(data.is_practice("FP2"))
         self.assertFalse(data.is_practice("Sprint"))
+
+
+class TestTeamColorFallbacks(unittest.TestCase):
+    def test_resolves_feed_team_alias_without_raw_color(self):
+        self.assertEqual(data.resolve_team_color("Red Bull", raw_color=""), "#4781D7")
+        self.assertEqual(data.resolve_team_color("RB F1 Team", raw_color=None), "#6C98FF")
+
+    def test_get_driver_info_does_not_collapse_missing_colors_to_white(self):
+        session = MagicMock()
+        session.results = pd.DataFrame([
+            {
+                "Abbreviation": "VER",
+                "FirstName": "Max",
+                "LastName": "Verstappen",
+                "TeamName": "Red Bull",
+                "TeamColor": "",
+            },
+            {
+                "Abbreviation": "NOR",
+                "FirstName": "Lando",
+                "LastName": "Norris",
+                "TeamName": "McLaren",
+                "TeamColor": None,
+            },
+        ])
+
+        info = data.get_driver_info(session)
+
+        self.assertEqual([driver["color"] for driver in info], ["#4781D7", "#F47600"])
 
 
 class TestAiCache(unittest.TestCase):
@@ -152,6 +183,32 @@ class TestLapSelection(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "VER lap 2 is not available"):
             callbacks_shared._pick_driver_lap(session, "VER", "specific", 2, lambda *_: None)
+
+
+class TestDeltaChartSegments(unittest.TestCase):
+    def test_zero_crossing_is_inserted_into_both_colored_traces(self):
+        ahead_x, ahead_y, behind_x, behind_y = graphs._split_delta_by_sign(
+            np.array([0.0, 10.0]),
+            np.array([1.0, -1.0]),
+        )
+
+        self.assertIn(5.0, ahead_x.tolist())
+        self.assertIn(5.0, behind_x.tolist())
+        cross_idx_ahead = ahead_x.tolist().index(5.0)
+        cross_idx_behind = behind_x.tolist().index(5.0)
+        self.assertEqual(ahead_y[cross_idx_ahead], 0.0)
+        self.assertEqual(behind_y[cross_idx_behind], 0.0)
+
+    def test_missing_delta_data_still_breaks_trace(self):
+        ahead_x, ahead_y, behind_x, behind_y = graphs._split_delta_by_sign(
+            np.array([0.0, 10.0, 20.0]),
+            np.array([1.0, np.nan, -1.0]),
+        )
+
+        self.assertTrue(np.isnan(ahead_y[1]))
+        self.assertTrue(np.isnan(behind_y[1]))
+        self.assertNotIn(10.0, ahead_x[~np.isnan(ahead_y)].tolist())
+        self.assertNotIn(10.0, behind_x[~np.isnan(behind_y)].tolist())
 
 
 class TestLatestRaceDefault(unittest.TestCase):
