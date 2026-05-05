@@ -557,8 +557,10 @@ def get_preload_status(year, race, session_name, laps=True, telemetry=False, wea
         return _safe_job_view(job)
 
 
-def get_preload_kwargs_for_tab(active_tab):
-    """Map a dashboard tab to the data streams needed for that view."""
+def get_preload_status_for_tab(params, active_tab):
+    """Map a dashboard tab to the profile it should preload/load."""
+    if not params:
+        return {'status': 'idle'}
     kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
     if active_tab in ('tab-telemetry', 'tab-trackmap'):
         kwargs['telemetry'] = True
@@ -566,35 +568,9 @@ def get_preload_kwargs_for_tab(active_tab):
         kwargs['weather'] = True
     elif active_tab == 'tab-ai':
         kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
-    return kwargs
-
-
-def get_preload_status_for_tab(params, active_tab):
-    """Return preload status for the dashboard tab's data profile."""
-    if not params:
-        return {'status': 'idle'}
-    kwargs = get_preload_kwargs_for_tab(active_tab)
     return get_preload_status(
         params.get('year'), params.get('race'), params.get('session_type'), **kwargs
     )
-
-
-def ensure_preload_for_tab(params, active_tab):
-    """Start the tab's preload profile if needed and return its status."""
-    if not params:
-        return {'status': 'idle'}
-    kwargs = get_preload_kwargs_for_tab(active_tab)
-    status = get_preload_status(
-        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-    )
-    if status.get('status') == 'idle':
-        preload_session(
-            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-        )
-        status = get_preload_status(
-            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-        )
-    return status
 
 
 def get_preload_registry_snapshot():

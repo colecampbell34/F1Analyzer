@@ -6,14 +6,14 @@ from dash.dependencies import Input, Output
 
 from data import (
     get_shared_data, is_qualifying, is_race, is_practice,
-    load_session_with_preload, ensure_preload_for_tab,
+    load_session_with_preload,
 )
 from graphs import (
     _build_dominance_fig, _build_strategy_fig,
     _build_deg_fig, _build_race_gaps_fig, _build_grid_pace_fig,
     _build_pit_stops_fig, _build_driver_radar,
 )
-from graph_shared import _sort_fastest_driver, _error_figure, _not_applicable_figure, _loading_figure
+from graph_shared import _sort_fastest_driver, _error_figure, _not_applicable_figure
 from callbacks_shared import _timed_callback
 from ui_utils import _friendly_error
 from telemetry_prep import prepare_selected_lap_comparison
@@ -26,20 +26,11 @@ def register_tab_callbacks(app):
     @app.callback(
         [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('trackmap-mode', 'value'), Input('preload-status-store', 'data')]
+         Input('trackmap-mode', 'value')]
     )
-    def update_dominance(params, active_tab, mode, _preload_status):
+    def update_dominance(params, active_tab, mode):
         if not params or active_tab != 'tab-trackmap':
             return dash.no_update, dash.no_update
-        status = ensure_preload_for_tab(params, active_tab)
-        if status.get('status') in ('queued', 'loading', 'idle'):
-            return _loading_figure(
-                f"Loading track map data for {params['year']} {params['race']} {params['session_type']}..."
-            ), html.Div("DNA analysis loading...", style={'color': '#888', 'textAlign': 'center'})
-        if status.get('status') == 'error':
-            return _error_figure(_friendly_error(status.get('error') or 'Session data failed to load.')), html.Div(
-                "DNA analysis unavailable"
-            )
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 cmp = prepare_selected_lap_comparison(params)
@@ -137,21 +128,11 @@ def register_tab_callbacks(app):
     # Strategy tab.
     @app.callback(
         [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-store', 'data')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
     )
-    def update_strategy(params, active_tab, _preload_status):
+    def update_strategy(params, active_tab):
         if not params or active_tab != 'tab-strategy':
             return dash.no_update, dash.no_update
-        status = ensure_preload_for_tab(params, active_tab)
-        if status.get('status') in ('queued', 'loading', 'idle'):
-            fig = _loading_figure(
-                f"Loading strategy data for {params['year']} {params['race']} {params['session_type']}..."
-            )
-            return fig, fig
-        if status.get('status') == 'error':
-            err = _error_figure(_friendly_error(status.get('error') or 'Session data failed to load.'))
-            return err, err
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 # Strategy view needs laps + weather; no telemetry.
@@ -179,21 +160,11 @@ def register_tab_callbacks(app):
     # Race tab.
     @app.callback(
         [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-store', 'data')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
     )
-    def update_race_analysis(params, active_tab, _preload_status):
+    def update_race_analysis(params, active_tab):
         if not params or active_tab != 'tab-race':
             return dash.no_update, dash.no_update
-        status = ensure_preload_for_tab(params, active_tab)
-        if status.get('status') in ('queued', 'loading', 'idle'):
-            fig = _loading_figure(
-                f"Loading race data for {params['year']} {params['race']} {params['session_type']}..."
-            )
-            return fig, fig
-        if status.get('status') == 'error':
-            err = _error_figure(_friendly_error(status.get('error') or 'Session data failed to load.'))
-            return err, err
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 # Race analysis needs laps only.
@@ -215,19 +186,11 @@ def register_tab_callbacks(app):
     # Grid pace tab.
     @app.callback(
         Output('grid-pace-graph', 'figure'),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-store', 'data')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
     )
-    def update_grid_pace(params, active_tab, _preload_status):
+    def update_grid_pace(params, active_tab):
         if not params or active_tab != 'tab-gridpace':
             return dash.no_update
-        status = ensure_preload_for_tab(params, active_tab)
-        if status.get('status') in ('queued', 'loading', 'idle'):
-            return _loading_figure(
-                f"Loading grid pace data for {params['year']} {params['race']} {params['session_type']}..."
-            )
-        if status.get('status') == 'error':
-            return _error_figure(_friendly_error(status.get('error') or 'Session data failed to load.'))
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 # Use weather to detect wet conditions for pace filtering.

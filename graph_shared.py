@@ -53,16 +53,6 @@ def _not_applicable_figure(message):
     return fig
 
 
-def _loading_figure(message):
-    fig = go.Figure()
-    _apply_base_layout(fig)
-    fig.update_xaxes(visible=False).update_yaxes(visible=False)
-    fig.add_annotation(text=message, showarrow=False,
-                       font=dict(size=15, color='#bbb'),
-                       xref="paper", yref="paper", x=0.5, y=0.5)
-    return fig
-
-
 def _get_driver_colors(driver1, driver2, session):
     import fastf1.plotting
     try:
