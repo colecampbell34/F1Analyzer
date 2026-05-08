@@ -6,7 +6,9 @@
 .replit
 replit.md
 __pycache__/
+**/__pycache__/
 *.pyc
+**/*.pyc
 f1_cache/
 ai_cache/
 feedback/
