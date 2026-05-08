@@ -7,3 +7,5 @@ feedback/
 .idea/
 .DS_Store
 ai_cache/
+.junie
+.cursor

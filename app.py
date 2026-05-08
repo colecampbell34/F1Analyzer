@@ -10,7 +10,7 @@ from flask_compress import Compress
 import threading
 import atexit
 from datetime import datetime
-from flask import jsonify, request
+from flask import jsonify, request, send_from_directory
 import pandas as pd
 from ui_utils import _feedback_admin_authorized
 from perf_monitor import get_perf_snapshot
@@ -31,6 +31,9 @@ app = dash.Dash(
     meta_tags=[
         {"name": "viewport", "content": "width=device-width, initial-scale=1"},
         {"rel": "manifest", "href": "/assets/manifest.json"},
+        {"name": "mobile-web-app-capable", "content": "yes"},
+        {"name": "apple-mobile-web-app-capable", "content": "yes"},
+        {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
         {"name": "description", "content": "Advanced Formula 1 telemetry and strategy analysis dashboard. Compare driver performance, track dominance, and get AI-powered race insights using FastF1 and Google Gemini."},
         {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
         {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
@@ -104,6 +107,19 @@ def warmup():
     _start_runtime_init_once()
     threading.Thread(target=data.get_event_schedule_cached, args=(datetime.now().year,), daemon=True).start()
     return jsonify({'status': 'warming'}), 200
+
+
+@server.route('/m')
+@server.route('/m/')
+def mobile_entry():
+    """Serve the Dash shell for the mobile/PWA entry path."""
+    return app.index()
+
+
+@server.route('/service-worker.js')
+def service_worker():
+    """Serve the PWA service worker from the root scope."""
+    return send_from_directory('assets', 'service-worker.js', mimetype='application/javascript', max_age=0)
 
 
 def _api_bool(value, default=False):

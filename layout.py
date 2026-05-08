@@ -92,14 +92,37 @@ def _empty_state(graph_id, height='68vh'):
             'data': [],
             'layout': {
                 'template': 'plotly_dark',
+                'paper_bgcolor': '#111111',
+                'plot_bgcolor': '#111111',
+                'font': {'color': '#cccccc'},
                 'xaxis': {'visible': False},
                 'yaxis': {'visible': False},
                 'annotations': [{
-                    'text': 'Select a session and two drivers, then click "Update Dashboard"<br><br><span style="font-size: 13px; color: #888;"><i>Note: Loading a session for the very first time<br>may take up to a minute to cache the raw telemetry.</i></span>',
+                    'text': 'Select a session and two drivers,<br>then click "Update Dashboard"<br><br><span style="font-size: 13px; color: #888;"><i>Note: Loading a session for the very first time<br>may take up to a minute to cache the raw telemetry.</i></span>',
                     'showarrow': False,
-                    'font': {'size': 16, 'color': '#ccc'},
+                    'font': {'size': 15, 'color': '#ccc'},
                     'xref': 'paper', 'yref': 'paper', 'x': 0.5, 'y': 0.5
                 }]
+            }
+        }
+    )
+
+
+def _sidecar_empty_state(graph_id, height):
+    """Dark placeholder for small secondary charts before telemetry loads."""
+    return dcc.Graph(
+        id=graph_id,
+        style={'height': height},
+        config={'displayModeBar': False},
+        figure={
+            'data': [],
+            'layout': {
+                'template': 'plotly_dark',
+                'paper_bgcolor': 'rgba(0,0,0,0)',
+                'plot_bgcolor': 'rgba(0,0,0,0)',
+                'xaxis': {'visible': False},
+                'yaxis': {'visible': False},
+                'margin': {'l': 0, 'r': 0, 't': 0, 'b': 0},
             }
         }
     )
@@ -328,7 +351,8 @@ telemetry_controls = html.Div([
                      style={'color': '#aaa', 'fontSize': '0.82rem', 'width': '100%'})
         ], md=4, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'})
     ])
-], style={'padding': '0.5rem 1rem', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px',
+], className='telemetry-controls-panel',
+   style={'padding': '0.5rem 1rem', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px',
           'marginBottom': '0.5rem', 'border': '1px solid #333'})
 
 
@@ -341,6 +365,10 @@ mobile_companion = html.Div([
     _mode_selector('mobile-experience-mode-control', compact=True),
     _shortcut_buttons('mobile'),
     html.Div([
+        dbc.Button("Feedback", id='mobile-open-feedback-modal-btn', color='danger', size='sm', n_clicks=0,
+                   title='Send feedback'),
+        dbc.Button("Edit", id='mobile-edit-selection-btn', color='secondary', size='sm', n_clicks=0,
+                   title='Show or hide session controls'),
         dbc.Button("Update", id='mobile-update-dashboard-btn', color='success', size='sm', n_clicks=0,
                    title='Load the selected comparison'),
         dbc.Button("Share", id='mobile-share-btn', color='info', size='sm', n_clicks=0,
@@ -350,7 +378,6 @@ mobile_companion = html.Div([
 
 
 content = html.Div([
-    mobile_companion,
     html.H3("Session Telemetry Analysis", className="text-center mt-2", id='main-title'),
     html.Div([
         html.Div(id='loading-status-banner', className='loading-status-banner',
@@ -368,6 +395,7 @@ content = html.Div([
     ], className='dashboard-action-row'),
     html.Div(id='export-status', className='export-status', role='status', **{'aria-live': 'polite'}),
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
+    html.Div(id='plot-resize-sentinel', style={'display': 'none'}),
 
     dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
         dcc.Tab(id='tab-telemetry-control', label=_tab_label(
@@ -390,47 +418,48 @@ content = html.Div([
                             "The dots show both selected cars at the hovered or replayed point on the lap.",
                             'beginner'
                         ),
+                        className='telemetry-sidecar-label',
                         style={'textAlign': 'center', 'color': '#888', 'fontSize': '0.7rem', 'marginBottom': '3px'}
                     ),
                     # Live Telemetry Dashboard
                     html.Div(id='live-telemetry-dashboard', className='live-dashboard-container', style={'display': 'none'}, children=[
                         html.Div(className='live-driver-row d1-row', children=[
-                            html.Div(id='live-d1-name', className='live-driver-name'),
+                            html.Div(id='live-d1-name', className='live-driver-name', children='D1'),
                             html.Div(className='live-stats', children=[
-                                html.Div([html.Span(id='live-d1-speed', className='stat-val'), html.Small(" KM/H")], className='stat-item'),
-                                html.Div([html.Span(id='live-d1-gear', className='stat-val'), html.Small(" G")], className='stat-item'),
-                                html.Div([html.Span(id='live-d1-rpm', className='stat-val'), html.Small(" RPM")], className='stat-item'),
+                                html.Div([html.Span(id='live-d1-speed', className='stat-val', children='--'), html.Small(" KM/H")], className='stat-item'),
+                                html.Div([html.Span(id='live-d1-gear', className='stat-val', children='--'), html.Small(" G")], className='stat-item'),
+                                html.Div([html.Span(id='live-d1-rpm', className='stat-val', children='--'), html.Small(" RPM")], className='stat-item'),
                             ])
                         ]),
                         html.Div(id='live-delta-row', className='live-delta-row', children=[
                             html.Span("GAP", className='delta-label'),
-                            html.Span(id='live-delta-value', className='delta-value')
+                            html.Span(id='live-delta-value', className='delta-value', children='--')
                         ]),
                         html.Div(className='live-driver-row d2-row', children=[
-                            html.Div(id='live-d2-name', className='live-driver-name'),
+                            html.Div(id='live-d2-name', className='live-driver-name', children='D2'),
                             html.Div(className='live-stats', children=[
-                                html.Div([html.Span(id='live-d2-speed', className='stat-val'), html.Small(" KM/H")], className='stat-item'),
-                                html.Div([html.Span(id='live-d2-gear', className='stat-val'), html.Small(" G")], className='stat-item'),
-                                html.Div([html.Span(id='live-d2-rpm', className='stat-val'), html.Small(" RPM")], className='stat-item'),
+                                html.Div([html.Span(id='live-d2-speed', className='stat-val', children='--'), html.Small(" KM/H")], className='stat-item'),
+                                html.Div([html.Span(id='live-d2-gear', className='stat-val', children='--'), html.Small(" G")], className='stat-item'),
+                                html.Div([html.Span(id='live-d2-rpm', className='stat-val', children='--'), html.Small(" RPM")], className='stat-item'),
                             ])
                         ]),
                     ]),
-                    dcc.Graph(id='mini-track-map', style={'height': '200px'}, config={'displayModeBar': False}),
+                    _sidecar_empty_state('mini-track-map', '200px'),
                     html.Hr(style={'margin': '6px 0'}),
                     html.Div(_label_with_tip(
                         "G-Force Traces",
                         "Shows lateral and longitudinal forces. Wide sideways traces mean cornering load; downward traces mean braking.",
                         'intermediate'
-                    ), style={
+                    ), className='telemetry-sidecar-label', style={
                         'textAlign': 'center',
                         'color': '#888',
                         'fontSize': '0.7rem',
                         'marginBottom': '3px'
                     }),
-                    dcc.Graph(id='gg-diagram', style={'height': '250px'}, config={'displayModeBar': False})
+                    _sidecar_empty_state('gg-diagram', '250px')
                 ], lg=3, md=4, xs=12, className='telemetry-sidecar',
                    style={'backgroundColor': '#151515', 'borderRadius': '8px', 'padding': '8px', 'marginTop': '6px', 'overflow': 'hidden'})
-            ])
+            ], className='telemetry-visual-grid')
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
         dcc.Tab(id='tab-trackmap-control', label=_tab_label(
@@ -461,7 +490,8 @@ content = html.Div([
                     inputStyle={"marginRight": "4px"},
                     labelStyle={"marginRight": "15px", "color": "#ccc"}
                 ),
-            ], style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center'}),
+            ], className='trackmap-controls-panel',
+               style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center'}),
             dbc.Row([
                 dbc.Col([
                     dcc.Loading(type='dot', color='#ff0000', children=[
@@ -597,6 +627,7 @@ content = html.Div([
 
 app_layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
+    mobile_companion,
     dbc.Row([
         # Sidebar column.
         dbc.Col(sidebar, md=2, xs=12, 
@@ -694,6 +725,7 @@ app_layout = dbc.Container([
     dcc.Store(id='lap-playback-store', storage_type='memory'),
     dcc.Store(id='preload-status-store', storage_type='memory'),
     dcc.Store(id='export-status-store', storage_type='memory'),
+    dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
     dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=False),
     dcc.Store(id='feedback-refresh-store'),

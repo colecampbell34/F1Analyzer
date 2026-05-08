@@ -22,6 +22,7 @@ def register_feedback_callbacks(app):
         ClientsideFunction(namespace='clientside', function_name='toggleFeedbackModal'),
         Output('feedback-modal', 'is_open'),
         [Input('open-feedback-modal-btn', 'n_clicks'),
+         Input('mobile-open-feedback-modal-btn', 'n_clicks'),
          Input('cancel-feedback-btn', 'n_clicks'),
          Input('feedback-refresh-store', 'data')],
         State('feedback-modal', 'is_open'),

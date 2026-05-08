@@ -10,6 +10,24 @@ from graph_shared import (
 )
 
 
+def _add_driver_legend_entries(fig, drivers, row=None, col=None):
+    """Add simple color-to-driver legend entries without tying them to metric traces."""
+    for driver, color in drivers:
+        trace = go.Scatter(
+            x=[None],
+            y=[None],
+            mode='lines',
+            name=str(driver),
+            line=dict(color=color, width=3),
+            hoverinfo='skip',
+            showlegend=True,
+        )
+        if row is not None and col is not None:
+            fig.add_trace(trace, row=row, col=col)
+        else:
+            fig.add_trace(trace)
+
+
 def _identify_corners(tel1, tel2):
     """Detects corners as local minima in speed and extracts comparison metrics."""
     corners = []
@@ -276,9 +294,10 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             x=delta_ahead_x,
             y=delta_ahead,
             mode='lines',
-            name=f"-",
+            name=f"{driver1} ahead",
             line=dict(color='#00c853', width=2),
             connectgaps=False,
+            showlegend=False,
             hovertemplate=(
                 f"Distance: %{{x:.0f}} m<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
@@ -290,9 +309,10 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             x=delta_behind_x,
             y=delta_behind,
             mode='lines',
-            name=f"+",
+            name=f"{driver1} behind",
             line=dict(color='#ff4444', width=2),
             connectgaps=False,
+            showlegend=False,
             hovertemplate=(
                 f"Distance: %{{x:.0f}} m<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
@@ -314,27 +334,28 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     # Row 2: Speed
     fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Speed'], mode='lines', name=f'{fast_driver} Speed',
-                             line=dict(color=fast_c, width=2)), row=2, col=1)
+                             line=dict(color=fast_c, width=2), showlegend=False), row=2, col=1)
     fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Speed'], mode='lines', name=f'{slow_driver} Speed',
-                             line=dict(color=slow_c, width=2)), row=2, col=1)
+                             line=dict(color=slow_c, width=2), showlegend=False), row=2, col=1)
 
     # Row 3: Throttle and Brake
     fig.add_trace(
         go.Scatter(x=fast_tel['Distance'], y=fast_tel['Throttle'], mode='lines', name=f'{fast_driver} Throttle',
-                   line=dict(color=fast_c, dash='solid')), row=3, col=1, secondary_y=False)
+                   line=dict(color=fast_c, dash='solid'), showlegend=False), row=3, col=1, secondary_y=False)
     fig.add_trace(
         go.Scatter(x=slow_tel['Distance'], y=slow_tel['Throttle'], mode='lines', name=f'{slow_driver} Throttle',
-                   line=dict(color=slow_c, dash='solid')), row=3, col=1, secondary_y=False)
+                   line=dict(color=slow_c, dash='solid'), showlegend=False), row=3, col=1, secondary_y=False)
     fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['Brake'], mode='lines', name=f'{fast_driver} Brake',
-                             line=dict(color=fast_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
+                             line=dict(color=fast_c, dash='dot'), opacity=0.7, showlegend=False), row=3, col=1, secondary_y=True)
     fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['Brake'], mode='lines', name=f'{slow_driver} Brake',
-                             line=dict(color=slow_c, dash='dot'), opacity=0.7), row=3, col=1, secondary_y=True)
+                             line=dict(color=slow_c, dash='dot'), opacity=0.7, showlegend=False), row=3, col=1, secondary_y=True)
 
     # Row 4: Gear
     fig.add_trace(go.Scatter(x=fast_tel['Distance'], y=fast_tel['nGear'], mode='lines', name=f'{fast_driver} Gear',
-                             line=dict(color=fast_c, width=2)), row=4, col=1)
+                             line=dict(color=fast_c, width=2), showlegend=False), row=4, col=1)
     fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_driver} Gear',
-                             line=dict(color=slow_c, width=2)), row=4, col=1)
+                             line=dict(color=slow_c, width=2), showlegend=False), row=4, col=1)
+    _add_driver_legend_entries(fig, [(fast_driver, fast_c), (slow_driver, slow_c)], row=2, col=1)
 
     _apply_base_layout(
         fig,
@@ -467,6 +488,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
                 text=[str(c.get('turn', c.get('id', '')))], textposition="top center",
                 textfont=dict(size=10, color='white'),
                 name=f"Turn {c.get('turn', c.get('id'))} Apex",
+                showlegend=False,
                 hovertext=(
                     f"Turn {c.get('turn', c.get('id'))} Apex Speed<br>"
                     f"{driver1}: {int(c['v1_min'])} km/h<br>"
@@ -556,8 +578,7 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
 
     # Legend surrogates
     if mode == 'dominance':
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c1, width=6), name=f'{driver1} Faster'))
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', line=dict(color=c2, width=6), name=f'{driver2} Faster'))
+        _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)])
     # Braking / speed use a colorbar instead of a legend.
 
     _apply_base_layout(
@@ -729,7 +750,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     fig = make_subplots(
         rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.75, 0.25], subplot_titles=("Lap Pace (s)", "Track Temperature (°C)")
+        row_heights=[0.75, 0.25], subplot_titles=("", "Track Temperature (°C)")
     )
 
     comp_drawn = set()
@@ -770,50 +791,69 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         if laps:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
                                      marker=dict(color=color, symbol='square', size=12, opacity=0.5),
-                                     name=name, legend='legend'), row=1, col=1)
+                                     name=name, showlegend=False, legend='legend'), row=1, col=1)
 
     # General Legend additions
-    for drv, lbl, col in [(driver1, lbl1, c1), (driver2, lbl2, c2)]:
-        fig.add_trace(go.Scatter(x=[None], y=[None], mode='lines', name=drv,
-                                 line=dict(color=col, width=2), legend='legend'), row=1, col=1)
+    _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=1, col=1)
     for comp in comp_drawn:
         if comp in COMPOUND_COLORS:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
-                                     marker=dict(color=COMPOUND_COLORS[comp], size=10), legend='legend'), row=1, col=1)
+                                     marker=dict(color=COMPOUND_COLORS[comp], size=10),
+                                     showlegend=False, legend='legend'), row=1, col=1)
 
     # 6. Weather & Rain Overlay
     weather_data = session.weather_data
     if not weather_data.empty and not session.laps.empty:
         try:
-            # Get start and end times for each lap
-            laps_with_times = session.laps.dropna(subset=['Time', 'LapTime']).copy()
-            if not laps_with_times.empty:
-                lap_times_for_bounds = laps_with_times.groupby('LapNumber')['Time'].max().reset_index()
-                lap_times_for_bounds['StartTime'] = laps_with_times.groupby('LapNumber')['Time'].min().values - laps_with_times.groupby('LapNumber')['LapTime'].min().values
-                lap_bounds = laps_with_times.groupby('LapNumber').agg({'StartTime': 'min', 'Time': 'max'}).reset_index()
-                
-                weather_sorted = weather_data.sort_values('Time')
+            laps_with_times = session.laps.dropna(subset=['LapNumber', 'Time']).copy()
+            weather_sorted = weather_data.dropna(subset=['Time']).sort_values('Time')
+
+            if not laps_with_times.empty and not weather_sorted.empty:
+                if 'LapStartTime' in laps_with_times.columns:
+                    laps_with_times['LapWeatherStart'] = laps_with_times['LapStartTime']
+                elif 'LapTime' in laps_with_times.columns:
+                    laps_with_times['LapWeatherStart'] = laps_with_times['Time'] - laps_with_times['LapTime']
+                else:
+                    laps_with_times['LapWeatherStart'] = laps_with_times['Time']
+
+                lap_bounds = (
+                    laps_with_times
+                    .dropna(subset=['LapWeatherStart'])
+                    .groupby('LapNumber')
+                    .agg({'LapWeatherStart': 'min', 'Time': 'max'})
+                    .reset_index()
+                )
                 
                 # Track Temp plotting (nearest point is fine for a line)
-                lap_times_for_temp = lap_bounds[['LapNumber', 'Time']].copy()
-                merged_temp = pd.merge_asof(lap_times_for_temp.sort_values('Time'), 
-                                               weather_sorted[['Time', 'TrackTemp']],
-                                               on='Time', direction='nearest')
-                
-                fig.add_trace(go.Scatter(
-                    x=merged_temp['LapNumber'], y=merged_temp['TrackTemp'],
-                    mode='lines+markers', name='Track Temp (°C)',
-                    line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
-                ), row=2, col=1)
+                if not lap_bounds.empty and 'TrackTemp' in weather_sorted.columns:
+                    lap_times_for_temp = lap_bounds[['LapNumber', 'Time']].copy()
+                    temp_weather = weather_sorted[['Time', 'TrackTemp']].dropna(subset=['TrackTemp'])
+                    if not temp_weather.empty:
+                        merged_temp = pd.merge_asof(
+                            lap_times_for_temp.sort_values('Time'),
+                            temp_weather,
+                            on='Time',
+                            direction='nearest'
+                        ).dropna(subset=['TrackTemp'])
+
+                        if not merged_temp.empty:
+                            fig.add_trace(go.Scatter(
+                                x=merged_temp['LapNumber'], y=merged_temp['TrackTemp'],
+                                mode='lines+markers', name='Track Temp (°C)',
+                                line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
+                            ), row=2, col=1)
 
                 # Rain detection: Check if ANY rainfall occurred within the lap's time window
                 rain_laps = []
-                rain_weather = weather_sorted[weather_sorted['Rainfall'] == True]
+                rain_weather = (
+                    weather_sorted[weather_sorted['Rainfall'].fillna(False).astype(bool)]
+                    if 'Rainfall' in weather_sorted.columns else pd.DataFrame()
+                )
                 
                 if not rain_weather.empty:
                     for _, lap in lap_bounds.iterrows():
                         # If any rain timestamp falls between StartTime and Time (end) of the lap
-                        has_rain = rain_weather[(rain_weather['Time'] >= lap['StartTime']) & 
+                        has_rain = rain_weather[(rain_weather['Time'] >= lap['LapWeatherStart']) &
                                                 (rain_weather['Time'] <= lap['Time'])].any().any()
                         if has_rain:
                             rain_laps.append(lap['LapNumber'])
@@ -825,14 +865,14 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 if rain_laps:
                     fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
                                              marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
-                                             legend='legend'), row=1, col=1)
+                                             showlegend=False, legend='legend'), row=1, col=1)
         except Exception:
             pass
 
     _apply_base_layout(
         fig,
         title="Strategy & Weather",
-        legend=dict(title=dict(text="Legend"), yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(0,0,0,0)"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)),
         uirevision='strategy'
     )
     fig.update_xaxes(title_text="Lap Number", row=2, col=1)
@@ -877,7 +917,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                     mode='lines+markers', name=f'{drv} {comp} (Stint {int(stint)})',
                     marker=dict(color=marker_color, size=7),
                     line=dict(color=marker_color, width=1.5),
-                    showlegend=True,
+                    showlegend=False,
                     hovertemplate=f'{drv} Stint {int(stint)} ({comp})<br>'
                                   f'Stint Lap %{{x}}<br>Corrected: %{{y:.3f}}s<extra></extra>'
                 ), row=1, col=col_idx)
@@ -894,7 +934,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                         x=x_fit, y=y_fit, mode='lines',
                         line=dict(dash='dash', color=marker_color, width=2),
                         name=f'{drv} {comp} [{slope:+.3f}s/lap]',
-                        showlegend=True
+                        showlegend=False
                     ), row=1, col=col_idx)
         except Exception:
             continue
@@ -903,6 +943,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         fig,
         title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)<br><sup>+ = more degradation, - = pace improving</sup>',
         margin=dict(l=40, r=40, t=80, b=40),
+        showlegend=False,
         uirevision='degradation'
     )
     fig.update_yaxes(title_text='Fuel-Corrected Lap Time (s)', row=1, col=1, autorange='reversed')
@@ -939,6 +980,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             fill='tozeroy', line=dict(color='white', width=2),
             fillcolor='rgba(255,255,255,0.1)',
             name='Gap',
+            showlegend=False,
             hovertemplate='Lap %{x}<br>Gap: %{y:.3f}s<extra></extra>'
         ), row=1, col=1)
 
@@ -967,7 +1009,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
             
             fig.add_trace(go.Scatter(
                 x=x_vals, y=y_vals, mode='lines',
-                name=f'{lbl1} Pos', line=dict(color=c1, width=2)
+                name=f'{lbl1} Pos', line=dict(color=c1, width=2), showlegend=False
             ), row=2, col=1)
 
         if 'Pos2' in merged.columns:
@@ -979,8 +1021,10 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
             fig.add_trace(go.Scatter(
                 x=x_vals, y=y_vals, mode='lines',
-                name=f'{lbl2} Pos', line=dict(color=c2, width=2)
+                name=f'{lbl2} Pos', line=dict(color=c2, width=2), showlegend=False
             ), row=2, col=1)
+
+        _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=2, col=1)
 
         for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
             pit_laps = laps_df[laps_df['PitInTime'].notna()]['LapNumber'].tolist()

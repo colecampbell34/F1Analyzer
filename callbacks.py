@@ -52,6 +52,12 @@ def register_callbacks(app):
 def _register_core_callbacks(app):
     """Core navigation, dropdown, and dashboard param callbacks."""
 
+    app.clientside_callback(
+        ClientsideFunction(namespace='clientside', function_name='resizeVisiblePlots'),
+        Output('plot-resize-sentinel', 'children'),
+        [Input('main-tabs', 'value'), Input('speed-graph', 'figure')]
+    )
+
     @app.callback(
         Output('experience-mode-store', 'data'),
         [Input('url', 'search'),
@@ -82,14 +88,69 @@ def _register_core_callbacks(app):
 
     @app.callback(
         Output('app-root', 'className'),
-        [Input('experience-mode-store', 'data'), Input('replay-focus-store', 'data')]
+        [Input('experience-mode-store', 'data'), Input('replay-focus-store', 'data'),
+         Input('url', 'pathname'), Input('dashboard-params-store', 'data'),
+         Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
+         Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
+         Input('driver2-dropdown', 'value'), Input('mobile-setup-open-store', 'data')]
     )
-    def update_app_root_class(mode, replay_focus):
+    def update_app_root_class(mode, replay_focus, pathname, params, year, race, session_type, driver1, driver2, mobile_setup_open):
         mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
         classes = ['app-root', f'app-mode-{mode}']
+        if str(pathname or '').rstrip('/') == '/m':
+            classes.append('app-view-mobile')
+        if mobile_setup_open:
+            classes.append('mobile-setup-open')
+        if not all([year, race, session_type]):
+            classes.append('mobile-flow-needs-session')
+        elif not all([driver1, driver2]):
+            classes.append('mobile-flow-needs-drivers')
+        elif not params:
+            classes.append('mobile-flow-ready')
+        else:
+            loaded_matches_selection = (
+                params.get('year') == year
+                and params.get('race') == race
+                and params.get('session_type') == session_type
+                and params.get('driver1') == driver1
+                and params.get('driver2') == driver2
+            )
+            classes.append('mobile-flow-loaded' if loaded_matches_selection else 'mobile-flow-ready mobile-flow-dirty')
         if replay_focus:
             classes.append('replay-focus-active')
         return ' '.join(classes)
+
+    @app.callback(
+        Output('mobile-setup-open-store', 'data'),
+        [Input('mobile-edit-selection-btn', 'n_clicks'),
+         Input('dashboard-params-store', 'data'),
+         Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
+         Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
+         Input('driver2-dropdown', 'value')],
+        State('mobile-setup-open-store', 'data')
+    )
+    def toggle_mobile_setup_panel(edit_clicks, params, year, race, session_type, driver1, driver2, current_open):
+        trigger_id = dash.ctx.triggered_id
+        if trigger_id == 'mobile-edit-selection-btn':
+            return not bool(current_open)
+
+        if params and (
+            params.get('year') == year
+            and params.get('race') == race
+            and params.get('session_type') == session_type
+            and params.get('driver1') == driver1
+            and params.get('driver2') == driver2
+        ):
+            return False
+
+        return current_open if current_open is not None else False
+
+    @app.callback(
+        Output('mobile-edit-selection-btn', 'children'),
+        Input('mobile-setup-open-store', 'data')
+    )
+    def render_mobile_setup_toggle(is_open):
+        return 'Close' if is_open else 'Edit'
 
     @app.callback(
         [Output('replay-focus-store', 'data'),

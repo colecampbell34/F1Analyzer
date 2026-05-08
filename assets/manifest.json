@@ -3,20 +3,25 @@
   "name": "F1 Analyzer - Advanced Telemetry & AI",
   "icons": [
     {
-      "src": "assets/icon-192.png",
+      "src": "/assets/icon-192.png",
       "type": "image/png",
-      "sizes": "192x192"
+      "sizes": "192x192",
+      "purpose": "any maskable"
     },
     {
-      "src": "assets/icon-512.png",
+      "src": "/assets/icon-512.png",
       "type": "image/png",
-      "sizes": "512x512"
+      "sizes": "512x512",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": "/",
+  "id": "/m",
+  "start_url": "/m",
   "background_color": "#111111",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "scope": "/",
   "theme_color": "#ff0000",
+  "categories": ["sports", "utilities"],
   "description": "Advanced Formula 1 telemetry and strategy analysis dashboard."
 }

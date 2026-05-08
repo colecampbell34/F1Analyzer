@@ -334,19 +334,14 @@ def register_telemetry_callbacks(app):
             ))
 
             fig.update_layout(
-                xaxis=dict(title="Lateral G", range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False),
-                yaxis=dict(title="Longitudinal G", range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, scaleanchor="x", scaleratio=1),
-                margin=dict(l=36, r=14, t=18, b=34),
+                xaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False),
+                yaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False,
+                           scaleanchor="x", scaleratio=1),
+                margin=dict(l=4, r=4, t=4, b=4),
                 showlegend=False,
                 paper_bgcolor='rgba(0,0,0,0)',
                 plot_bgcolor='rgba(0,0,0,0)',
-                template='plotly_dark',
-                annotations=[
-                    dict(text="ACCEL", x=0.5, y=0.99, xref="paper", yref="paper", showarrow=False, font=dict(size=10, color="#777")),
-                    dict(text="BRAKE", x=0.5, y=0.01, xref="paper", yref="paper", showarrow=False, font=dict(size=10, color="#777")),
-                    dict(text="LEFT", x=0.02, y=0.5, xref="paper", yref="paper", showarrow=False, textangle=-90, font=dict(size=10, color="#777")),
-                    dict(text="RIGHT", x=0.98, y=0.5, xref="paper", yref="paper", showarrow=False, textangle=90, font=dict(size=10, color="#777")),
-                ]
+                template='plotly_dark'
             )
 
             # Add placeholder traces for 2 drivers (Beam, Trail, Ball each)

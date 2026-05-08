@@ -460,9 +460,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
 
 
-        toggleFeedbackModal: function(open_clicks, cancel_clicks, refresh_data, is_open) {
+        toggleFeedbackModal: function(open_clicks, mobile_open_clicks, cancel_clicks, refresh_data, is_open) {
             const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
-            if (trigger.includes('open-feedback-modal-btn')) return true;
+            if (trigger === 'open-feedback-modal-btn.n_clicks' || trigger === 'mobile-open-feedback-modal-btn.n_clicks') return true;
             if (trigger.includes('cancel-feedback-btn') || trigger.includes('feedback-refresh-store')) return false;
             return is_open;
         },
@@ -536,6 +536,13 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return ids[activeTab] || null;
         },
 
+        resizeVisiblePlots: function(activeTab, speedFigure) {
+            if (window.f1AnalyzerSchedulePlotResize) {
+                window.f1AnalyzerSchedulePlotResize();
+            }
+            return activeTab || '';
+        },
+
         safeFilename: function(text) {
             return String(text || 'f1-analysis')
                 .toLowerCase()
@@ -567,3 +574,73 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
         }
     }
 });
+
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/service-worker.js').catch(function() {});
+    });
+}
+
+(function() {
+    const plotIds = [
+        'speed-graph',
+        'mini-track-map',
+        'gg-diagram',
+        '2d-dominance-graph',
+        'strategy-graph',
+        'deg-graph',
+        'race-gaps-graph',
+        'pit-stops-graph',
+        'grid-pace-graph'
+    ];
+
+    const resizeVisiblePlots = function() {
+        const pObj = (window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null));
+        if (!pObj || !pObj.Plots || !pObj.Plots.resize) return;
+        plotIds.forEach(function(id) {
+            const container = document.getElementById(id);
+            if (!container) return;
+            const plot = container.querySelector('.js-plotly-plot') || container;
+            if (!plot || !plot.data) return;
+            const rect = plot.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+            pObj.Plots.resize(plot);
+        });
+    };
+
+    window.f1AnalyzerSchedulePlotResize = function() {
+        [0, 120, 360, 720, 1200].forEach(function(delay) {
+            window.setTimeout(resizeVisiblePlots, delay);
+        });
+    };
+
+    window.addEventListener('resize', window.f1AnalyzerSchedulePlotResize);
+    window.addEventListener('load', window.f1AnalyzerSchedulePlotResize);
+    window.setTimeout(window.f1AnalyzerSchedulePlotResize, 800);
+    document.addEventListener('visibilitychange', function() {
+        if (!document.hidden) window.f1AnalyzerSchedulePlotResize();
+    });
+    document.addEventListener('click', function(event) {
+        if (event.target && event.target.closest && event.target.closest('.tab')) {
+            window.f1AnalyzerSchedulePlotResize();
+        }
+    });
+    if (window.MutationObserver) {
+        const observer = new MutationObserver(function(mutations) {
+            for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                    if (!node || node.nodeType !== 1) continue;
+                    if (
+                        (node.id && plotIds.includes(node.id)) ||
+                        (node.classList && node.classList.contains('js-plotly-plot')) ||
+                        (node.querySelector && node.querySelector('.js-plotly-plot'))
+                    ) {
+                        window.f1AnalyzerSchedulePlotResize();
+                        return;
+                    }
+                }
+            }
+        });
+        observer.observe(document.body, {childList: true, subtree: true});
+    }
+})();
