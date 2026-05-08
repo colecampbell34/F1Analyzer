@@ -5,8 +5,15 @@ from callbacks_shared import _has_valid_lap, _pick_driver_lap
 from data import get_best_lap, get_shared_data
 
 
-def _telemetry_with_distance(lap, drop_xy_time=False):
-    tel = lap.get_telemetry().add_distance()
+def _telemetry_with_distance(lap, drop_xy_time=False, session=None):
+    try:
+        tel = lap.get_telemetry().add_distance()
+    except Exception as exc:
+        message = str(exc).lower()
+        if session is None or ('load' not in message and 'loaded' not in message):
+            raise
+        session.load(laps=True, telemetry=True, weather=False, messages=False)
+        tel = lap.get_telemetry().add_distance()
     if drop_xy_time:
         tel = tel.dropna(subset=['X', 'Y', 'Distance', 'Time'])
     if not tel.empty:
@@ -33,8 +40,8 @@ def prepare_selected_lap_comparison(
     if not _has_valid_lap(lap2, pd):
         raise ValueError(f"{d2} did not set a valid lap.")
 
-    tel1 = _telemetry_with_distance(lap1, drop_xy_time=drop_xy_time)
-    tel2 = _telemetry_with_distance(lap2, drop_xy_time=drop_xy_time)
+    tel1 = _telemetry_with_distance(lap1, drop_xy_time=drop_xy_time, session=session)
+    tel2 = _telemetry_with_distance(lap2, drop_xy_time=drop_xy_time, session=session)
 
     return {
         'session': session,

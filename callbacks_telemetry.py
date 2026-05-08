@@ -279,96 +279,100 @@ def register_telemetry_callbacks(app):
             return t_sec, dist, lat_g, long_g
 
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
-            cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
-            d1, d2 = cmp['d1'], cmp['d2']
-            c1, c2 = cmp['c1'], cmp['c2']
-            tel1, tel2 = cmp['tel1'], cmp['tel2']
+            try:
+                cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
+                d1, d2 = cmp['d1'], cmp['d2']
+                c1, c2 = cmp['c1'], cmp['c2']
+                tel1, tel2 = cmp['tel1'], cmp['tel2']
 
-            t1, dist1, lat1, long1 = calculate_g_series(tel1)
-            t2, dist2, lat2, long2 = calculate_g_series(tel2)
+                t1, dist1, lat1, long1 = calculate_g_series(tel1)
+                t2, dist2, lat2, long2 = calculate_g_series(tel2)
 
-            # Downsample payload before writing to browser store.
-            def ds(t_sec, dist, lat, lng, max_pts=3600):
-                n = len(dist)
-                if n <= max_pts:
-                    return t_sec.tolist(), dist.tolist(), lat.tolist(), lng.tolist()
-                step = max(1, n // max_pts)
-                return (
-                    t_sec[::step].tolist(),
-                    dist[::step].tolist(),
-                    lat[::step].tolist(),
-                    lng[::step].tolist()
-                )
+                # Downsample payload before writing to browser store.
+                def ds(t_sec, dist, lat, lng, max_pts=3600):
+                    n = len(dist)
+                    if n <= max_pts:
+                        return t_sec.tolist(), dist.tolist(), lat.tolist(), lng.tolist()
+                    step = max(1, n // max_pts)
+                    return (
+                        t_sec[::step].tolist(),
+                        dist[::step].tolist(),
+                        lat[::step].tolist(),
+                        lng[::step].tolist()
+                    )
 
-            d1_t, d1_dist, d1_lat, d1_long = ds(t1, dist1, lat1, long1)
-            d2_t, d2_dist, d2_lat, d2_long = ds(t2, dist2, lat2, long2)
-            store = {
-                'd1': {'driver': d1, 'color': c1, 't': d1_t, 'dist': d1_dist, 'lat': d1_lat, 'long': d1_long},
-                'd2': {'driver': d2, 'color': c2, 't': d2_t, 'dist': d2_dist, 'lat': d2_lat, 'long': d2_long},
-            }
+                d1_t, d1_dist, d1_lat, d1_long = ds(t1, dist1, lat1, long1)
+                d2_t, d2_dist, d2_lat, d2_long = ds(t2, dist2, lat2, long2)
+                store = {
+                    'd1': {'driver': d1, 'color': c1, 't': d1_t, 'dist': d1_dist, 'lat': d1_lat, 'long': d1_long},
+                    'd2': {'driver': d2, 'color': c2, 't': d2_t, 'dist': d2_dist, 'lat': d2_lat, 'long': d2_long},
+                }
 
-            fig = go.Figure()
-            # Reference rings.
-            for r0 in [1, 2, 3, 4, 5]:
-                th = np.linspace(0, 2 * np.pi, 160)
+                fig = go.Figure()
+                # Reference rings.
+                for r0 in [1, 2, 3, 4, 5]:
+                    th = np.linspace(0, 2 * np.pi, 160)
+                    fig.add_trace(go.Scatter(
+                        x=r0 * np.cos(th), y=r0 * np.sin(th),
+                        mode='lines',
+                        line=dict(color='#3a3a3a', dash='dot', width=1),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
                 fig.add_trace(go.Scatter(
-                    x=r0 * np.cos(th), y=r0 * np.sin(th),
+                    x=[-5.5, 5.5], y=[0, 0],
                     mode='lines',
-                    line=dict(color='#3a3a3a', dash='dot', width=1),
+                    line=dict(color='#555', width=1),
                     showlegend=False,
                     hoverinfo='skip'
                 ))
-            fig.add_trace(go.Scatter(
-                x=[-5.5, 5.5], y=[0, 0],
-                mode='lines',
-                line=dict(color='#555', width=1),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-            fig.add_trace(go.Scatter(
-                x=[0, 0], y=[-5.5, 5.5],
-                mode='lines',
-                line=dict(color='#555', width=1),
-                showlegend=False,
-                hoverinfo='skip'
-            ))
-
-            fig.update_layout(
-                xaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False),
-                yaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False,
-                           scaleanchor="x", scaleratio=1),
-                margin=dict(l=4, r=4, t=4, b=4),
-                showlegend=False,
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                template='plotly_dark'
-            )
-
-            # Add placeholder traces for 2 drivers (Beam, Trail, Ball each)
-            for i in range(2):
-                color = c1 if i == 0 else c2
-                name = d1 if i == 0 else d2
-                # Beam
                 fig.add_trace(go.Scatter(
-                    x=[0, 0], y=[0, 0], mode='lines',
-                    line=dict(color=color, width=1.5, dash='dot'),
-                    opacity=0.5, showlegend=False, meta='hover', hoverinfo='skip'
-                ))
-                # Trail
-                fig.add_trace(go.Scatter(
-                    x=[], y=[], mode='lines',
-                    line=dict(color=color, width=3, shape='spline', smoothing=1.2),
-                    opacity=0.45, showlegend=False, meta='hover', hoverinfo='skip'
-                ))
-                # Ball
-                fig.add_trace(go.Scatter(
-                    x=[None], y=[None], mode='markers',
-                    marker=dict(color=color, size=11, line=dict(color='white', width=1.5), symbol='diamond'),
-                    name=name, showlegend=False, meta='hover',
-                    hovertemplate=f"<b>{name}</b><br>Lat: %{{x:.2f}}G<br>Long: %{{y:.2f}}G<extra></extra>"
+                    x=[0, 0], y=[-5.5, 5.5],
+                    mode='lines',
+                    line=dict(color='#555', width=1),
+                    showlegend=False,
+                    hoverinfo='skip'
                 ))
 
-            return fig, store
+                fig.update_layout(
+                    xaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False),
+                    yaxis=dict(range=[-5.5, 5.5], gridcolor='#2c2c2c', zeroline=False, showticklabels=False,
+                               scaleanchor="x", scaleratio=1),
+                    margin=dict(l=4, r=4, t=4, b=4),
+                    showlegend=False,
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    template='plotly_dark'
+                )
+
+                # Add placeholder traces for 2 drivers (Beam, Trail, Ball each)
+                for i in range(2):
+                    color = c1 if i == 0 else c2
+                    name = d1 if i == 0 else d2
+                    # Beam
+                    fig.add_trace(go.Scatter(
+                        x=[0, 0], y=[0, 0], mode='lines',
+                        line=dict(color=color, width=1.5, dash='dot'),
+                        opacity=0.5, showlegend=False, meta='hover', hoverinfo='skip'
+                    ))
+                    # Trail
+                    fig.add_trace(go.Scatter(
+                        x=[], y=[], mode='lines',
+                        line=dict(color=color, width=3, shape='spline', smoothing=1.2),
+                        opacity=0.45, showlegend=False, meta='hover', hoverinfo='skip'
+                    ))
+                    # Ball
+                    fig.add_trace(go.Scatter(
+                        x=[None], y=[None], mode='markers',
+                        marker=dict(color=color, size=11, line=dict(color='white', width=1.5), symbol='diamond'),
+                        name=name, showlegend=False, meta='hover',
+                        hovertemplate=f"<b>{name}</b><br>Lat: %{{x:.2f}}G<br>Long: %{{y:.2f}}G<extra></extra>"
+                    ))
+
+                return fig, store
+            except Exception as e:
+                logging.error(f"G-force Error: {e}")
+                return _error_figure(_friendly_error(e)), {}
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='updateGGHover'),
