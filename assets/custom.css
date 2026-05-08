@@ -105,6 +105,9 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
         line-height: 1.2;
         color: #d6d6d6;
         max-width: 58vw;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
     }
 
     .mobile-action-buttons {
@@ -294,10 +297,17 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
     .loading-status-banner {
         min-height: 44px;
         padding: 0.58rem 0.68rem;
-        font-size: 0.86rem;
-        line-height: 1.25;
+        font-size: 0.74rem;
+        line-height: 1.18;
         border-radius: 8px;
         background: #121417;
+    }
+
+    .tab-content span[style*="F1 data"] {
+        display: block;
+        padding: 0 0.25rem;
+        font-size: 0.58rem !important;
+        line-height: 1.15 !important;
     }
 
     .export-actions,
@@ -1078,6 +1088,31 @@ select:focus-visible {
         justify-content: center;
     }
 
+    .mobile-flow-ready.mobile-load-pending .sidebar-update-btn::before {
+        content: "Loading...";
+        padding-left: 1rem;
+    }
+
+    .mobile-flow-ready.mobile-load-pending .sidebar-update-btn::after {
+        content: "";
+        position: absolute;
+        left: calc(50% - 3.6rem);
+        top: 50%;
+        width: 14px;
+        height: 14px;
+        margin-top: -7px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-top-color: #fff;
+        border-radius: 999px;
+        animation: mobile-load-spin 0.8s linear infinite;
+    }
+
+    @keyframes mobile-load-spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
     .telemetry-controls-panel .row:first-child,
     #replay-focus-btn {
         display: none !important;
@@ -1264,15 +1299,18 @@ select:focus-visible {
     .mobile-flow-loaded .stat-item {
         min-width: 0;
         font-size: 0;
-        gap: 1px;
-        align-items: baseline;
+        gap: 0;
+        align-items: center;
+        flex-direction: column;
+        line-height: 1;
     }
 
     .mobile-flow-loaded .stat-item small {
-        display: inline !important;
+        display: block !important;
         font-size: 0.34rem;
         line-height: 1;
         color: #777;
+        margin-top: 1px;
     }
 
     .mobile-flow-loaded .stat-val,

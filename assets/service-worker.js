@@ -1,4 +1,4 @@
-const CACHE_NAME = 'f1-analyzer-shell-v6';
+const CACHE_NAME = 'f1-analyzer-shell-v7';
 const APP_SHELL = [
     '/',
     '/m',

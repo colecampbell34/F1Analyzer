@@ -1024,8 +1024,6 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 name=f'{lbl2} Pos', line=dict(color=c2, width=2), showlegend=False
             ), row=2, col=1)
 
-        _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=2, col=1)
-
         for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
             pit_laps = laps_df[laps_df['PitInTime'].notna()]['LapNumber'].tolist()
             for pl in pit_laps:
@@ -1046,7 +1044,9 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     _apply_base_layout(
         fig,
         title='Race Gap & Position Analysis',
-        margin=dict(l=40, r=40, t=80, b=40), uirevision='gaps'
+        margin=dict(l=40, r=18, t=70, b=40),
+        showlegend=False,
+        uirevision='gaps'
     )
     fig.update_yaxes(title_text='Gap (seconds)', row=1, col=1)
     fig.update_yaxes(title_text='Position', row=2, col=1, autorange='reversed',

@@ -621,6 +621,12 @@ if ('serviceWorker' in navigator) {
         if (!document.hidden) window.f1AnalyzerSchedulePlotResize();
     });
     document.addEventListener('click', function(event) {
+        if (event.target && event.target.closest && event.target.closest('#update-dashboard-btn')) {
+            const root = document.getElementById('app-root');
+            if (root && root.classList.contains('app-view-mobile')) {
+                root.classList.add('mobile-load-pending');
+            }
+        }
         if (event.target && event.target.closest && event.target.closest('.tab')) {
             window.f1AnalyzerSchedulePlotResize();
         }
