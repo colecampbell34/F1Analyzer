@@ -941,7 +941,7 @@ def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     _apply_base_layout(
         fig,
-        title='Tyre Degradation Analysis (Fuel-Corrected, ~0.06s/lap)<br><sup>+ = more degradation, - = pace improving</sup>',
+        title='Tyre Deg Analysis (Fuel-Corrected)<br><sup>+ = more degradation, - = pace improving</sup>',
         margin=dict(l=40, r=40, t=80, b=40),
         showlegend=False,
         uirevision='degradation'
@@ -957,8 +957,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds the gap-between-drivers chart over race laps."""
     from plotly.subplots import make_subplots
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                        row_heights=[0.7, 0.3],
-                        subplot_titles=('Gap Between Drivers', 'Position'))
+                        row_heights=[0.7, 0.3])
 
     try:
         laps1 = session.laps.pick_drivers(driver1).sort_values('LapNumber').dropna(subset=['Time'])
@@ -1165,7 +1164,7 @@ def _build_grid_pace_fig(session, session_type):
         session_type) else "Qualifying Laps"
     _apply_base_layout(
         fig,
-        title=f'Grid Pace Distribution ({session_label}, Sorted by Finishing Position)',
+        title=f'Grid Pace Distribution ({session_label})',
         showlegend=False,
         hovermode='closest',
         yaxis_title='Lap Time (s)',
@@ -1183,7 +1182,7 @@ def _build_grid_pace_fig(session, session_type):
 def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Builds a pit stop duration comparison chart for all drivers."""
     pit_data = []
-    title = 'Pit Stop Durations (Time spent in pit lane)'
+    title = 'Pit Stop Durations (Pit lane time)'
     hover_label = 'Stop Time'
 
     session_name = getattr(session, 'name', '')
