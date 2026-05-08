@@ -67,6 +67,9 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - `CALLBACK_TIMING_THRESHOLD_MS` - Logs callbacks slower than this threshold. Default: `400`.
 - `LOG_ALL_CALLBACKS=1` - Logs every timed callback.
 - `LOG_SESSION_LOADING=1` - Logs session preload/load behavior.
+- `FASTF1_CACHE_DIR` - Optional runtime cache directory. Defaults to `f1_cache/` locally and `/tmp/f1_cache` on Vercel.
+- `AI_CACHE_DIR` - Optional AI response cache directory. Defaults to `ai_cache/` locally and `/tmp/ai_cache` on Vercel.
+- `FEEDBACK_DIR` - Optional feedback storage directory. Defaults to `feedback/` locally and `/tmp/feedback` on Vercel.
 
 ## Runtime Data
 

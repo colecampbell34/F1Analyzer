@@ -27,7 +27,19 @@ _GRANULAR_LOAD_LOCK = threading.Lock()
 _MAX_TRACKED_PRELOAD_FUTURES = 12
 _MAX_TRACKED_PRELOAD_JOBS = 24
 _PRELOAD_JOB_TTL_SECONDS = 900
-_CACHE_DIR = 'f1_cache'
+
+
+def _runtime_dir(env_name, local_name):
+    """Return a writable runtime directory for local and serverless hosts."""
+    configured = os.getenv(env_name)
+    if configured:
+        return configured
+    if os.getenv('VERCEL'):
+        return os.path.join('/tmp', local_name)
+    return local_name
+
+
+_CACHE_DIR = _runtime_dir('FASTF1_CACHE_DIR', 'f1_cache')
 _CACHE_SETUP_LOCK = threading.Lock()
 _CACHE_READY = False
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')

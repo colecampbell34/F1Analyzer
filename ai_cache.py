@@ -14,7 +14,17 @@ _USER_DAILY_USAGE = defaultdict(int)
 USER_DAILY_LIMIT = 10
 _daily_reset_date = None
 
-_AI_CACHE_DIR = 'ai_cache'
+
+def _runtime_dir(env_name, local_name):
+    configured = os.getenv(env_name)
+    if configured:
+        return configured
+    if os.getenv('VERCEL'):
+        return os.path.join('/tmp', local_name)
+    return local_name
+
+
+_AI_CACHE_DIR = _runtime_dir('AI_CACHE_DIR', 'ai_cache')
 _AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
 _AI_CACHE_LOCK = threading.Lock()
 _AI_RESPONSE_CACHE = {}
