@@ -716,8 +716,28 @@ app_layout = dbc.Container([
         style={"position": "fixed", "top": 10, "right": 10, "width": 250, "zIndex": 9999},
     ),
 
+    dbc.Modal([
+        dbc.ModalHeader(dbc.ModalTitle("Best on a Larger Screen")),
+        dbc.ModalBody([
+            html.P(
+                "F1 Analyzer works on phones, but the telemetry charts, track maps, and replay controls are built for detailed comparison.",
+                style={'marginBottom': '0.75rem'}
+            ),
+            html.P(
+                "For the best experience, use a laptop, desktop, or larger tablet.",
+                style={'color': '#b8c3cc', 'marginBottom': 0}
+            )
+        ]),
+        dbc.ModalFooter(
+            dbc.Button("Continue on Phone", id='phone-disclaimer-dismiss-btn',
+                       color='danger', n_clicks=0)
+        )
+    ], id='phone-disclaimer-modal', is_open=False, centered=True,
+       className='phone-disclaimer-modal'),
+
     dcc.Store(id='dashboard-params-store', storage_type='session'),
     dcc.Store(id='experience-mode-store', storage_type='local', data=DEFAULT_EXPERIENCE_MODE),
+    dcc.Store(id='phone-disclaimer-store', storage_type='local', data={}),
     dcc.Store(id='replay-focus-store', storage_type='memory', data=False),
     dcc.Store(id='latest-race-store', storage_type='memory'),
     dcc.Store(id='gg-data-store', storage_type='memory'),
@@ -727,7 +747,7 @@ app_layout = dbc.Container([
     dcc.Store(id='export-status-store', storage_type='memory'),
     dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
-    dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=False),
+    dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=True),
     dcc.Store(id='feedback-refresh-store'),
     dcc.Download(id='feedback-download'),
     dcc.ConfirmDialog(id='error-dialog', message='')

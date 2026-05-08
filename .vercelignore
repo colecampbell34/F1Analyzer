@@ -1,0 +1,13 @@
+.env
+.DS_Store
+.cursor/
+.idea/
+.junie/
+.replit
+replit.md
+__pycache__/
+*.pyc
+f1_cache/
+ai_cache/
+feedback/
+tests/

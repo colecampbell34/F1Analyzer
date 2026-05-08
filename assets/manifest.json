@@ -15,8 +15,8 @@
       "purpose": "any maskable"
     }
   ],
-  "id": "/m",
-  "start_url": "/m",
+  "id": "/",
+  "start_url": "/",
   "background_color": "#111111",
   "display": "standalone",
   "orientation": "portrait-primary",

@@ -58,6 +58,14 @@ def _register_core_callbacks(app):
         [Input('main-tabs', 'value'), Input('speed-graph', 'figure')]
     )
 
+    app.clientside_callback(
+        ClientsideFunction(namespace='clientside', function_name='showPhoneDisclaimer'),
+        [Output('phone-disclaimer-modal', 'is_open'),
+         Output('phone-disclaimer-store', 'data')],
+        [Input('url', 'pathname'), Input('phone-disclaimer-dismiss-btn', 'n_clicks')],
+        State('phone-disclaimer-store', 'data')
+    )
+
     @app.callback(
         Output('experience-mode-store', 'data'),
         [Input('url', 'search'),
@@ -89,16 +97,14 @@ def _register_core_callbacks(app):
     @app.callback(
         Output('app-root', 'className'),
         [Input('experience-mode-store', 'data'), Input('replay-focus-store', 'data'),
-         Input('url', 'pathname'), Input('dashboard-params-store', 'data'),
+         Input('dashboard-params-store', 'data'),
          Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
          Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
          Input('driver2-dropdown', 'value'), Input('mobile-setup-open-store', 'data')]
     )
-    def update_app_root_class(mode, replay_focus, pathname, params, year, race, session_type, driver1, driver2, mobile_setup_open):
+    def update_app_root_class(mode, replay_focus, params, year, race, session_type, driver1, driver2, mobile_setup_open):
         mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
         classes = ['app-root', f'app-mode-{mode}']
-        if str(pathname or '').rstrip('/') == '/m':
-            classes.append('app-view-mobile')
         if mobile_setup_open:
             classes.append('mobile-setup-open')
         if not all([year, race, session_type]):
@@ -570,7 +576,8 @@ def _register_core_callbacks(app):
     @app.callback(
         [Output('loading-status-banner', 'children'),
          Output('loading-status-banner', 'className'),
-         Output('preload-status-store', 'data')],
+         Output('preload-status-store', 'data'),
+         Output('preload-status-interval', 'disabled')],
         [Input('dashboard-params-store', 'data'),
          Input('main-tabs', 'value'),
          Input('preload-status-interval', 'n_intervals')]
@@ -587,7 +594,8 @@ def _register_core_callbacks(app):
                     )
                 ],
                 "loading-status-banner status-idle",
-                {'status': 'idle'}
+                {'status': 'idle'},
+                True
             )
         status = get_preload_status_for_tab(params, active_tab)
         state = status.get('status', 'idle')
@@ -608,7 +616,7 @@ def _register_core_callbacks(app):
                 className='help-tip tip-intermediate',
                 title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
             )
-        ], f"loading-status-banner status-{state}", status
+        ], f"loading-status-banner status-{state}", status, state not in ('queued', 'loading')
 
     @app.callback(
         Output('graph-summary', 'children'),

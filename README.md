@@ -96,6 +96,18 @@ The app exposes:
 
 - `/health` and `/healthz` for cheap liveness checks.
 - `/warmup` to start background runtime initialization and schedule cache warming.
+- `/m` redirects to `/`; the app now uses one canonical URL with responsive layout.
+
+### Vercel
+
+This repo includes a Vercel WSGI entrypoint at `api/index.py`, plus `vercel.json`
+and `.vercelignore` to keep the serverless bundle small. Set `PUBLIC_BASE_URL`
+to your production URL so Open Graph metadata points at the Vercel domain.
+
+The FastF1 cache is runtime data and is intentionally excluded from deployment.
+First loads on a cold function can still take time while FastF1 rebuilds cache
+data, so use `/warmup` after deployment if you want to prime lightweight startup
+work before sharing the app.
 
 ---
 

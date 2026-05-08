@@ -1,4 +1,5 @@
 import logging
+import os
 import dash
 import dash_bootstrap_components as dbc
 from layout import app_layout
@@ -10,7 +11,7 @@ from flask_compress import Compress
 import threading
 import atexit
 from datetime import datetime
-from flask import jsonify, request, send_from_directory
+from flask import jsonify, redirect, request, send_from_directory
 import pandas as pd
 from ui_utils import _feedback_admin_authorized
 from perf_monitor import get_perf_snapshot
@@ -21,6 +22,8 @@ logging.getLogger('werkzeug').setLevel(logging.WARNING)
 logging.getLogger('dash').setLevel(logging.WARNING)
 logging.getLogger('flask').setLevel(logging.WARNING)
 logging.getLogger('google.genai').setLevel(logging.WARNING)
+
+PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'https://f-1-analyzer--colecampbell34.replit.app').rstrip('/')
 
 app = dash.Dash(
     __name__,
@@ -38,8 +41,8 @@ app = dash.Dash(
         {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
         {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
         {"property": "og:type", "content": "website"},
-        {"property": "og:url", "content": "https://f-1-analyzer--colecampbell34.replit.app"},
-        {"property": "og:image", "content": "https://f-1-analyzer--colecampbell34.replit.app/assets/og-image.png"},
+        {"property": "og:url", "content": PUBLIC_BASE_URL},
+        {"property": "og:image", "content": f"{PUBLIC_BASE_URL}/assets/og-image.png"},
         {"name": "twitter:card", "content": "summary_large_image"},
         {"name": "twitter:site", "content": "@F1Analyzer"},
         {"name": "theme-color", "content": "#ff0000"}
@@ -48,6 +51,7 @@ app = dash.Dash(
 
 Compress(app.server)
 server = app.server
+server.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
 
 _RUNTIME_INIT_LOCK = threading.Lock()
 _RUNTIME_INIT_STARTED = False
@@ -94,6 +98,19 @@ def _ensure_runtime_initialized():
     _start_runtime_init_once()
 
 
+@server.after_request
+def _set_deployment_cache_headers(response):
+    """Keep static payloads CDN-friendly without caching live Dash/API responses."""
+    path = request.path or ''
+    if path == '/service-worker.js':
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    elif path.startswith('/assets/') or path.startswith('/_dash-component-suites/'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    elif path in ('/', '/m', '/m/') or path.startswith('/api/') or path in ('/health', '/healthz', '/warmup'):
+        response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @server.route('/health', strict_slashes=False)
 @server.route('/healthz', strict_slashes=False)
 def healthz():
@@ -112,8 +129,9 @@ def warmup():
 @server.route('/m')
 @server.route('/m/')
 def mobile_entry():
-    """Serve the Dash shell for the mobile/PWA entry path."""
-    return app.index()
+    """Canonicalize the former mobile route to the single app URL."""
+    suffix = f"?{request.query_string.decode('utf-8')}" if request.query_string else ""
+    return redirect(f"/{suffix}", code=308)
 
 
 @server.route('/service-worker.js')

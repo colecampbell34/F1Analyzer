@@ -18,6 +18,17 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return bestI;
         },
 
+        showPhoneDisclaimer: function(_pathname, dismissClicks, storeData) {
+            const ctx = window.dash_clientside.callback_context || {};
+            const trigger = ctx.triggered && ctx.triggered[0] ? ctx.triggered[0].prop_id : '';
+            const current = storeData || {};
+            if (trigger === 'phone-disclaimer-dismiss-btn.n_clicks' && dismissClicks) {
+                return [false, Object.assign({}, current, {dismissed: true})];
+            }
+            const isPhoneSize = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+            return [Boolean(isPhoneSize && !current.dismissed), current];
+        },
+
         updateMiniMap: function(hoverData, miniStore, fig, playbackDisabled) {
             const dash = document.getElementById('live-telemetry-dashboard');
             if (playbackDisabled === false) return window.dash_clientside.no_update;
@@ -623,7 +634,8 @@ if ('serviceWorker' in navigator) {
     document.addEventListener('click', function(event) {
         if (event.target && event.target.closest && event.target.closest('#update-dashboard-btn')) {
             const root = document.getElementById('app-root');
-            if (root && root.classList.contains('app-view-mobile')) {
+            const isPhoneSize = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+            if (root && isPhoneSize) {
                 root.classList.add('mobile-load-pending');
             }
         }

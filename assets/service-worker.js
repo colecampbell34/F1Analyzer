@@ -1,7 +1,6 @@
-const CACHE_NAME = 'f1-analyzer-shell-v8';
+const CACHE_NAME = 'f1-analyzer-shell-v10';
 const APP_SHELL = [
     '/',
-    '/m',
     '/assets/manifest.json',
     '/assets/custom.css',
     '/assets/scripts.js',
@@ -32,7 +31,7 @@ self.addEventListener('fetch', event => {
     if (request.method !== 'GET') return;
 
     const url = new URL(request.url);
-    const isShellRoute = url.origin === self.location.origin && (url.pathname === '/' || url.pathname === '/m');
+    const isShellRoute = url.origin === self.location.origin && url.pathname === '/';
     const isAsset = url.origin === self.location.origin && url.pathname.startsWith('/assets/');
 
     if (isShellRoute) {
@@ -43,7 +42,7 @@ self.addEventListener('fetch', event => {
                     caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
                     return response;
                 })
-                .catch(() => caches.match(request).then(cached => cached || caches.match('/m')))
+                .catch(() => caches.match(request).then(cached => cached || caches.match('/')))
         );
         return;
     }
