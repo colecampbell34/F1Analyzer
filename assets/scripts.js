@@ -588,7 +588,14 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/service-worker.js').catch(function() {});
+        const register = function() {
+            navigator.serviceWorker.register('/service-worker.js').catch(function() {});
+        };
+        if ('requestIdleCallback' in window) {
+            window.requestIdleCallback(register, {timeout: 2500});
+        } else {
+            window.setTimeout(register, 1200);
+        }
     });
 }
 
@@ -619,9 +626,13 @@ if ('serviceWorker' in navigator) {
         });
     };
 
+    let resizeTimers = [];
     window.f1AnalyzerSchedulePlotResize = function() {
-        [0, 120, 360, 720, 1200].forEach(function(delay) {
-            window.setTimeout(resizeVisiblePlots, delay);
+        resizeTimers.forEach(function(timer) {
+            window.clearTimeout(timer);
+        });
+        resizeTimers = [80, 420].map(function(delay) {
+            return window.setTimeout(resizeVisiblePlots, delay);
         });
     };
 

@@ -1,6 +1,8 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
 from datetime import datetime
+import os
+from urllib.parse import quote_plus
 from graph_shared import GRAPH_CONFIG
 from ai_utils import AI_ENABLED
 from ux_helpers import DEFAULT_EXPERIENCE_MODE
@@ -31,6 +33,10 @@ MODE_OPTIONS = [
     {'label': 'Intermediate', 'value': 'intermediate'},
     {'label': 'Engineer', 'value': 'engineer'},
 ]
+
+REPO_URL = "https://github.com/colecampbell34/F1Analyzer"
+PUBLIC_SHARE_URL = os.getenv('PUBLIC_BASE_URL', REPO_URL).rstrip('/') or REPO_URL
+PUBLIC_SHARE_URL_ENCODED = quote_plus(PUBLIC_SHARE_URL)
 
 
 def _mode_selector(component_id, compact=False):
@@ -263,8 +269,8 @@ sidebar = html.Div([
                    style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '10px'}),
         html.Div([
             html.A(html.I(className="fab fa-github fa-lg"), href="https://github.com/colecampbell34/F1Analyzer", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
-            html.A(html.I(className="fab fa-twitter fa-lg"), href="https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url=https://f-1-analyzer--colecampbell34.replit.app", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
-            html.A(html.I(className="fab fa-reddit fa-lg"), href="https://reddit.com/submit?url=https://f-1-analyzer--colecampbell34.replit.app&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
+            html.A(html.I(className="fab fa-twitter fa-lg"), href=f"https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url={PUBLIC_SHARE_URL_ENCODED}", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
+            html.A(html.I(className="fab fa-reddit fa-lg"), href=f"https://reddit.com/submit?url={PUBLIC_SHARE_URL_ENCODED}&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
         ], style={'textAlign': 'center', 'paddingBottom': '5px'})
     ], className='sidebar-footer', style={'flex': '0 0 auto'})
 

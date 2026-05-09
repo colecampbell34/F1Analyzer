@@ -7,8 +7,6 @@
 
 An advanced Formula 1 telemetry and strategy analysis dashboard powered by Google Gemini AI. Compare driver performance, visualize track dominance, review race strategy, and ask data-grounded questions about a loaded session.
 
-**Try it out:** [https://f-1-analyzer--colecampbell34.replit.app](https://f-1-analyzer--colecampbell34.replit.app)
-
 ## Key Features
 
 - Latest Race shortcut that selects the most recent completed race and defaults to the top two drivers.
@@ -34,6 +32,7 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - UI: Dash, Plotly, Dash Bootstrap Components
 - AI: Google Gemini via `google-genai`
 - Runtime: Flask, Gunicorn, Flask-Compress
+- Frontend runtime: Dash's React renderer with clientside JavaScript for high-frequency chart interactions
 
 ## Project Structure
 
@@ -70,6 +69,8 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - `FASTF1_CACHE_DIR` - Optional runtime cache directory. Defaults to `f1_cache/` locally and `/tmp/f1_cache` on Vercel.
 - `AI_CACHE_DIR` - Optional AI response cache directory. Defaults to `ai_cache/` locally and `/tmp/ai_cache` on Vercel.
 - `FEEDBACK_DIR` - Optional feedback storage directory. Defaults to `feedback/` locally and `/tmp/feedback` on Vercel.
+- `PUBLIC_BASE_URL` - Optional production URL for Open Graph metadata and social share links.
+- `ENABLE_VERCEL_ANALYTICS=1` - Opts into Vercel Web Analytics and Speed Insights scripts. They are disabled by default to keep the first frontend load lighter.
 
 ## Runtime Data
 

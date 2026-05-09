@@ -23,7 +23,27 @@ logging.getLogger('dash').setLevel(logging.WARNING)
 logging.getLogger('flask').setLevel(logging.WARNING)
 logging.getLogger('google.genai').setLevel(logging.WARNING)
 
-PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', 'https://f-1-analyzer--colecampbell34.replit.app').rstrip('/')
+PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
+
+META_TAGS = [
+    {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+    {"name": "mobile-web-app-capable", "content": "yes"},
+    {"name": "apple-mobile-web-app-capable", "content": "yes"},
+    {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
+    {"name": "description", "content": "Advanced Formula 1 telemetry and strategy analysis dashboard. Compare driver performance, track dominance, and get AI-powered race insights using FastF1 and Google Gemini."},
+    {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
+    {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
+    {"property": "og:type", "content": "website"},
+    {"name": "twitter:card", "content": "summary_large_image"},
+    {"name": "twitter:site", "content": "@F1Analyzer"},
+    {"name": "theme-color", "content": "#ff0000"}
+]
+
+if PUBLIC_BASE_URL:
+    META_TAGS.extend([
+        {"property": "og:url", "content": PUBLIC_BASE_URL},
+        {"property": "og:image", "content": f"{PUBLIC_BASE_URL}/assets/og-image.png"},
+    ])
 
 app = dash.Dash(
     __name__,
@@ -31,38 +51,30 @@ app = dash.Dash(
     title="F1 Analyzer - Advanced Telemetry Dashboard",
     update_title=None,
     suppress_callback_exceptions=True,
-    meta_tags=[
-        {"name": "viewport", "content": "width=device-width, initial-scale=1"},
-        {"rel": "manifest", "href": "/assets/manifest.json"},
-        {"name": "mobile-web-app-capable", "content": "yes"},
-        {"name": "apple-mobile-web-app-capable", "content": "yes"},
-        {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
-        {"name": "description", "content": "Advanced Formula 1 telemetry and strategy analysis dashboard. Compare driver performance, track dominance, and get AI-powered race insights using FastF1 and Google Gemini."},
-        {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
-        {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
-        {"property": "og:type", "content": "website"},
-        {"property": "og:url", "content": PUBLIC_BASE_URL},
-        {"property": "og:image", "content": f"{PUBLIC_BASE_URL}/assets/og-image.png"},
-        {"name": "twitter:card", "content": "summary_large_image"},
-        {"name": "twitter:site", "content": "@F1Analyzer"},
-        {"name": "theme-color", "content": "#ff0000"}
-    ]
+    assets_ignore='service-worker\\.js',
+    meta_tags=META_TAGS
 )
 
-# Inject Vercel Web Analytics and Speed Insights scripts into the HTML head
+ANALYTICS_HEAD = ''
+if os.getenv('ENABLE_VERCEL_ANALYTICS') == '1':
+    ANALYTICS_HEAD = '''
+        <script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
+        <script>
+            window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+        </script>
+        <script defer src="/_vercel/speed-insights/script.js"></script>
+    '''
+
 app.index_string = '''
 <!DOCTYPE html>
 <html>
     <head>
         {%metas%}
         <title>{%title%}</title>
+        <link rel="manifest" href="/assets/manifest.json">
         {%favicon%}
         {%css%}
-        <script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
-        <script>
-            window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
-        </script>
-        <script defer src="/_vercel/speed-insights/script.js"></script>
+        {analytics_head}
     </head>
     <body>
         {%app_entry%}
@@ -73,7 +85,7 @@ app.index_string = '''
         </footer>
     </body>
 </html>
-'''
+'''.replace('{analytics_head}', ANALYTICS_HEAD)
 
 Compress(app.server)
 server = app.server
@@ -125,7 +137,7 @@ def _ensure_runtime_initialized():
 
 
 @server.after_request
-def _set_deployment_cache_headers(response):
+def _set_cache_headers(response):
     """Keep static payloads CDN-friendly without caching live Dash/API responses."""
     path = request.path or ''
     if path == '/service-worker.js':

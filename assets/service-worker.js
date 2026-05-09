@@ -1,6 +1,5 @@
-const CACHE_NAME = 'f1-analyzer-shell-v10';
-const APP_SHELL = [
-    '/',
+const CACHE_NAME = 'f1-analyzer-assets-v11';
+const STATIC_ASSETS = [
     '/assets/manifest.json',
     '/assets/custom.css',
     '/assets/scripts.js',
@@ -11,7 +10,7 @@ const APP_SHELL = [
 self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_NAME)
-            .then(cache => cache.addAll(APP_SHELL))
+            .then(cache => cache.addAll(STATIC_ASSETS))
             .catch(() => undefined)
     );
     self.skipWaiting();
@@ -31,29 +30,17 @@ self.addEventListener('fetch', event => {
     if (request.method !== 'GET') return;
 
     const url = new URL(request.url);
-    const isShellRoute = url.origin === self.location.origin && url.pathname === '/';
     const isAsset = url.origin === self.location.origin && url.pathname.startsWith('/assets/');
+    if (!isAsset) return;
 
-    if (isShellRoute) {
-        event.respondWith(
-            fetch(request)
-                .then(response => {
-                    const copy = response.clone();
-                    caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-                    return response;
-                })
-                .catch(() => caches.match(request).then(cached => cached || caches.match('/')))
-        );
-        return;
-    }
-
-    if (isAsset) {
-        event.respondWith(
-            caches.match(request).then(cached => cached || fetch(request).then(response => {
+    event.respondWith(
+        caches.match(request).then(cached => {
+            const refreshed = fetch(request).then(response => {
                 const copy = response.clone();
                 caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
                 return response;
-            }))
-        );
-    }
+            }).catch(() => cached);
+            return cached || refreshed;
+        })
+    );
 });
