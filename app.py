@@ -49,7 +49,7 @@ app = dash.Dash(
     ]
 )
 
-# Inject Vercel Web Analytics script into the HTML head
+# Inject Vercel Web Analytics and Speed Insights scripts into the HTML head
 app.index_string = '''
 <!DOCTYPE html>
 <html>
@@ -59,6 +59,10 @@ app.index_string = '''
         {%favicon%}
         {%css%}
         <script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
+        <script>
+            window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+        </script>
+        <script defer src="/_vercel/speed-insights/script.js"></script>
     </head>
     <body>
         {%app_entry%}
