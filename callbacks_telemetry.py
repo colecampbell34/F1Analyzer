@@ -4,14 +4,21 @@ import logging
 from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
-from graphs import _build_telemetry_fig
-from graph_shared import _sort_fastest_driver, _error_figure, _compute_lap_delta
 from callbacks_shared import _timed_callback
-from ui_utils import _friendly_error
-from telemetry_prep import prepare_selected_lap_comparison
+
+
+def _active_telemetry_ready(params, active_tab):
+    if not params or active_tab != 'tab-telemetry':
+        return False
+    from data import ensure_preload_for_tab
+    status = ensure_preload_for_tab(params, active_tab)
+    return status.get('status') == 'ready'
+
+
+def _lap_dropdown_to_mode(value):
+    if value in (None, '', 'fastest'):
+        return 'fastest', None
+    return 'specific', int(value)
 
 
 def register_telemetry_callbacks(app):
@@ -20,15 +27,21 @@ def register_telemetry_callbacks(app):
     @app.callback(
         Output('speed-graph', 'figure'),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
-         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')]
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
     )
-    def update_telemetry(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
-        if not params or active_tab != 'tab-telemetry':
+    def update_telemetry(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
+        if not _active_telemetry_ready(params, active_tab):
             return dash.no_update
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                from graphs import _build_telemetry_fig
+                from graph_shared import _sort_fastest_driver, _error_figure
+                from telemetry_prep import prepare_selected_lap_comparison
+                from ui_utils import _friendly_error
+
+                d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
+                d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
                 cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
                 d1, d2 = cmp['d1'], cmp['d2']
                 lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']
@@ -43,22 +56,32 @@ def register_telemetry_callbacks(app):
                     driver2_delta_data=(d2, lap2),
                 )
             except Exception as e:
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 logging.error(f"Telemetry Error: {e}")
                 return _error_figure(_friendly_error(e))
 
     @app.callback(
         [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
-         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
         prevent_initial_call=True
     )
-    def update_mini_map_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+    def update_mini_map_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
         """Precompute track polyline once; hover only moves marker."""
-        if not params or active_tab != 'tab-telemetry':
+        if not _active_telemetry_ready(params, active_tab):
             return dash.no_update, dash.no_update
         try:
+            import numpy as np
+            import pandas as pd
+            import plotly.graph_objects as go
+            from graph_shared import _compute_lap_delta
+            from telemetry_prep import prepare_selected_lap_comparison
+
+            d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
+            d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
             cmp = prepare_selected_lap_comparison(
                 params, d1_mode, d2_mode, d1_lap_num, d2_lap_num, drop_xy_time=True
             )
@@ -218,15 +241,21 @@ def register_telemetry_callbacks(app):
     @app.callback(
         [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('update-laps-btn', 'n_clicks')],
-        [State('d1-lap-mode', 'value'), State('d2-lap-mode', 'value'),
-         State('d1-lap-number', 'value'), State('d2-lap-number', 'value')],
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
         prevent_initial_call=True,
     )
-    def update_gg_base(params, active_tab, n_laps, d1_mode, d2_mode, d1_lap_num, d2_lap_num):
+    def update_gg_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
         """Build base friction-circle figure and cache G-series for hover."""
-        if not params or active_tab != 'tab-telemetry':
+        if not _active_telemetry_ready(params, active_tab):
             return dash.no_update, dash.no_update
+
+        import numpy as np
+        import pandas as pd
+        import plotly.graph_objects as go
+        from graph_shared import _error_figure
+        from telemetry_prep import prepare_selected_lap_comparison
+        from ui_utils import _friendly_error
 
         def calculate_g_series(tel):
             # Return (t, dist, lat_g, long_g) arrays.
@@ -280,6 +309,8 @@ def register_telemetry_callbacks(app):
 
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
+                d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
                 cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
                 d1, d2 = cmp['d1'], cmp['d2']
                 c1, c2 = cmp['c1'], cmp['c2']

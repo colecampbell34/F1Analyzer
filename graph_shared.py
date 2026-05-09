@@ -1,7 +1,5 @@
 """Shared Plotly configuration and graph helper utilities."""
-import plotly.graph_objects as go
-
-from ui_utils import _apply_base_layout
+from graph_config import GRAPH_CONFIG
 
 
 def _collapse_lap_ranges(laps):
@@ -27,14 +25,10 @@ COMPOUND_COLORS = {
     'INTERMEDIATE': '#00ff00', 'WET': '#0099ff'
 }
 
-GRAPH_CONFIG = {
-    'displayModeBar': True,
-    'toImageButtonOptions': {'format': 'png', 'height': 900, 'width': 1600, 'filename': 'f1_analysis'},
-    'modeBarButtonsToAdd': ['toImage'],
-}
-
-
 def _error_figure(message):
+    import plotly.graph_objects as go
+    from ui_utils import _apply_base_layout
+
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.add_annotation(text=f"Error: {message}", showarrow=False,
@@ -44,6 +38,9 @@ def _error_figure(message):
 
 
 def _not_applicable_figure(message):
+    import plotly.graph_objects as go
+    from ui_utils import _apply_base_layout
+
     fig = go.Figure()
     _apply_base_layout(fig)
     fig.update_xaxes(visible=False).update_yaxes(visible=False)

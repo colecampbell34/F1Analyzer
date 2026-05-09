@@ -213,42 +213,15 @@ class TestDeltaChartSegments(unittest.TestCase):
 
 class TestLatestRaceDefault(unittest.TestCase):
     def test_latest_race_default_uses_latest_past_race(self):
-        schedule_2025 = pd.DataFrame([
-            {
-                "EventName": "Old Grand Prix",
-                "EventFormat": "conventional",
-                "EventDate": "2025-03-10T00:00:00Z",
-                "Session5": "Race",
-                "Session5DateUtc": "2025-03-09T14:00:00Z",
-            },
-            {
-                "EventName": "Future Grand Prix",
-                "EventFormat": "conventional",
-                "EventDate": "2025-09-10T00:00:00Z",
-                "Session5": "Race",
-                "Session5DateUtc": "2025-09-09T14:00:00Z",
-            },
-            {
-                "EventName": "Latest Grand Prix",
-                "EventFormat": "conventional",
-                "EventDate": "2025-06-10T00:00:00Z",
-                "Session5": "Race",
-                "Session5DateUtc": "2025-06-09T14:00:00Z",
-            },
-        ])
-        empty_schedule = pd.DataFrame(columns=schedule_2025.columns)
-
-        def fake_schedule(year):
-            return schedule_2025 if year == 2025 else empty_schedule
-
-        with patch.object(data, "get_event_schedule_cached", side_effect=fake_schedule):
-            latest = data.get_latest_race_session_default(now="2025-07-01T00:00:00Z")
-
-        self.assertEqual(latest, {
+        expected = {
             "year": 2025,
             "race": "Latest Grand Prix",
             "session_type": "Race",
-        })
+        }
+        with patch.object(data, "get_latest_static_race_session", return_value=expected):
+            latest = data.get_latest_race_session_default(now="2025-07-01T00:00:00Z")
+
+        self.assertEqual(latest, expected)
 
 
 class TestPreloadJobs(unittest.TestCase):

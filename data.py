@@ -9,6 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from functools import lru_cache
 import pandas as pd
+from static_schedule import (
+    get_latest_static_race_session,
+    get_static_sessions,
+)
 
 # Suppress FastF1 and other noisy libraries at the module level
 logging.getLogger('fastf1').setLevel(logging.WARNING)
@@ -217,18 +221,8 @@ def get_event_schedule_cached(year):
 
 @lru_cache(maxsize=EVENT_SESSIONS_CACHE_MAXSIZE)
 def get_event_sessions_cached(year, race):
-    """LRU-cached session names for a specific event."""
-    schedule = get_event_schedule_cached(int(year))
-    event_rows = schedule[schedule['EventName'] == str(race)]
-    if event_rows.empty:
-        return tuple()
-    event = event_rows.iloc[0]
-    sessions = []
-    for idx in range(1, 6):
-        session_name = event.get(f'Session{idx}')
-        if pd.notna(session_name) and session_name:
-            sessions.append(str(session_name))
-    return tuple(sessions)
+    """Return static session names for a specific event."""
+    return get_static_sessions(year, race)
 
 
 def _coerce_utc_timestamp(value):
@@ -247,50 +241,13 @@ def _coerce_utc_timestamp(value):
 
 
 def get_latest_race_session_default(now=None, first_year=2018):
-    """Return the latest past race-session default as {year, race, session_type}.
-
-    FastF1 schedules include future events, so this intentionally filters by
-    session/event date before choosing the most recent Race. If a Race date is
-    unavailable, EventDate is used as a conservative fallback.
-    """
-    now_ts = _coerce_utc_timestamp(now) or pd.Timestamp(datetime.now(timezone.utc))
-    candidates = []
-
-    for year in range(now_ts.year, int(first_year) - 1, -1):
-        try:
-            schedule = get_event_schedule_cached(int(year))
-        except Exception:
-            continue
-        if schedule is None or schedule.empty:
-            continue
-
-        if 'EventFormat' in schedule.columns:
-            schedule = schedule[schedule['EventFormat'] != 'testing'].copy()
-        for _, event in schedule.iterrows():
-            race_name = event.get('EventName')
-            if not race_name:
-                continue
-
-            session_date = None
-            for idx in range(1, 6):
-                if event.get(f'Session{idx}') == 'Race':
-                    session_date = (
-                        _coerce_utc_timestamp(event.get(f'Session{idx}DateUtc'))
-                        or _coerce_utc_timestamp(event.get(f'Session{idx}Date'))
-                    )
-                    break
-            if session_date is None:
-                session_date = _coerce_utc_timestamp(event.get('EventDate'))
-
-            if session_date is not None and session_date <= now_ts:
-                candidates.append((session_date, int(year), str(race_name), 'Race'))
-
-    if not candidates:
+    """Return the latest past race-session default from the static schedule."""
+    latest = get_latest_static_race_session(now=now, first_year=first_year)
+    if not latest:
         return None
-
-    _, year, race, session_type = max(candidates, key=lambda item: item[0])
+    year, race, session_type = latest['year'], latest['race'], latest['session_type']
     logging.info("[latest_default] year=%s race=%s session=%s", year, race, session_type)
-    return {'year': year, 'race': race, 'session_type': session_type}
+    return latest
 
 
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
@@ -573,6 +530,14 @@ def get_preload_status_for_tab(params, active_tab):
     """Map a dashboard tab to the profile it should preload/load."""
     if not params:
         return {'status': 'idle'}
+    kwargs = get_preload_kwargs_for_tab(active_tab)
+    return get_preload_status(
+        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+    )
+
+
+def get_preload_kwargs_for_tab(active_tab):
+    """Return the session stream profile required by a dashboard tab."""
     kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
     if active_tab in ('tab-telemetry', 'tab-trackmap'):
         kwargs['telemetry'] = True
@@ -580,9 +545,28 @@ def get_preload_status_for_tab(params, active_tab):
         kwargs['weather'] = True
     elif active_tab == 'tab-ai':
         kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
-    return get_preload_status(
+    return kwargs
+
+
+def ensure_preload_for_tab(params, active_tab):
+    """Start the active tab's data profile in the background and return its status."""
+    if not params:
+        return {'status': 'idle'}
+    kwargs = get_preload_kwargs_for_tab(active_tab)
+    status = get_preload_status(
         params.get('year'), params.get('race'), params.get('session_type'), **kwargs
     )
+    if status.get('status') in ('idle', 'error'):
+        preload_session(
+            params.get('year'),
+            params.get('race'),
+            params.get('session_type'),
+            **kwargs
+        )
+        return get_preload_status(
+            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
+        )
+    return status
 
 
 def get_preload_registry_snapshot():

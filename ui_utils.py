@@ -2,10 +2,8 @@ import os
 from datetime import datetime, timezone
 from urllib.parse import parse_qs
 import flask
-import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
-from data import get_best_lap, is_practice, resolve_team_color
 from ux_helpers import get_glossary_definition
 
 def _friendly_error(e):
@@ -238,6 +236,9 @@ def _glossary_tooltip_text(term):
     return get_glossary_definition(term)
 
 def _build_leaderboard_children(session, session_name, year=None, race=None):
+    import pandas as pd
+    from data import get_best_lap, is_practice, resolve_team_color
+
     _is_practice = is_practice(session_name)
     _is_shootout = 'Shootout' in session_name
     

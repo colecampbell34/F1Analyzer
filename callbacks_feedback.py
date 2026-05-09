@@ -6,13 +6,6 @@ from dash.exceptions import PreventUpdate
 import flask
 from datetime import datetime, timezone
 
-import pandas as pd
-
-from feedback import store_feedback_entry, load_feedback_entries
-from ui_utils import _feedback_admin_authorized, _build_feedback_review_panel, _build_perf_review_panel
-from perf_monitor import get_perf_snapshot
-from data import get_preload_registry_snapshot, get_cache_stats
-
 
 def register_feedback_callbacks(app):
     """Register all feedback-related callbacks."""
@@ -74,6 +67,8 @@ def register_feedback_callbacks(app):
         raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
         user_agent = flask.request.headers.get('User-Agent')
 
+        from feedback import store_feedback_entry
+
         entry = store_feedback_entry(
             {
                 'category': category,
@@ -108,6 +103,11 @@ def register_feedback_callbacks(app):
          Input('refresh-perf-review-btn', 'n_clicks')]
     )
     def update_feedback_review_panel(url_search, refresh_data, refresh_clicks, perf_clicks):
+        from data import get_cache_stats, get_preload_registry_snapshot
+        from feedback import load_feedback_entries
+        from perf_monitor import get_perf_snapshot
+        from ui_utils import _feedback_admin_authorized, _build_feedback_review_panel, _build_perf_review_panel
+
         if not _feedback_admin_authorized(url_search):
             return [], {'display': 'none'}, [], {'display': 'none'}
         control_style = {
@@ -129,6 +129,10 @@ def register_feedback_callbacks(app):
         prevent_initial_call=True
     )
     def download_feedback_csv(n_clicks, url_search):
+        from feedback import load_feedback_entries
+        from ui_utils import _feedback_admin_authorized
+        import pandas as pd
+
         if not n_clicks or not _feedback_admin_authorized(url_search):
             raise PreventUpdate
 

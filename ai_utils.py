@@ -1,21 +1,7 @@
-import os
 import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
 from data import get_track_status_events, get_best_lap, get_pit_stop_data, get_driver_info, get_teammate_from_info
-
-# Gemini API setup.
-load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-AI_ENABLED = bool(GEMINI_API_KEY)
-
-# Model configuration.
-GEMINI_MODELS = [
-    'gemini-3-flash-preview',
-    'gemini-3.1-flash-lite-preview',
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash'
-]
+from ai_config import AI_ENABLED, GEMINI_API_KEY, GEMINI_MODELS
 
 
 def build_ai_prompt(session_context, question, history=None):

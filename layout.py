@@ -1,10 +1,10 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
-from datetime import datetime
 import os
 from urllib.parse import quote_plus
-from graph_shared import GRAPH_CONFIG
-from ai_utils import AI_ENABLED
+from graph_config import GRAPH_CONFIG
+from ai_config import AI_ENABLED
+from static_schedule import get_static_years
 from ux_helpers import DEFAULT_EXPERIENCE_MODE
 
 
@@ -198,8 +198,8 @@ sidebar = html.Div([
     html.Div([
         _control_field(YEAR_LABEL, dcc.Dropdown(
             id='year-dropdown',
-            options=[{'label': str(y), 'value': y} for y in range(2018, datetime.now().year + 1)],
-            value=datetime.now().year,
+            options=[{'label': str(y), 'value': y} for y in get_static_years()],
+            value=max(get_static_years()),
             persistence=True, persistence_type='session',
             searchable=True,
             style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}
@@ -286,49 +286,39 @@ telemetry_controls = html.Div([
         dbc.Col([
             dbc.Label(
                 _label_with_tip(
-                    "Driver 1 Lap:",
-                    "Fastest uses that driver's best lap. Lap # lets you compare exact race laps, which is useful for strategy or traffic context.",
+                    "Driver 1 Lap",
+                    "Fastest uses that driver's best lap. Numbered laps compare exact race laps, which is useful for strategy or traffic context.",
                     'intermediate'
                 ),
-                style={"fontSize": "0.8rem", "color": "#aaa", "marginRight": "0.5rem"}
+                style={"fontSize": "0.8rem", "color": "#aaa", "marginBottom": "0.25rem"}
             ),
-            dbc.RadioItems(id='d1-lap-mode',
-                           options=[{'label': 'Fastest', 'value': 'fastest'},
-                                    {'label': 'Lap #', 'value': 'specific'}],
-                           value='fastest', inline=True,
-                           style={"fontSize": "0.8rem"},
-                           inputStyle={"marginRight": "4px"},
-                           labelStyle={"marginRight": "12px", "color": "#ccc"}),
-            dbc.Input(id='d1-lap-number', type='number', placeholder='Lap #', size='sm',
-                      style={'width': '70px', 'display': 'inline-block', 'marginLeft': '6px',
-                             'backgroundColor': '#222', 'color': 'white', 'border': '1px solid #444',
-                             'fontSize': '0.8rem'}),
-        ], md=5, xs=12, style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap', 'marginBottom': '0.5rem'}),
+            dcc.Dropdown(
+                id='d1-lap-dropdown',
+                options=[{'label': 'Fastest', 'value': 'fastest'}],
+                value='fastest',
+                clearable=False,
+                searchable=False,
+                style={'color': 'black', 'fontSize': '0.85rem'}
+            ),
+        ], md=6, xs=12, style={'marginBottom': '0.5rem'}),
         dbc.Col([
             dbc.Label(
                 _label_with_tip(
-                    "Driver 2 Lap:",
+                    "Driver 2 Lap",
                     "Use the same lap number as Driver 1 for race-to-race context, or fastest for pure one-lap pace.",
                     'intermediate'
                 ),
-                style={"fontSize": "0.8rem", "color": "#aaa", "marginRight": "0.5rem"}
+                style={"fontSize": "0.8rem", "color": "#aaa", "marginBottom": "0.25rem"}
             ),
-            dbc.RadioItems(id='d2-lap-mode',
-                           options=[{'label': 'Fastest', 'value': 'fastest'},
-                                    {'label': 'Lap #', 'value': 'specific'}],
-                           value='fastest', inline=True,
-                           style={"fontSize": "0.8rem"},
-                           inputStyle={"marginRight": "4px"},
-                           labelStyle={"marginRight": "12px", "color": "#ccc"}),
-            dbc.Input(id='d2-lap-number', type='number', placeholder='Lap #', size='sm',
-                      style={'width': '70px', 'display': 'inline-block', 'marginLeft': '6px',
-                             'backgroundColor': '#222', 'color': 'white', 'border': '1px solid #444',
-                             'fontSize': '0.8rem'}),
-        ], md=5, xs=12, style={'display': 'flex', 'alignItems': 'center', 'flexWrap': 'wrap', 'marginBottom': '0.5rem'}),
-        dbc.Col([
-            dbc.Button("Update Laps", id='update-laps-btn', color='danger', size='sm', n_clicks=0,
-                       style={'fontWeight': 'bold', 'width': '100%'})
-        ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginBottom': '0.5rem'})
+            dcc.Dropdown(
+                id='d2-lap-dropdown',
+                options=[{'label': 'Fastest', 'value': 'fastest'}],
+                value='fastest',
+                clearable=False,
+                searchable=False,
+                style={'color': 'black', 'fontSize': '0.85rem'}
+            ),
+        ], md=6, xs=12, style={'marginBottom': '0.5rem'})
     ]),
     dbc.Row([
         dbc.Col([
@@ -750,6 +740,7 @@ app_layout = dbc.Container([
     dcc.Store(id='mini-map-store', storage_type='memory'),
     dcc.Store(id='lap-playback-store', storage_type='memory'),
     dcc.Store(id='preload-status-store', storage_type='memory'),
+    dcc.Store(id='active-tab-preload-store', storage_type='memory'),
     dcc.Store(id='export-status-store', storage_type='memory'),
     dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),

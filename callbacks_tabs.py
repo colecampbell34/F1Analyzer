@@ -4,19 +4,15 @@ import logging
 from dash import dcc, html
 from dash.dependencies import Input, Output
 
-from data import (
-    get_shared_data, is_qualifying, is_race, is_practice,
-    load_session_with_preload,
-)
-from graphs import (
-    _build_dominance_fig, _build_strategy_fig,
-    _build_deg_fig, _build_race_gaps_fig, _build_grid_pace_fig,
-    _build_pit_stops_fig, _build_driver_radar,
-)
-from graph_shared import _sort_fastest_driver, _error_figure, _not_applicable_figure
 from callbacks_shared import _timed_callback
-from ui_utils import _friendly_error
-from telemetry_prep import prepare_selected_lap_comparison
+
+
+def _active_tab_ready(params, active_tab, expected_tab):
+    if not params or active_tab != expected_tab:
+        return False
+    from data import ensure_preload_for_tab
+    status = ensure_preload_for_tab(params, active_tab)
+    return status.get('status') == 'ready'
 
 
 def register_tab_callbacks(app):
@@ -26,13 +22,19 @@ def register_tab_callbacks(app):
     @app.callback(
         [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('trackmap-mode', 'value')]
+         Input('trackmap-mode', 'value'), Input('preload-status-interval', 'n_intervals'),
+         Input('active-tab-preload-store', 'data')]
     )
-    def update_dominance(params, active_tab, mode):
-        if not params or active_tab != 'tab-trackmap':
+    def update_dominance(params, active_tab, mode, _n, _preload_state):
+        if not _active_tab_ready(params, active_tab, 'tab-trackmap'):
             return dash.no_update, dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                from graphs import _build_dominance_fig, _build_driver_radar
+                from graph_shared import _sort_fastest_driver, _error_figure
+                from telemetry_prep import prepare_selected_lap_comparison
+                from ui_utils import _friendly_error
+
                 cmp = prepare_selected_lap_comparison(params)
                 session = cmp['session']
                 d1, d2 = cmp['d1'], cmp['d2']
@@ -122,19 +124,28 @@ def register_tab_callbacks(app):
                     mode=mode, session=session
                 ), dna_ui
             except Exception as e:
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 logging.error(f"Dominance Error: {e}")
                 return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
 
     # Strategy tab.
     @app.callback(
         [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
     )
-    def update_strategy(params, active_tab):
-        if not params or active_tab != 'tab-strategy':
+    def update_strategy(params, active_tab, _n, _preload_state):
+        if not _active_tab_ready(params, active_tab, 'tab-strategy'):
             return dash.no_update, dash.no_update
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                from data import get_shared_data, is_qualifying, is_practice
+                from graphs import _build_strategy_fig, _build_deg_fig
+                from graph_shared import _error_figure, _not_applicable_figure
+                from ui_utils import _friendly_error
+
                 # Strategy view needs laps + weather; no telemetry.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
                 session_type = params['session_type']
@@ -153,6 +164,9 @@ def register_tab_callbacks(app):
 
                 return fig_strat, fig_deg
             except Exception as e:
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 logging.error(f"Strategy Error: {e}")
                 err = _error_figure(_friendly_error(e))
                 return err, err
@@ -160,13 +174,19 @@ def register_tab_callbacks(app):
     # Race tab.
     @app.callback(
         [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure')],
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
     )
-    def update_race_analysis(params, active_tab):
-        if not params or active_tab != 'tab-race':
+    def update_race_analysis(params, active_tab, _n, _preload_state):
+        if not _active_tab_ready(params, active_tab, 'tab-race'):
             return dash.no_update, dash.no_update
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                from data import get_shared_data, is_race
+                from graphs import _build_race_gaps_fig, _build_pit_stops_fig
+                from graph_shared import _error_figure, _not_applicable_figure
+                from ui_utils import _friendly_error
+
                 # Race analysis needs laps only.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False)
                 session_type = params['session_type']
@@ -179,6 +199,9 @@ def register_tab_callbacks(app):
                     fig_pits = _not_applicable_figure("Pit stop data available for Race & Sprint sessions only")
                 return fig_gaps, fig_pits
             except Exception as e:
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 logging.error(f"Error in callback: {e}")
                 err = _error_figure(_friendly_error(e))
                 return err, err
@@ -186,13 +209,19 @@ def register_tab_callbacks(app):
     # Grid pace tab.
     @app.callback(
         Output('grid-pace-graph', 'figure'),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
     )
-    def update_grid_pace(params, active_tab):
-        if not params or active_tab != 'tab-gridpace':
+    def update_grid_pace(params, active_tab, _n, _preload_state):
+        if not _active_tab_ready(params, active_tab, 'tab-gridpace'):
             return dash.no_update
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
+                from data import load_session_with_preload
+                from graphs import _build_grid_pace_fig
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 # Use weather to detect wet conditions for pace filtering.
                 session = load_session_with_preload(
                     params['year'],
@@ -205,5 +234,8 @@ def register_tab_callbacks(app):
                 )
                 return _build_grid_pace_fig(session, params['session_type'])
             except Exception as e:
+                from graph_shared import _error_figure
+                from ui_utils import _friendly_error
+
                 logging.error(f"Grid Pace Error: {e}")
                 return _error_figure(_friendly_error(e))

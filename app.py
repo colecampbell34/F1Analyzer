@@ -4,17 +4,10 @@ import dash
 import dash_bootstrap_components as dbc
 from layout import app_layout
 from callbacks import register_callbacks
-import data
-from feedback import setup_feedback_storage
-from ai_cache import flush_ai_cache
 from flask_compress import Compress
 import threading
 import atexit
-from datetime import datetime
 from flask import jsonify, redirect, request, send_from_directory
-import pandas as pd
-from ui_utils import _feedback_admin_authorized
-from perf_monitor import get_perf_snapshot
 
 # Set global log level to WARNING
 logging.basicConfig(level=logging.WARNING)
@@ -103,6 +96,9 @@ def _init_runtime_background():
         if _RUNTIME_INIT_DONE:
             return
         try:
+            import data
+            from feedback import setup_feedback_storage
+
             data.setup_cache()
             threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
             setup_feedback_storage()
@@ -160,7 +156,6 @@ def healthz():
 def warmup():
     """Prime lightweight caches to reduce cold-start request latency."""
     _start_runtime_init_once()
-    threading.Thread(target=data.get_event_schedule_cached, args=(datetime.now().year,), daemon=True).start()
     return jsonify({'status': 'warming'}), 200
 
 
@@ -198,6 +193,9 @@ def _api_session_args(source):
 
 @server.route('/api/session-summary')
 def api_session_summary():
+    import pandas as pd
+    import data
+
     args, error_response, status = _api_session_args(request.args)
     if error_response is not None:
         return error_response, status
@@ -232,6 +230,8 @@ def api_session_summary():
 
 @server.route('/api/preload-session', methods=['POST'])
 def api_preload_session():
+    import data
+
     payload = request.get_json(silent=True) or {}
     args, error_response, status = _api_session_args(payload)
     if error_response is not None:
@@ -249,6 +249,8 @@ def api_preload_session():
 
 @server.route('/api/preload-status')
 def api_preload_status():
+    import data
+
     args, error_response, status = _api_session_args(request.args)
     if error_response is not None:
         return error_response, status
@@ -264,6 +266,10 @@ def api_preload_status():
 
 @server.route('/api/perf')
 def api_perf():
+    import data
+    from perf_monitor import get_perf_snapshot
+    from ui_utils import _feedback_admin_authorized
+
     if not _feedback_admin_authorized(request.query_string.decode('utf-8')):
         return jsonify({'error': 'admin token required'}), 403
     return jsonify({
@@ -273,9 +279,14 @@ def api_perf():
     })
 
 
-atexit.register(flush_ai_cache)
+def _flush_ai_cache_on_exit():
+    from ai_cache import flush_ai_cache
+    flush_ai_cache()
+
+
+atexit.register(_flush_ai_cache_on_exit)
 app.layout = app_layout
 register_callbacks(app)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=8000)

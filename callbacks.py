@@ -10,16 +10,8 @@ import dash
 from dash import html, ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-import pandas as pd
 import logging
 
-from data import (
-    _load_drivers_fast, get_teammate_from_info, get_event_schedule_cached,
-    get_event_sessions_cached, get_latest_race_session_default,
-    load_session_summary, preload_session, is_race, is_qualifying, is_practice,
-    get_preload_status_for_tab
-)
-from ui_utils import _friendly_error, _build_leaderboard_children
 from ux_helpers import (
     DEFAULT_EXPERIENCE_MODE,
     VALID_EXPERIENCE_MODES,
@@ -202,22 +194,14 @@ def _register_core_callbacks(app):
         return dash.no_update
 
     @app.callback(
-        [Output('d1-lap-mode', 'value'), Output('d2-lap-mode', 'value'),
-         Output('d1-lap-number', 'value'), Output('d2-lap-number', 'value'),
-         Output('trackmap-mode', 'value')],
+        Output('trackmap-mode', 'value'),
         Input('url', 'search')
     )
     def hydrate_view_state_from_url(url_search):
         if not url_search:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return dash.no_update
         url_state = _parse_url_state(url_search)
-        return (
-            url_state.get('d1_lap_mode') or dash.no_update,
-            url_state.get('d2_lap_mode') or dash.no_update,
-            url_state.get('d1_lap') or dash.no_update,
-            url_state.get('d2_lap') or dash.no_update,
-            url_state.get('trackmap_mode') or dash.no_update,
-        )
+        return url_state.get('trackmap_mode') or dash.no_update
 
     @app.callback(
         [Output('latest-race-store', 'data'),
@@ -228,6 +212,8 @@ def _register_core_callbacks(app):
     def select_latest_race(n_clicks):
         if not n_clicks:
             raise PreventUpdate
+
+        from data import get_latest_race_session_default
 
         latest = get_latest_race_session_default()
         if not latest:
@@ -247,12 +233,12 @@ def _register_core_callbacks(app):
         url_state = _parse_url_state(url_search)
 
         try:
-            schedule = get_event_schedule_cached(int(year))
-            if schedule.empty:
+            from static_schedule import get_static_races
+
+            race_names = list(get_static_races(int(year)))
+            if not race_names:
                 return [], None
 
-            schedule = schedule[schedule['EventFormat'] != 'testing'].copy()
-            race_names = schedule['EventName'].tolist()
             options = [{'label': name, 'value': name} for name in race_names]
 
             if (
@@ -282,7 +268,9 @@ def _register_core_callbacks(app):
         url_state = _parse_url_state(url_search)
 
         try:
-            sessions = get_event_sessions_cached(int(year), race)
+            from static_schedule import get_static_sessions
+
+            sessions = get_static_sessions(int(year), race)
             if not sessions:
                 return [], None
 
@@ -317,6 +305,8 @@ def _register_core_callbacks(app):
         url_state = _parse_url_state(url_search)
 
         try:
+            from data import _load_drivers_fast
+
             driver_info = _load_drivers_fast(int(year), race, session_type)
             if not driver_info:
                 return [], None, [], None
@@ -368,6 +358,8 @@ def _register_core_callbacks(app):
             raise PreventUpdate
         shortcut = str(trigger_id).replace('mobile-', '').replace('shortcut-', '').replace('-', '_')
         try:
+            from data import _load_drivers_fast, load_session_summary
+
             driver_info = _load_drivers_fast(int(year), race, session_type)
             session = load_session_summary(year, race, session_type, include_laps=False)
             d1, d2 = get_comparison_shortcut_pair(
@@ -415,6 +407,8 @@ def _register_core_callbacks(app):
         if not d1 or not session_type or not year or not race or current_d2:
             raise PreventUpdate
         try:
+            from data import _load_drivers_fast, get_teammate_from_info
+
             driver_info = _load_drivers_fast(int(year), race, session_type)
             mate = get_teammate_from_info(d1, driver_info)
             return mate if mate else dash.no_update
@@ -432,6 +426,8 @@ def _register_core_callbacks(app):
         if not d2 or not session_type or not year or not race or current_d1:
             raise PreventUpdate
         try:
+            from data import _load_drivers_fast, get_teammate_from_info
+
             driver_info = _load_drivers_fast(int(year), race, session_type)
             mate = get_teammate_from_info(d2, driver_info)
             return mate if mate else dash.no_update
@@ -468,9 +464,14 @@ def _register_core_callbacks(app):
 
         with _timed_callback('update_leaderboard', year=y, race=r, session=s):
             try:
+                from data import load_session_summary
+                from ui_utils import _build_leaderboard_children
+
                 session = load_session_summary(y, r, s, include_laps=True)
                 return _build_leaderboard_children(session, s, year=y, race=r)
             except Exception as e:
+                from ui_utils import _friendly_error
+
                 logging.error(f"Leaderboard Error: {e}")
                 return html.Div(_friendly_error(e), style={'color': 'red', 'fontSize': '0.9rem'})
 
@@ -505,13 +506,9 @@ def _register_core_callbacks(app):
                           f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
             return dash.no_update, True, msg
 
-        preload_kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
-        if active_tab in ('tab-telemetry', 'tab-trackmap'):
-            preload_kwargs['telemetry'] = True
-        elif active_tab in ('tab-strategy', 'tab-gridpace'):
-            preload_kwargs['weather'] = True
-        elif active_tab == 'tab-ai':
-            preload_kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
+        from data import get_preload_kwargs_for_tab, preload_session
+
+        preload_kwargs = get_preload_kwargs_for_tab(active_tab)
         preload_session(year, race, session_type, **preload_kwargs)
 
         params = {'year': year, 'race': race, 'session_type': session_type,
@@ -531,6 +528,9 @@ def _register_core_callbacks(app):
 
         with _timed_callback('update_dashboard_metadata', year=year, race=race, session=session_type):
             try:
+                import pandas as pd
+                from data import load_session_summary
+
                 session = load_session_summary(year, race, session_type, include_laps=False)
 
                 # Include finishing position in title when available.
@@ -580,9 +580,10 @@ def _register_core_callbacks(app):
          Output('preload-status-interval', 'disabled')],
         [Input('dashboard-params-store', 'data'),
          Input('main-tabs', 'value'),
-         Input('preload-status-interval', 'n_intervals')]
+         Input('preload-status-interval', 'n_intervals'),
+         Input('active-tab-preload-store', 'data')]
     )
-    def update_loading_status(params, active_tab, _n):
+    def update_loading_status(params, active_tab, _n, _preload_state):
         if not params:
             return (
                 [
@@ -597,6 +598,8 @@ def _register_core_callbacks(app):
                 {'status': 'idle'},
                 True
             )
+        from data import get_preload_status_for_tab
+
         status = get_preload_status_for_tab(params, active_tab)
         state = status.get('status', 'idle')
         profile = status.get('profile', 'session')
@@ -642,22 +645,33 @@ def _register_core_callbacks(app):
         )
 
     @app.callback(
+        Output('active-tab-preload-store', 'data'),
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')]
+    )
+    def preload_active_tab(params, active_tab):
+        if not params:
+            return {'status': 'idle'}
+        from data import ensure_preload_for_tab
+        return ensure_preload_for_tab(params, active_tab)
+
+    @app.callback(
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value'),
-         Input('d1-lap-number', 'value'), Input('d2-lap-number', 'value'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('trackmap-mode', 'value'), Input('experience-mode-store', 'data')],
         State('url', 'search'),
         prevent_initial_call=True
     )
-    def sync_url_with_dashboard(params, active_tab, d1_mode, d2_mode, d1_lap, d2_lap, trackmap_mode, mode, current_search):
+    def sync_url_with_dashboard(params, active_tab, d1_lap_value, d2_lap_value, trackmap_mode, mode, current_search):
         if not params:
             raise PreventUpdate
+        d1_specific = d1_lap_value not in (None, '', 'fastest')
+        d2_specific = d2_lap_value not in (None, '', 'fastest')
         new_search = _build_url_search(params, active_tab, {
-            'd1_lap_mode': d1_mode,
-            'd2_lap_mode': d2_mode,
-            'd1_lap': d1_lap,
-            'd2_lap': d2_lap,
+            'd1_lap_mode': 'specific' if d1_specific else 'fastest',
+            'd2_lap_mode': 'specific' if d2_specific else 'fastest',
+            'd1_lap': d1_lap_value if d1_specific else None,
+            'd2_lap': d2_lap_value if d2_specific else None,
             'trackmap_mode': trackmap_mode,
             'mode': normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE),
         })
@@ -673,6 +687,8 @@ def _register_core_callbacks(app):
     def update_tab_availability(session_type):
         if not session_type:
             return False, False
+        from data import is_qualifying, is_practice, is_race
+
         strategy_disabled = is_qualifying(session_type) or is_practice(session_type)
         race_disabled = not is_race(session_type)
         return strategy_disabled, race_disabled
@@ -685,6 +701,8 @@ def _register_core_callbacks(app):
     def move_from_unavailable_tab(session_type, active_tab):
         if not session_type:
             raise PreventUpdate
+        from data import is_qualifying, is_practice, is_race
+
         if active_tab == 'tab-strategy' and (is_qualifying(session_type) or is_practice(session_type)):
             return 'tab-telemetry'
         if active_tab == 'tab-race' and not is_race(session_type):
@@ -692,42 +710,71 @@ def _register_core_callbacks(app):
         raise PreventUpdate
 
     @app.callback(
-        [Output('d1-lap-number', 'min'), Output('d1-lap-number', 'max'),
-         Output('d2-lap-number', 'min'), Output('d2-lap-number', 'max')],
-        Input('dashboard-params-store', 'data')
+        [Output('d1-lap-dropdown', 'options'), Output('d1-lap-dropdown', 'value'),
+         Output('d2-lap-dropdown', 'options'), Output('d2-lap-dropdown', 'value')],
+        [Input('dashboard-params-store', 'data')],
+        [State('d1-lap-dropdown', 'value'), State('d2-lap-dropdown', 'value'),
+         State('url', 'search')]
     )
-    def update_lap_input_constraints(params):
+    def update_lap_dropdown_options(params, current_d1_lap, current_d2_lap, url_search):
         if not params:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            default_options = [{'label': 'Fastest', 'value': 'fastest'}]
+            return default_options, 'fastest', default_options, 'fastest'
 
         year, race, session_type = params['year'], params['race'], params['session_type']
 
         try:
-            # Load lightweight session to determine lap bounds.
+            from data import load_session_summary
+
             session = load_session_summary(year, race, session_type, include_laps=True)
 
-            # Start from maximum completed lap.
-            max_lap = 1
-            if not session.laps.empty:
-                max_lap = int(session.laps['LapNumber'].max())
+            def _options_for_driver(driver):
+                options = [{'label': 'Fastest', 'value': 'fastest'}]
+                try:
+                    laps = session.laps.pick_drivers(driver)
+                    lap_numbers = sorted(
+                        int(lap)
+                        for lap in laps['LapNumber'].dropna().unique().tolist()
+                    )
+                except Exception:
+                    lap_numbers = []
+                options.extend({'label': f'Lap {lap}', 'value': lap} for lap in lap_numbers)
+                return options
 
-            # For Race/Sprint, use official total when available.
-            if is_race(session_type):
-                official_total = getattr(session, 'total_laps', None)
-                if official_total is not None and pd.notna(official_total):
-                    max_lap = max(max_lap, int(official_total))
+            def _url_value(prefix):
+                url_state = _parse_url_state(url_search)
+                if not (
+                    url_state.get('year') == params.get('year')
+                    and url_state.get('race') == params.get('race')
+                    and url_state.get('session_type') == params.get('session_type')
+                    and url_state.get('driver1') == params.get('driver1')
+                    and url_state.get('driver2') == params.get('driver2')
+                ):
+                    return None
+                mode = url_state.get(f'{prefix}_lap_mode')
+                lap = url_state.get(f'{prefix}_lap')
+                return lap if mode == 'specific' and lap else None
 
-            if max_lap < 1: max_lap = 1
+            def _valid_value(current_value, options, fallback_from_url):
+                values = {option['value'] for option in options}
+                if fallback_from_url in values:
+                    return fallback_from_url
+                if current_value in values:
+                    return current_value
+                return 'fastest'
 
-            return 1, max_lap, 1, max_lap
+            d1_options = _options_for_driver(params['driver1'])
+            d2_options = _options_for_driver(params['driver2'])
+
+            return (
+                d1_options,
+                _valid_value(current_d1_lap, d1_options, _url_value('d1')),
+                d2_options,
+                _valid_value(current_d2_lap, d2_options, _url_value('d2')),
+            )
         except Exception:
-            return 1, 100, 1, 100
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='toggleLapNumbers'),
-        [Output('d1-lap-number', 'style'), Output('d2-lap-number', 'style')],
-        [Input('d1-lap-mode', 'value'), Input('d2-lap-mode', 'value')]
-    )
+            default_options = [{'label': 'Fastest', 'value': 'fastest'}]
+            return default_options, 'fastest', default_options, 'fastest'
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='copyToClipboard'),

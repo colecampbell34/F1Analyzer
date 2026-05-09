@@ -511,17 +511,6 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return current_index;
         },
         
-        toggleLapNumbers: function(d1_mode, d2_mode) {
-            const base = {
-                'width': '70px', 'display': 'inline-block', 'marginLeft': '6px',
-                'backgroundColor': '#222', 'color': 'white', 'border': '1px solid #444',
-                'fontSize': '0.8rem'
-            };
-            const d1_style = Object.assign({}, base, {display: (d1_mode === 'specific' ? 'inline-block' : 'none')});
-            const d2_style = Object.assign({}, base, {display: (d2_mode === 'specific' ? 'inline-block' : 'none')});
-            return [d1_style, d2_style];
-        },
-        
         copyToClipboard: function(n_clicks, mobile_clicks) {
             const ctx = window.dash_clientside.callback_context || {};
             const trigger = (ctx.triggered && ctx.triggered[0] && ctx.triggered[0].prop_id) || '';

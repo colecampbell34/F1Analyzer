@@ -1,8 +1,6 @@
 """Small UX helpers for modes, glossary text, and comparison shortcuts."""
 import math
 
-import pandas as pd
-
 
 VALID_EXPERIENCE_MODES = {"beginner", "intermediate", "engineer"}
 DEFAULT_EXPERIENCE_MODE = "beginner"
@@ -79,6 +77,8 @@ def _teammate_for(driver, driver_info):
 
 
 def _results_order(results):
+    import pandas as pd
+
     if results is None or getattr(results, "empty", True):
         return []
     try:
@@ -95,6 +95,8 @@ def _results_order(results):
 
 
 def _closest_classified_pair(results):
+    import pandas as pd
+
     if results is None or getattr(results, "empty", True):
         return None
     try:

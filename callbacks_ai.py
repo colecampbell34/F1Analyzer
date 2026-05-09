@@ -7,12 +7,8 @@ from dash.exceptions import PreventUpdate
 import flask
 import random
 
-from data import load_session_with_preload
-from ai_utils import (
-    _gather_session_context, GEMINI_API_KEY, GEMINI_MODELS, AI_ENABLED,
-    build_ai_prompt,
-)
-from ai_cache import get_cached_response, store_cached_response, check_user_limit, USER_DAILY_LIMIT
+from ai_config import AI_ENABLED, GEMINI_API_KEY, GEMINI_MODELS
+from ai_cache import USER_DAILY_LIMIT
 from callbacks_shared import _timed_callback, _trim_history
 
 
@@ -33,12 +29,18 @@ def register_ai_callbacks(app):
 
     @app.callback(
         Output('session-context-store', 'data', allow_duplicate=True),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value')],
+        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
         [State('session-context-store', 'data')],
         prevent_initial_call=True
     )
-    def update_ai_session_context(params, active_tab, current_context):
+    def update_ai_session_context(params, active_tab, _n, _preload_state, current_context):
         if not params or active_tab != 'tab-ai':
+            return dash.no_update
+
+        from data import ensure_preload_for_tab
+        status = ensure_preload_for_tab(params, active_tab)
+        if status.get('status') != 'ready':
             return dash.no_update
 
         year, race, session_type = params['year'], params['race'], params['session_type']
@@ -50,6 +52,9 @@ def register_ai_callbacks(app):
 
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
+                from data import load_session_with_preload
+                from ai_utils import _gather_session_context
+
                 # AI analysis uses full context streams.
                 session = load_session_with_preload(year, race, session_type,
                                                    laps=True, telemetry=True, weather=True, messages=True)
@@ -122,6 +127,9 @@ def register_ai_callbacks(app):
         # Guard: per-user rate limit.
         forwarded_for = flask.request.headers.get('X-Forwarded-For', '')
         raw_ip = forwarded_for.split(',')[0].strip() if forwarded_for else flask.request.remote_addr
+
+        from ai_cache import check_user_limit, get_cached_response, store_cached_response
+        from ai_utils import build_ai_prompt
 
         allowed, current_count = check_user_limit(raw_ip)
         if not allowed:
