@@ -49,6 +49,28 @@ app = dash.Dash(
     ]
 )
 
+# Inject Vercel Web Analytics script into the HTML head
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <script defer src="https://cdn.vercel-insights.com/v1/script.js"></script>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
+
 Compress(app.server)
 server = app.server
 server.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
