@@ -3,8 +3,6 @@
 .cursor/
 .idea/
 .junie/
-.replit
-replit.md
 __pycache__/
 **/__pycache__/
 *.pyc
