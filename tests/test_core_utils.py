@@ -241,6 +241,22 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertEqual(status["status"], "ready")
         self.assertEqual(loader.call_count, 1)
 
+    def test_vercel_uses_direct_load_instead_of_background_preload(self):
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+        }
+        with patch.dict(os.environ, {"VERCEL": "1"}, clear=False):
+            with patch.object(data._SESSION_PRELOAD_EXECUTOR, "submit") as submit:
+                future = data.preload_session(2025, "British Grand Prix", "Race", telemetry=True)
+                status = data.ensure_preload_for_tab(params, "tab-telemetry")
+
+        self.assertIsNone(future)
+        submit.assert_not_called()
+        self.assertEqual(status["status"], "direct")
+        self.assertEqual(status["profile"], "telemetry")
+
     def test_preload_job_cleanup_removes_stale_completed_jobs(self):
         now = 1000.0
         with data._SESSION_PRELOAD_LOCK:
@@ -253,6 +269,30 @@ class TestPreloadJobs(unittest.TestCase):
                 }
             data._cleanup_preload_jobs_locked(now=now)
             self.assertLessEqual(len(data._SESSION_PRELOAD_JOBS), data._MAX_TRACKED_PRELOAD_JOBS)
+
+
+class TestGridPaceFiltering(unittest.TestCase):
+    def test_string_false_rainfall_still_counts_as_dry(self):
+        weather = pd.DataFrame({"Rainfall": ["False", "0", False, np.nan]})
+        self.assertTrue(graphs._is_dry_session_from_weather(weather))
+
+    def test_dry_107_filter_removes_major_outliers(self):
+        lap_times = pd.Series([80.0, 82.0, 86.0, 95.0])
+        filtered = graphs._filter_lap_times_107(lap_times, 80.0, enabled=True)
+        self.assertEqual(filtered.tolist(), [80.0, 82.0])
+
+    def test_wet_session_keeps_laps_outside_107_percent(self):
+        lap_times = pd.Series([80.0, 95.0])
+        filtered = graphs._filter_lap_times_107(lap_times, 80.0, enabled=False)
+        self.assertEqual(filtered.tolist(), [80.0, 95.0])
+
+    def test_clean_pace_laps_drops_inaccurate_laps_before_filtering(self):
+        laps = pd.DataFrame({
+            "LapTime": pd.to_timedelta([80, 81, 82], unit="s"),
+            "IsAccurate": [True, "False", np.nan],
+        })
+        clean = graphs._clean_pace_laps(laps)
+        self.assertEqual(clean["LapTime"].dt.total_seconds().tolist(), [80.0])
 
 
 class TestApiValidation(unittest.TestCase):

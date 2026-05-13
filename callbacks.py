@@ -610,6 +610,8 @@ def _register_core_callbacks(app):
             text = f"Ready: {profile} data is cached for {session_label}."
         elif state == 'error':
             text = f"Could not load {profile} data: {status.get('error') or 'unknown error'}"
+        elif state == 'direct':
+            text = f"Ready to load {profile} data for {session_label}."
         else:
             text = f"Ready to load {profile} data for {session_label}."
         return [

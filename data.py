@@ -211,6 +211,21 @@ def _ensure_cache_ready():
         setup_cache()
 
 
+def _env_bool(name, default=False):
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def background_preload_enabled():
+    """Return whether callbacks should wait for background session preload jobs."""
+    configured = os.getenv('ENABLE_BACKGROUND_PRELOAD')
+    if configured is not None:
+        return _env_bool('ENABLE_BACKGROUND_PRELOAD', default=True)
+    return not os.getenv('VERCEL')
+
+
 @lru_cache(maxsize=EVENT_SCHEDULE_CACHE_MAXSIZE)
 def get_event_schedule_cached(year):
     """LRU-cached event schedule. Historical years never change, current year rarely."""
@@ -426,6 +441,8 @@ def preload_session(year, race, session_name, laps=True, telemetry=False, weathe
     """Start loading a session profile in the background."""
     if not all([year, race, session_name]):
         return None
+    if not background_preload_enabled():
+        return None
 
     key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
     with _SESSION_PRELOAD_LOCK:
@@ -531,6 +548,17 @@ def get_preload_status_for_tab(params, active_tab):
     if not params:
         return {'status': 'idle'}
     kwargs = get_preload_kwargs_for_tab(active_tab)
+    if not background_preload_enabled():
+        return {
+            'status': 'direct',
+            'profile': _preload_profile(
+                kwargs['laps'],
+                kwargs['telemetry'],
+                kwargs['weather'],
+                kwargs['messages']
+            ),
+            'error': '',
+        }
     return get_preload_status(
         params.get('year'), params.get('race'), params.get('session_type'), **kwargs
     )
@@ -553,6 +581,17 @@ def ensure_preload_for_tab(params, active_tab):
     if not params:
         return {'status': 'idle'}
     kwargs = get_preload_kwargs_for_tab(active_tab)
+    if not background_preload_enabled():
+        return {
+            'status': 'direct',
+            'profile': _preload_profile(
+                kwargs['laps'],
+                kwargs['telemetry'],
+                kwargs['weather'],
+                kwargs['messages']
+            ),
+            'error': '',
+        }
     status = get_preload_status(
         params.get('year'), params.get('race'), params.get('session_type'), **kwargs
     )

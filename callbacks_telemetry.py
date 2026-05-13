@@ -10,7 +10,9 @@ from callbacks_shared import _timed_callback
 def _active_telemetry_ready(params, active_tab):
     if not params or active_tab != 'tab-telemetry':
         return False
-    from data import ensure_preload_for_tab
+    from data import background_preload_enabled, ensure_preload_for_tab
+    if not background_preload_enabled():
+        return True
     status = ensure_preload_for_tab(params, active_tab)
     return status.get('status') == 'ready'
 

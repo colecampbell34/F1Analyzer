@@ -1055,6 +1055,47 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     return fig
 
 
+def _coerce_bool_series(series):
+    """Normalize FastF1 boolean-like values that may arrive as bools, numbers, or strings."""
+    if series is None:
+        return pd.Series(dtype=bool)
+
+    def _to_bool(value):
+        if pd.isna(value):
+            return False
+        if isinstance(value, str):
+            return value.strip().lower() not in ('', '0', 'false', 'f', 'no', 'n', 'none', 'nan')
+        return bool(value)
+
+    return series.map(_to_bool).astype(bool)
+
+
+def _is_dry_session_from_weather(weather_data):
+    if weather_data is None or weather_data.empty or 'Rainfall' not in weather_data.columns:
+        return True
+    rainfall = _coerce_bool_series(weather_data['Rainfall'])
+    return rainfall.mean() < 0.02 if not rainfall.empty else True
+
+
+def _clean_pace_laps(laps):
+    clean = laps.dropna(subset=['LapTime']).copy()
+    if 'IsAccurate' in clean.columns:
+        clean = clean[_coerce_bool_series(clean['IsAccurate'])]
+    return clean
+
+
+def _lap_time_seconds(laps):
+    if laps is None or laps.empty or 'LapTime' not in laps.columns:
+        return pd.Series(dtype=float)
+    return laps['LapTime'].dt.total_seconds().dropna()
+
+
+def _filter_lap_times_107(lap_times, session_fastest, enabled=True):
+    if not enabled or lap_times.empty or pd.isna(session_fastest):
+        return lap_times
+    return lap_times[lap_times <= float(session_fastest) * 1.07]
+
+
 def _build_grid_pace_fig(session, session_type):
     """Builds a box plot of lap time distributions for all drivers."""
     from data import is_race, is_qualifying
@@ -1082,14 +1123,15 @@ def _build_grid_pace_fig(session, session_type):
             str(row.get('Abbreviation', '')): pd.to_numeric(row.get('Position'), errors='coerce')
             for _, row in session.results.iterrows()
         }
-    # Calculate session-wide fastest lap for 107% filtering.
-    lap_seconds_all = session.laps['LapTime'].dt.total_seconds().dropna()
-    session_fastest = lap_seconds_all.min() if not lap_seconds_all.empty else float('nan')
-    rain_ratio = 0
-    weather_data = getattr(session, 'weather_data', None)
-    if weather_data is not None and not weather_data.empty and 'Rainfall' in weather_data.columns:
-        rain_ratio = weather_data['Rainfall'].astype(bool).mean()
-    is_dry_session = rain_ratio < 0.02
+    # Calculate the 107% cutoff from the same clean lap population shown by the chart.
+    if _is_race:
+        session_laps_for_cutoff = session.laps.pick_wo_box().pick_track_status('1')
+        session_laps_for_cutoff = session_laps_for_cutoff[session_laps_for_cutoff['LapNumber'] > 1]
+    else:
+        session_laps_for_cutoff = session.laps.pick_quicklaps()
+    session_lap_seconds = _lap_time_seconds(_clean_pace_laps(session_laps_for_cutoff))
+    session_fastest = session_lap_seconds.min() if not session_lap_seconds.empty else float('nan')
+    is_dry_session = _is_dry_session_from_weather(getattr(session, 'weather_data', None))
 
     for drv in all_drivers:
         if not isinstance(drv, str) or len(drv) != 3:
@@ -1105,13 +1147,12 @@ def _build_grid_pace_fig(session, session_type):
             else:
                 laps = drv_laps.pick_quicklaps()
 
+            laps = _clean_pace_laps(laps)
             if laps.empty:
                 continue
 
-            lap_times = laps['LapTime'].dt.total_seconds().dropna()
-            
-            if is_dry_session and pd.notna(session_fastest) and not lap_times.empty:
-                lap_times = lap_times[lap_times <= session_fastest * 1.07]
+            lap_times = _lap_time_seconds(laps)
+            lap_times = _filter_lap_times_107(lap_times, session_fastest, enabled=is_dry_session)
 
             if lap_times.empty:
                 continue

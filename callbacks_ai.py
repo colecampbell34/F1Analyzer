@@ -38,9 +38,9 @@ def register_ai_callbacks(app):
         if not params or active_tab != 'tab-ai':
             return dash.no_update
 
-        from data import ensure_preload_for_tab
+        from data import background_preload_enabled, ensure_preload_for_tab
         status = ensure_preload_for_tab(params, active_tab)
-        if status.get('status') != 'ready':
+        if background_preload_enabled() and status.get('status') != 'ready':
             return dash.no_update
 
         year, race, session_type = params['year'], params['race'], params['session_type']
