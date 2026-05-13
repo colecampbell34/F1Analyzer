@@ -257,6 +257,38 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertEqual(status["status"], "direct")
         self.assertEqual(status["profile"], "telemetry")
 
+    def test_load_session_with_preload_does_not_duplicate_started_preload(self):
+        with patch.object(data, "_load_session_granular_cached", return_value="session") as loader:
+            first = data.load_session_with_preload(
+                2025, "British Grand Prix", "Race", telemetry=True
+            )
+            second = data.load_session_with_preload(
+                2025, "British Grand Prix", "Race", telemetry=True
+            )
+
+        self.assertEqual(first, "session")
+        self.assertEqual(second, "session")
+        self.assertEqual(loader.call_count, 1)
+
+    def test_load_session_with_preload_retries_failed_preload_future(self):
+        from concurrent.futures import Future
+
+        key = data._session_preload_key(
+            2025, "British Grand Prix", "Race", True, True, False, False
+        )
+        failed_future = Future()
+        failed_future.set_exception(RuntimeError("previous failure"))
+        with data._SESSION_PRELOAD_LOCK:
+            data._SESSION_PRELOAD_FUTURES[key] = failed_future
+
+        with patch.object(data, "_load_session_granular_cached", return_value="session") as loader:
+            result = data.load_session_with_preload(
+                2025, "British Grand Prix", "Race", telemetry=True
+            )
+
+        self.assertEqual(result, "session")
+        self.assertEqual(loader.call_count, 1)
+
     def test_preload_job_cleanup_removes_stale_completed_jobs(self):
         now = 1000.0
         with data._SESSION_PRELOAD_LOCK:

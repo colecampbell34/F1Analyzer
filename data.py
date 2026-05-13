@@ -482,6 +482,14 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
     preload_key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
     with _SESSION_PRELOAD_LOCK:
         exact_future = _SESSION_PRELOAD_FUTURES.get(preload_key)
+        if exact_future is not None and exact_future.done():
+            try:
+                failed = exact_future.exception() is not None
+            except Exception:
+                failed = True
+            if failed:
+                _SESSION_PRELOAD_FUTURES.pop(preload_key, None)
+                exact_future = None
 
     # If matching preload is in-flight, reuse it directly.
     if exact_future is not None:
@@ -493,8 +501,16 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
             )
         return exact_future.result()
 
-    if bool(laps):
-        preload_session(*key, bool(laps), bool(telemetry), bool(weather), bool(messages))
+    if bool(laps) and background_preload_enabled():
+        future = preload_session(*key, bool(laps), bool(telemetry), bool(weather), bool(messages))
+        if future is not None:
+            if LOG_SESSION_LOADING:
+                logging.info(
+                    "[session] waiting on started preload "
+                    f"year={key[0]} race={key[1]} session={key[2]} "
+                    f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
+                )
+            return future.result()
 
     if LOG_SESSION_LOADING:
         logging.info(
