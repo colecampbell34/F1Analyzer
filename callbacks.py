@@ -377,6 +377,48 @@ def _register_core_callbacks(app):
             raise PreventUpdate
 
     @app.callback(
+        [Output('driver1-dropdown', 'value', allow_duplicate=True),
+         Output('driver2-dropdown', 'value', allow_duplicate=True)],
+        [Input('teammate1-btn', 'n_clicks'),
+         Input('teammate2-btn', 'n_clicks')],
+        [State('session-dropdown', 'value'), State('year-dropdown', 'value'),
+         State('race-dropdown', 'value'), State('driver1-dropdown', 'value'),
+         State('driver2-dropdown', 'value')],
+        prevent_initial_call=True
+    )
+    def apply_teammate_button(_d1_clicks, _d2_clicks, session_type, year, race, current_d1, current_d2):
+        if not all([session_type, year, race]):
+            raise PreventUpdate
+
+        trigger_id = dash.ctx.triggered_id
+        if trigger_id == 'teammate1-btn':
+            source_driver = current_d1
+        elif trigger_id == 'teammate2-btn':
+            source_driver = current_d2
+        else:
+            raise PreventUpdate
+
+        if not source_driver:
+            raise PreventUpdate
+
+        try:
+            from data import _load_drivers_fast, get_teammate_from_info
+
+            driver_info = _load_drivers_fast(int(year), race, session_type)
+            teammate = get_teammate_from_info(source_driver, driver_info)
+            if not teammate:
+                raise PreventUpdate
+
+            if trigger_id == 'teammate1-btn':
+                return dash.no_update, teammate
+            return teammate, dash.no_update
+        except PreventUpdate:
+            raise
+        except Exception as e:
+            logging.error(f"Teammate Button Error: {e}")
+            raise PreventUpdate
+
+    @app.callback(
         Output('update-dashboard-btn', 'n_clicks'),
         [Input('url', 'search')],
         [State('update-dashboard-btn', 'n_clicks'),

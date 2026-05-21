@@ -998,6 +998,52 @@ body,
     box-shadow: none !important;
 }
 
+.Select-placeholder,
+.Select-value-label,
+.Select-input > input,
+.Select-option,
+.VirtualizedSelectOption,
+.dash-dropdown-value,
+.dash-dropdown-option,
+.dash-options-list-option,
+.dash-dropdown-content .dash-dropdown-option,
+.dash-dropdown-content .dash-options-list-option {
+    color: #10202a !important;
+}
+
+.Select-menu-outer,
+.Select-menu,
+.dash-dropdown-content,
+.dash-dropdown-options {
+    background: #ffffff !important;
+    color: #10202a !important;
+}
+
+.Select-option.is-focused,
+.VirtualizedSelectFocusedOption,
+.dash-dropdown-option:hover,
+.dash-dropdown-option:focus,
+.dash-options-list-option:hover,
+.dash-options-list-option:focus,
+.dash-dropdown-content .dash-dropdown-option:hover,
+.dash-dropdown-content .dash-dropdown-option:focus,
+.dash-dropdown-content .dash-options-list-option:hover,
+.dash-dropdown-content .dash-options-list-option:focus {
+    background: #e8f3f2 !important;
+    color: #071014 !important;
+}
+
+.Select-option.is-selected,
+.VirtualizedSelectSelectedOption,
+.dash-dropdown-option.selected,
+.dash-options-list-option.selected,
+.dash-dropdown-content .dash-dropdown-option.selected,
+.dash-dropdown-content .dash-options-list-option.selected {
+    background: #d7ece9 !important;
+    color: #071014 !important;
+    font-weight: 800;
+}
+
 .form-control,
 .form-select {
     border-color: var(--line-strong) !important;

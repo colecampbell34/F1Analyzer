@@ -12,19 +12,55 @@ from ai_cache import USER_DAILY_LIMIT
 from callbacks_shared import _timed_callback, _trim_history
 
 
+def _ai_context_header(params):
+    """Return the stable header used to identify loaded AI context."""
+    if not params:
+        return ""
+    return (
+        f"{params.get('year')} {params.get('race')} | {params.get('session_type')} | "
+        f"{params.get('driver1')} vs {params.get('driver2')}"
+    )
+
+
+def _ai_context_matches_params(session_context, params):
+    """Return True when the browser-stored context belongs to current dashboard params."""
+    header = _ai_context_header(params)
+    return bool(header and isinstance(session_context, str) and session_context.startswith(f"{header}\n\n"))
+
+
+def _build_ai_session_context(params):
+    """Build the AI context for the current dashboard params."""
+    if not params or not all(params.get(key) for key in ('year', 'race', 'session_type', 'driver1', 'driver2')):
+        return ""
+
+    from data import load_session_with_preload
+    from ai_utils import _gather_session_context
+
+    year, race, session_type = params['year'], params['race'], params['session_type']
+    driver1, driver2 = params['driver1'], params['driver2']
+    session = load_session_with_preload(
+        year, race, session_type, laps=True, telemetry=True, weather=True, messages=True
+    )
+    context = _gather_session_context(session, session_type, driver1, driver2)
+    return f"{_ai_context_header(params)}\n\n{context}"
+
+
 def register_ai_callbacks(app):
     """Register AI analysis callbacks."""
 
     @app.callback(
         [Output('ai-ask-button', 'disabled'),
          Output('ai-question-input', 'placeholder')],
-        [Input('session-context-store', 'data'), Input('main-tabs', 'value')]
+        [Input('session-context-store', 'data'), Input('main-tabs', 'value'),
+         Input('dashboard-params-store', 'data')]
     )
-    def update_ai_input_state(session_context, active_tab):
+    def update_ai_input_state(session_context, active_tab, params):
         if not AI_ENABLED:
             return True, "AI Analysis is not configured."
-        if active_tab == 'tab-ai' and not session_context:
-            return True, "Loading AI context for the selected session..."
+        if not params:
+            return True, "Update the dashboard before asking AI about a session."
+        if active_tab == 'tab-ai' and not _ai_context_matches_params(session_context, params):
+            return False, "Ask about this session... context will finish loading if needed."
         return False, 'Ask about this session... (e.g. "What was the optimal strategy in this race?")'
 
     @app.callback(
@@ -43,23 +79,13 @@ def register_ai_callbacks(app):
         if background_preload_enabled() and status.get('status') != 'ready':
             return dash.no_update
 
-        year, race, session_type = params['year'], params['race'], params['session_type']
-        driver1, driver2 = params['driver1'], params['driver2']
-        context_header = f"{year} {race} | {session_type} | {driver1} vs {driver2}"
-
-        if isinstance(current_context, str) and current_context.startswith(f"{context_header}\n\n"):
+        if _ai_context_matches_params(current_context, params):
             return dash.no_update
 
+        year, race, session_type = params['year'], params['race'], params['session_type']
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
-                from data import load_session_with_preload
-                from ai_utils import _gather_session_context
-
-                # AI analysis uses full context streams.
-                session = load_session_with_preload(year, race, session_type,
-                                                   laps=True, telemetry=True, weather=True, messages=True)
-                context = _gather_session_context(session, session_type, driver1, driver2)
-                return f"{context_header}\n\n{context}"
+                return _build_ai_session_context(params)
             except Exception as e:
                 logging.error(f"AI Context Error: {e}")
                 return ""
@@ -88,10 +114,10 @@ def register_ai_callbacks(app):
          Output('ai-history-index-store', 'data'), Output('ai-loading-dummy', 'children')],
         [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
         [State('ai-question-input', 'value'), State('session-context-store', 'data'),
-         State('ai-history-store', 'data')],
+         State('ai-history-store', 'data'), State('dashboard-params-store', 'data')],
         prevent_initial_call=True
     )
-    def ask_ai(n_clicks, n_submit, question, session_context, history):
+    def ask_ai(n_clicks, n_submit, question, session_context, history, params):
         """Send user question + session context to Gemini with guardrails."""
         if history is None:
             history = []
@@ -108,8 +134,27 @@ def register_ai_callbacks(app):
             return new_history, '', len(new_history) - 1, ''
 
         # Guard: session context.
+        if not _ai_context_matches_params(session_context, params):
+            session_context = ""
+
+        if not session_context and params:
+            try:
+                with _timed_callback(
+                    'ask_ai_context_recovery',
+                    year=params.get('year'),
+                    race=params.get('race'),
+                    session=params.get('session_type')
+                ):
+                    session_context = _build_ai_session_context(params)
+            except Exception as e:
+                logging.error(f"AI Context Recovery Error: {e}")
+                session_context = ""
+
         if not session_context:
-            err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
+            if params:
+                err = "⚠️ AI session context could not be loaded for the selected dashboard session. Try Update Dashboard again, then ask your question."
+            else:
+                err = "⚠️ No session data loaded. Select a session and drivers, then click Update Dashboard."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
 
