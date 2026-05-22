@@ -4,7 +4,7 @@ import logging
 from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-from callbacks_shared import _timed_callback
+from callbacks_shared import _figure_cache_key, _timed_callback
 
 
 def _active_telemetry_ready(params, active_tab):
@@ -27,14 +27,19 @@ def register_telemetry_callbacks(app):
     """Register all telemetry-related callbacks."""
 
     @app.callback(
-        Output('speed-graph', 'figure'),
+        [Output('speed-graph', 'figure'),
+         Output('telemetry-figure-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
-         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('telemetry-figure-cache-key-store', 'data')
     )
-    def update_telemetry(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
+    def update_telemetry(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
         if not _active_telemetry_ready(params, active_tab):
-            return dash.no_update
+            return dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'telemetry', d1_lap_value, d2_lap_value)
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from graphs import _build_telemetry_fig
@@ -51,30 +56,36 @@ def register_telemetry_callbacks(app):
                 tel1, tel2 = cmp['tel1'], cmp['tel2']
 
                 fast_data, slow_data = _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2)
-                return _build_telemetry_fig(
+                fig = _build_telemetry_fig(
                     fast_data,
                     slow_data,
                     driver1_delta_data=(d1, lap1),
                     driver2_delta_data=(d2, lap2),
                 )
+                return fig, cache_key
             except Exception as e:
                 from graph_shared import _error_figure
                 from ui_utils import _friendly_error
 
                 logging.error(f"Telemetry Error: {e}")
-                return _error_figure(_friendly_error(e))
+                return _error_figure(_friendly_error(e)), None
 
     @app.callback(
-        [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data')],
+        [Output('mini-track-map', 'figure'), Output('mini-map-store', 'data'),
+         Output('mini-map-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('mini-map-cache-key-store', 'data'),
         prevent_initial_call=True
     )
-    def update_mini_map_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
+    def update_mini_map_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
         """Precompute track polyline once; hover only moves marker."""
         if not _active_telemetry_ready(params, active_tab):
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'mini-map', d1_lap_value, d2_lap_value)
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update, dash.no_update
         try:
             import numpy as np
             import pandas as pd
@@ -202,11 +213,11 @@ def register_telemetry_callbacks(app):
                 plot_bgcolor='rgba(0,0,0,0)',
                 uirevision='mini-track-map'
             )
-            return fig, store
+            return fig, store, cache_key
         except PreventUpdate:
             raise
         except Exception:
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='updateMiniMap'),
@@ -241,16 +252,21 @@ def register_telemetry_callbacks(app):
     )
 
     @app.callback(
-        [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data')],
+        [Output('gg-diagram', 'figure', allow_duplicate=True), Output('gg-data-store', 'data'),
+         Output('gg-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('gg-cache-key-store', 'data'),
         prevent_initial_call=True,
     )
-    def update_gg_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state):
+    def update_gg_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
         """Build base friction-circle figure and cache G-series for hover."""
         if not _active_telemetry_ready(params, active_tab):
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'gg', d1_lap_value, d2_lap_value)
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update, dash.no_update
 
         import numpy as np
         import pandas as pd
@@ -402,10 +418,10 @@ def register_telemetry_callbacks(app):
                         hovertemplate=f"<b>{name}</b><br>Lat: %{{x:.2f}}G<br>Long: %{{y:.2f}}G<extra></extra>"
                     ))
 
-                return fig, store
+                return fig, store, cache_key
             except Exception as e:
                 logging.error(f"G-force Error: {e}")
-                return _error_figure(_friendly_error(e)), {}
+                return _error_figure(_friendly_error(e)), {}, None
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='updateGGHover'),

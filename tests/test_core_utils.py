@@ -142,6 +142,22 @@ class TestUrlState(unittest.TestCase):
         self.assertIsNone(parsed["trackmap_mode"])
         self.assertIsNone(parsed["mode"])
 
+    def test_figure_cache_key_changes_with_tab_inputs(self):
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+
+        base = callbacks_shared._figure_cache_key(params, "trackmap", "dominance")
+        changed_mode = callbacks_shared._figure_cache_key(params, "trackmap", "speed")
+        changed_driver = callbacks_shared._figure_cache_key({**params, "driver2": "VER"}, "trackmap", "dominance")
+
+        self.assertNotEqual(base, changed_mode)
+        self.assertNotEqual(base, changed_driver)
+
 
 class TestUxHelpers(unittest.TestCase):
     def test_experience_mode_normalizes_to_beginner(self):

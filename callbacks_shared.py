@@ -1,6 +1,7 @@
 import os
 import time
 import logging
+import json
 from contextlib import contextmanager
 from urllib.parse import parse_qs, urlencode
 
@@ -56,6 +57,22 @@ def _trim_history(history):
     if len(history) > MAX_AI_HISTORY:
         return history[-MAX_AI_HISTORY:]
     return history
+
+
+def _figure_cache_key(params, namespace, *parts):
+    """Return a stable key for a rendered figure already held by the browser."""
+    if not params:
+        return None
+    payload = {
+        'namespace': namespace,
+        'year': params.get('year'),
+        'race': params.get('race'),
+        'session_type': params.get('session_type'),
+        'driver1': params.get('driver1'),
+        'driver2': params.get('driver2'),
+        'parts': parts,
+    }
+    return json.dumps(payload, sort_keys=True, separators=(',', ':'), default=str)
 
 
 def _parse_url_state(url_search):

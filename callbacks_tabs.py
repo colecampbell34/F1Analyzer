@@ -2,9 +2,9 @@
 import dash
 import logging
 from dash import dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 
-from callbacks_shared import _timed_callback
+from callbacks_shared import _figure_cache_key, _timed_callback
 
 
 def _active_tab_ready(params, active_tab, expected_tab):
@@ -22,14 +22,19 @@ def register_tab_callbacks(app):
 
     # Track map tab.
     @app.callback(
-        [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children')],
+        [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children'),
+         Output('trackmap-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('trackmap-mode', 'value'), Input('preload-status-interval', 'n_intervals'),
-         Input('active-tab-preload-store', 'data')]
+         Input('active-tab-preload-store', 'data')],
+        State('trackmap-cache-key-store', 'data')
     )
-    def update_dominance(params, active_tab, mode, _n, _preload_state):
+    def update_dominance(params, active_tab, mode, _n, _preload_state, current_cache_key):
         if not _active_tab_ready(params, active_tab, 'tab-trackmap'):
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'trackmap', mode)
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update, dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from graphs import _build_dominance_fig, _build_driver_radar
@@ -121,26 +126,32 @@ def register_tab_callbacks(app):
                     }
                 )
 
-                return _build_dominance_fig(
+                fig = _build_dominance_fig(
                     d1, d2, c1, c2, tel1, tel2, fast_data, slow_data,
                     mode=mode, session=session
-                ), dna_ui
+                )
+                return fig, dna_ui, cache_key
             except Exception as e:
                 from graph_shared import _error_figure
                 from ui_utils import _friendly_error
 
                 logging.error(f"Dominance Error: {e}")
-                return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable")
+                return _error_figure(_friendly_error(e)), html.Div("DNA analysis unavailable"), None
 
     # Strategy tab.
     @app.callback(
-        [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure')],
+        [Output('strategy-graph', 'figure'), Output('deg-graph', 'figure'),
+         Output('strategy-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('strategy-cache-key-store', 'data')
     )
-    def update_strategy(params, active_tab, _n, _preload_state):
+    def update_strategy(params, active_tab, _n, _preload_state, current_cache_key):
         if not _active_tab_ready(params, active_tab, 'tab-strategy'):
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'strategy')
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update, dash.no_update
         with _timed_callback('update_strategy', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from data import get_shared_data, is_qualifying, is_practice
@@ -164,24 +175,29 @@ def register_tab_callbacks(app):
                     fig_strat = _build_strategy_fig(session, d1, d2, lbl1, lbl2, c1, c2)
                     fig_deg = _build_deg_fig(session, d1, d2, lbl1, lbl2, c1, c2)
 
-                return fig_strat, fig_deg
+                return fig_strat, fig_deg, cache_key
             except Exception as e:
                 from graph_shared import _error_figure
                 from ui_utils import _friendly_error
 
                 logging.error(f"Strategy Error: {e}")
                 err = _error_figure(_friendly_error(e))
-                return err, err
+                return err, err, None
 
     # Race tab.
     @app.callback(
-        [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure')],
+        [Output('race-gaps-graph', 'figure'), Output('pit-stops-graph', 'figure'),
+         Output('race-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('race-cache-key-store', 'data')
     )
-    def update_race_analysis(params, active_tab, _n, _preload_state):
+    def update_race_analysis(params, active_tab, _n, _preload_state, current_cache_key):
         if not _active_tab_ready(params, active_tab, 'tab-race'):
-            return dash.no_update, dash.no_update
+            return dash.no_update, dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'race')
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update, dash.no_update
         with _timed_callback('update_race_analysis', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from data import get_shared_data, is_race
@@ -199,24 +215,29 @@ def register_tab_callbacks(app):
                 else:
                     fig_gaps = _not_applicable_figure("Race gap analysis available for Race & Sprint sessions only")
                     fig_pits = _not_applicable_figure("Pit stop data available for Race & Sprint sessions only")
-                return fig_gaps, fig_pits
+                return fig_gaps, fig_pits, cache_key
             except Exception as e:
                 from graph_shared import _error_figure
                 from ui_utils import _friendly_error
 
                 logging.error(f"Error in callback: {e}")
                 err = _error_figure(_friendly_error(e))
-                return err, err
+                return err, err, None
 
     # Grid pace tab.
     @app.callback(
-        Output('grid-pace-graph', 'figure'),
+        [Output('grid-pace-graph', 'figure'),
+         Output('gridpace-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
-         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')]
+         Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
+        State('gridpace-cache-key-store', 'data')
     )
-    def update_grid_pace(params, active_tab, _n, _preload_state):
+    def update_grid_pace(params, active_tab, _n, _preload_state, current_cache_key):
         if not _active_tab_ready(params, active_tab, 'tab-gridpace'):
-            return dash.no_update
+            return dash.no_update, dash.no_update
+        cache_key = _figure_cache_key(params, 'gridpace')
+        if current_cache_key == cache_key:
+            return dash.no_update, dash.no_update
         with _timed_callback('update_grid_pace', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from data import load_session_with_preload
@@ -234,10 +255,10 @@ def register_tab_callbacks(app):
                     weather=True,
                     messages=False
                 )
-                return _build_grid_pace_fig(session, params['session_type'])
+                return _build_grid_pace_fig(session, params['session_type']), cache_key
             except Exception as e:
                 from graph_shared import _error_figure
                 from ui_utils import _friendly_error
 
                 logging.error(f"Grid Pace Error: {e}")
-                return _error_figure(_friendly_error(e))
+                return _error_figure(_friendly_error(e)), None
