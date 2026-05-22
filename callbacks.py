@@ -378,7 +378,9 @@ def _register_core_callbacks(app):
 
     @app.callback(
         [Output('driver1-dropdown', 'value', allow_duplicate=True),
-         Output('driver2-dropdown', 'value', allow_duplicate=True)],
+         Output('driver2-dropdown', 'value', allow_duplicate=True),
+         Output('teammate-toast', 'is_open'),
+         Output('teammate-toast', 'children')],
         [Input('teammate1-btn', 'n_clicks'),
          Input('teammate2-btn', 'n_clicks')],
         [State('session-dropdown', 'value'), State('year-dropdown', 'value'),
@@ -388,18 +390,20 @@ def _register_core_callbacks(app):
     )
     def apply_teammate_button(_d1_clicks, _d2_clicks, session_type, year, race, current_d1, current_d2):
         if not all([session_type, year, race]):
-            raise PreventUpdate
+            return dash.no_update, dash.no_update, True, "Select a session before using the teammate shortcut."
 
         trigger_id = dash.ctx.triggered_id
         if trigger_id == 'teammate1-btn':
             source_driver = current_d1
+            source_label = "Driver 1"
         elif trigger_id == 'teammate2-btn':
             source_driver = current_d2
+            source_label = "Driver 2"
         else:
             raise PreventUpdate
 
         if not source_driver:
-            raise PreventUpdate
+            return dash.no_update, dash.no_update, True, f"Select {source_label} before using the teammate shortcut."
 
         try:
             from data import _load_drivers_fast, get_teammate_from_info
@@ -407,16 +411,16 @@ def _register_core_callbacks(app):
             driver_info = _load_drivers_fast(int(year), race, session_type)
             teammate = get_teammate_from_info(source_driver, driver_info)
             if not teammate:
-                raise PreventUpdate
+                return dash.no_update, dash.no_update, True, f"No teammate found for {source_driver} in this session."
 
             if trigger_id == 'teammate1-btn':
-                return dash.no_update, teammate
-            return teammate, dash.no_update
+                return dash.no_update, teammate, False, dash.no_update
+            return teammate, dash.no_update, False, dash.no_update
         except PreventUpdate:
             raise
         except Exception as e:
             logging.error(f"Teammate Button Error: {e}")
-            raise PreventUpdate
+            return dash.no_update, dash.no_update, True, "Could not load teammate data for this session."
 
     @app.callback(
         Output('update-dashboard-btn', 'n_clicks'),

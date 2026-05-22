@@ -138,6 +138,8 @@ def _set_cache_headers(response):
     path = request.path or ''
     if path == '/service-worker.js':
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    elif path.startswith('/assets/') and path.endswith('.css'):
+        response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     elif path.startswith('/assets/') or path.startswith('/_dash-component-suites/'):
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
     elif path in ('/', '/m', '/m/') or path.startswith('/api/') or path in ('/health', '/healthz', '/warmup'):

@@ -110,6 +110,15 @@ def register_ai_callbacks(app):
     )
 
     @app.callback(
+        [Output('ai-history-store', 'data', allow_duplicate=True),
+         Output('ai-history-index-store', 'data', allow_duplicate=True)],
+        Input('dashboard-params-store', 'data'),
+        prevent_initial_call=True
+    )
+    def reset_ai_history_on_session_change(_params):
+        return [], 0
+
+    @app.callback(
         [Output('ai-history-store', 'data'), Output('ai-question-input', 'value'),
          Output('ai-history-index-store', 'data'), Output('ai-loading-dummy', 'children')],
         [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],

@@ -711,6 +711,15 @@ app_layout = dbc.Container([
         duration=3000,
         style={"position": "fixed", "top": 10, "right": 10, "width": 250, "zIndex": 9999},
     ),
+    dbc.Toast(
+        id="teammate-toast",
+        header="Teammate Shortcut",
+        is_open=False,
+        dismissable=True,
+        icon="warning",
+        duration=3500,
+        style={"position": "fixed", "top": 72, "right": 10, "width": 280, "zIndex": 9999},
+    ),
 
     dbc.Modal([
         dbc.ModalHeader(dbc.ModalTitle("Best on a Larger Screen")),

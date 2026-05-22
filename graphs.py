@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import re
 from data import get_pit_stop_data, get_track_status_events, get_single_driver_color, is_practice
 from ui_utils import _downsample, _apply_base_layout, _hex_to_rgba
 from graph_shared import (
@@ -26,6 +27,98 @@ def _add_driver_legend_entries(fig, drivers, row=None, col=None):
             fig.add_trace(trace, row=row, col=col)
         else:
             fig.add_trace(trace)
+
+
+def _normalized_driver_key(value):
+    """Normalize driver identity strings across FastF1 and Ergast feeds."""
+    if value is None:
+        return ''
+    try:
+        if pd.isna(value):
+            return ''
+    except (TypeError, ValueError):
+        pass
+    return re.sub(r'[^a-z0-9]+', '', str(value).lower())
+
+
+def _pit_driver_lookup(session):
+    """Return normalized driver identifiers mapped to FastF1 abbreviations."""
+    results = getattr(session, 'results', None)
+    if results is None or getattr(results, 'empty', True):
+        return {}
+
+    lookup = {}
+    for _, row in results.iterrows():
+        abbr = row.get('Abbreviation')
+        if not isinstance(abbr, str) or len(abbr) != 3:
+            continue
+
+        candidates = [
+            abbr,
+            row.get('DriverId'),
+            row.get('BroadcastName'),
+            row.get('FullName'),
+            row.get('FirstName'),
+            row.get('LastName'),
+            f"{row.get('FirstName', '')} {row.get('LastName', '')}",
+        ]
+        for candidate in candidates:
+            key = _normalized_driver_key(candidate)
+            if key:
+                lookup[key] = abbr
+    return lookup
+
+
+def _resolve_pit_driver_code(stop, session):
+    """Resolve a pit-stop feed row to the session's driver abbreviation."""
+    lookup = _pit_driver_lookup(session)
+    for field in ('driverCode', 'driverId', 'driverUrl'):
+        value = stop.get(field)
+        key = _normalized_driver_key(value)
+        if key in lookup:
+            return lookup[key]
+
+    code = stop.get('driverCode')
+    if isinstance(code, str) and len(code.strip()) == 3:
+        return code.strip().upper()
+
+    driver_id = _normalized_driver_key(stop.get('driverId'))
+    if driver_id:
+        return driver_id[:3].upper()
+    return None
+
+
+def _is_truthy_fastf1_value(value):
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    return str(value).strip().lower() in ('1', 'true', 'yes')
+
+
+def _is_actual_pit_stop_lap(current_lap, next_lap):
+    """Return True for pit entries that include a real stop, not just a transit."""
+    try:
+        current_stint = pd.to_numeric(pd.Series([current_lap.get('Stint')]), errors='coerce').iloc[0]
+        next_stint = pd.to_numeric(pd.Series([next_lap.get('Stint')]), errors='coerce').iloc[0]
+        if pd.notna(current_stint) and pd.notna(next_stint) and float(next_stint) > float(current_stint):
+            return True
+    except Exception:
+        pass
+
+    if _is_truthy_fastf1_value(next_lap.get('FreshTyre')):
+        return True
+
+    current_compound = current_lap.get('Compound')
+    next_compound = next_lap.get('Compound')
+    if (
+        isinstance(current_compound, str)
+        and isinstance(next_compound, str)
+        and current_compound.strip()
+        and next_compound.strip()
+        and current_compound != next_compound
+    ):
+        return True
+
+    return False
 
 
 def _identify_corners(tel1, tel2):
@@ -1257,10 +1350,7 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 & (pit_stops['duration_seconds'] < 120)
             ].copy()
             if not valid.empty:
-                valid['driver_code'] = valid.apply(
-                    lambda r: r.get('driverCode') or str(r.get('driverId', '')).upper()[:3],
-                    axis=1
-                )
+                valid['driver_code'] = valid.apply(lambda r: _resolve_pit_driver_code(r, session), axis=1)
                 valid = valid[valid['driver_code'].astype(str).str.len() == 3]
                 for stop in valid.to_dict('records'):
                     drv = stop['driver_code']
@@ -1288,10 +1378,21 @@ def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
                 pit_in = drv_laps[drv_laps['PitInTime'].notna()][['LapNumber', 'PitInTime']]
                 if pit_in.empty:
                     continue
-                pit_out_map = drv_laps.set_index('LapNumber')['PitOutTime'].to_dict()
+                laps_by_number = drv_laps.set_index('LapNumber', drop=False)
                 color = get_single_driver_color(drv, session)
                 for lap_num, pit_in_time in pit_in.itertuples(index=False):
-                    pit_out_time = pit_out_map.get(lap_num + 1)
+                    next_lap_number = lap_num + 1
+                    if next_lap_number not in laps_by_number.index:
+                        continue
+                    current_lap = laps_by_number.loc[lap_num]
+                    next_lap = laps_by_number.loc[next_lap_number]
+                    if isinstance(current_lap, pd.DataFrame):
+                        current_lap = current_lap.iloc[0]
+                    if isinstance(next_lap, pd.DataFrame):
+                        next_lap = next_lap.iloc[0]
+                    if not _is_actual_pit_stop_lap(current_lap, next_lap):
+                        continue
+                    pit_out_time = next_lap.get('PitOutTime')
                     if pd.notna(pit_out_time):
                         duration = (pit_out_time - pit_in_time).total_seconds()
                         if 10 < duration < 120:

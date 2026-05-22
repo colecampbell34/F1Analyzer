@@ -211,6 +211,81 @@ class TestDeltaChartSegments(unittest.TestCase):
         self.assertNotIn(10.0, behind_x[~np.isnan(behind_y)].tolist())
 
 
+class TestPitStops(unittest.TestCase):
+    def test_pit_driver_id_maps_to_session_abbreviation(self):
+        session = MagicMock()
+        session.results = pd.DataFrame([
+            {
+                "Abbreviation": "VER",
+                "FirstName": "Max",
+                "LastName": "Verstappen",
+                "FullName": "Max Verstappen",
+            }
+        ])
+
+        code = graphs._resolve_pit_driver_code({"driverId": "max_verstappen", "driverCode": None}, session)
+
+        self.assertEqual(code, "VER")
+
+    def test_pit_stop_fallback_excludes_transits_without_tyre_stop(self):
+        class PickableLaps(pd.DataFrame):
+            @property
+            def _constructor(self):
+                return PickableLaps
+
+            def pick_drivers(self, driver):
+                return PickableLaps(self[self["Driver"] == driver])
+
+        session = MagicMock()
+        session.name = "Sprint"
+        session.results = pd.DataFrame([
+            {"Abbreviation": "VER", "TeamName": "Red Bull", "TeamColor": "4781D7"},
+            {"Abbreviation": "PER", "TeamName": "Red Bull", "TeamColor": "4781D7"},
+        ])
+        session.laps = PickableLaps([
+            {
+                "Driver": "VER",
+                "LapNumber": 10,
+                "PitInTime": pd.Timedelta(seconds=600),
+                "PitOutTime": pd.NaT,
+                "Stint": 1,
+                "Compound": "MEDIUM",
+                "FreshTyre": False,
+            },
+            {
+                "Driver": "VER",
+                "LapNumber": 11,
+                "PitInTime": pd.NaT,
+                "PitOutTime": pd.Timedelta(seconds=625),
+                "Stint": 2,
+                "Compound": "HARD",
+                "FreshTyre": True,
+            },
+            {
+                "Driver": "PER",
+                "LapNumber": 5,
+                "PitInTime": pd.Timedelta(seconds=300),
+                "PitOutTime": pd.NaT,
+                "Stint": 1,
+                "Compound": "MEDIUM",
+                "FreshTyre": False,
+            },
+            {
+                "Driver": "PER",
+                "LapNumber": 6,
+                "PitInTime": pd.NaT,
+                "PitOutTime": pd.Timedelta(seconds=323),
+                "Stint": 1,
+                "Compound": "MEDIUM",
+                "FreshTyre": False,
+            },
+        ])
+
+        fig = graphs._build_pit_stops_fig(session, "VER", "PER", "VER", "PER", "#4781D7", "#4781D7")
+
+        self.assertEqual(list(fig.data[0].x), ["VER L10"])
+
+
 class TestLatestRaceDefault(unittest.TestCase):
     def test_latest_race_default_uses_latest_past_race(self):
         expected = {
@@ -328,6 +403,14 @@ class TestGridPaceFiltering(unittest.TestCase):
 
 
 class TestApiValidation(unittest.TestCase):
+    def test_css_assets_revalidate_after_deploy(self):
+        import app as app_module
+        client = app_module.server.test_client()
+
+        response = client.get("/assets/custom.css")
+
+        self.assertEqual(response.headers.get("Cache-Control"), "no-cache, max-age=0, must-revalidate")
+
     def test_preload_status_requires_params(self):
         import app as app_module
         client = app_module.server.test_client()
