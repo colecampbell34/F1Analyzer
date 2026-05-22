@@ -9,6 +9,7 @@ import data
 import ui_utils
 import ai_cache
 import callbacks_shared
+import telemetry_prep
 import ux_helpers
 import graphs
 from flask import Flask
@@ -199,6 +200,57 @@ class TestLapSelection(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "VER lap 2 is not available"):
             callbacks_shared._pick_driver_lap(session, "VER", "specific", 2, lambda *_: None)
+
+
+class TestTelemetryPrepCache(unittest.TestCase):
+    def setUp(self):
+        telemetry_prep._prepare_selected_lap_comparison_cached.cache_clear()
+
+    def tearDown(self):
+        telemetry_prep._prepare_selected_lap_comparison_cached.cache_clear()
+
+    def test_selected_lap_cache_reuses_telemetry_and_returns_copies(self):
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+        session = MagicMock()
+        lap1 = pd.Series({"LapTime": pd.Timedelta(seconds=90)})
+        lap2 = pd.Series({"LapTime": pd.Timedelta(seconds=91)})
+
+        def fake_telemetry(lap, drop_xy_time=False, session=None):
+            x_values = [np.nan, 1.0, 2.0] if lap is lap1 else [0.0, 1.0, 2.0]
+            return pd.DataFrame({
+                "Distance": [0.0, 10.0, 20.0],
+                "Time": pd.to_timedelta([0, 1, 2], unit="s"),
+                "X": x_values,
+                "Y": [0.0, 1.0, 2.0],
+                "Speed": [100.0, 110.0, 120.0],
+            })
+
+        with (
+            patch.object(
+                telemetry_prep,
+                "get_shared_data",
+                return_value=(session, "NOR", "PIA", "NOR", "PIA", "#f47600", "#f47600"),
+            ) as shared,
+            patch.object(telemetry_prep, "_pick_driver_lap", side_effect=[lap1, lap2]) as picker,
+            patch.object(telemetry_prep, "_telemetry_with_distance", side_effect=fake_telemetry) as telemetry,
+        ):
+            first = telemetry_prep.prepare_selected_lap_comparison(params)
+            first["tel1"].loc[0, "Distance"] = 999.0
+
+            dropped = telemetry_prep.prepare_selected_lap_comparison(params, drop_xy_time=True)
+            again = telemetry_prep.prepare_selected_lap_comparison(params)
+
+        self.assertEqual(shared.call_count, 1)
+        self.assertEqual(picker.call_count, 2)
+        self.assertEqual(telemetry.call_count, 2)
+        self.assertEqual(again["tel1"].loc[0, "Distance"], 0.0)
+        self.assertEqual(dropped["tel1"]["Distance"].tolist(), [0.0, 10.0])
 
 
 class TestDeltaChartSegments(unittest.TestCase):

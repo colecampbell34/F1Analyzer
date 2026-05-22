@@ -23,6 +23,19 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
+
+def _env_int(name, default, minimum=None, maximum=None):
+    try:
+        value = int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
 _SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4)
 _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
@@ -49,8 +62,8 @@ _CACHE_READY = False
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
 _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
-SESSION_CACHE_MAXSIZE = 2
-SESSION_SUMMARY_CACHE_MAXSIZE = 12
+SESSION_CACHE_MAXSIZE = _env_int('SESSION_CACHE_MAXSIZE', 6, minimum=2, maximum=12)
+SESSION_SUMMARY_CACHE_MAXSIZE = _env_int('SESSION_SUMMARY_CACHE_MAXSIZE', 16, minimum=4, maximum=48)
 EVENT_SCHEDULE_CACHE_MAXSIZE = 20
 EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
@@ -642,6 +655,11 @@ def get_cache_stats():
         'summary_cache': _load_session_summary_cached.cache_info()._asdict(),
         'schedule_cache': get_event_schedule_cached.cache_info()._asdict(),
     }
+    try:
+        from telemetry_prep import get_selected_lap_cache_stats
+        stats['selected_lap_cache'] = get_selected_lap_cache_stats()
+    except Exception:
+        pass
     try:
         if os.path.exists(_CACHE_DIR):
             stats['cache_size_bytes'] = _cache_size_bytes(_CACHE_DIR)

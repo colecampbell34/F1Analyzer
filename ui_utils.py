@@ -193,9 +193,11 @@ def _build_perf_review_panel(snapshot, jobs, cache_stats):
     ] or [html.Div("No preload jobs tracked yet.", style={'color': '#888', 'fontSize': '0.85rem'})]
 
     cache_info = cache_stats.get('session_cache') or {}
+    selected_lap_cache = cache_stats.get('selected_lap_cache') or {}
     cache_text = (
         f"FastF1 cache {_format_bytes(cache_stats.get('cache_size_bytes'))} | "
-        f"session hits {cache_info.get('hits', 0)} misses {cache_info.get('misses', 0)}"
+        f"session hits {cache_info.get('hits', 0)} misses {cache_info.get('misses', 0)} | "
+        f"telemetry prep hits {selected_lap_cache.get('hits', 0)} misses {selected_lap_cache.get('misses', 0)}"
     )
 
     return html.Div([
