@@ -202,6 +202,22 @@ class TestGraphModules(unittest.TestCase):
         self.assertIs(graphs._build_race_gaps_fig, graphs_race._build_race_gaps_fig)
         self.assertIs(graphs._build_grid_pace_fig, graphs_pace._build_grid_pace_fig)
 
+    def test_driver_dna_summary_has_expected_labels(self):
+        tel = pd.DataFrame({
+            "Speed": [90.0, 180.0, 310.0],
+            "Brake": [0.0, 0.2, 0.0],
+            "Throttle": [10.0, 80.0, 100.0],
+            "nGear": [2, 4, 8],
+        })
+
+        legend, raw1, raw2, norm1, norm2 = graphs._compute_driver_dna_summary(tel, tel)
+
+        self.assertEqual([abbr for abbr, _label in legend], ["TS", "CS", "FT", "TR", "BU", "BI", "GD"])
+        self.assertEqual(len(raw1), 7)
+        self.assertEqual(len(raw2), 7)
+        self.assertEqual(norm1, [50.0] * 7)
+        self.assertEqual(norm2, [50.0] * 7)
+
 
 class TestAiLapContext(unittest.TestCase):
     def test_ai_context_header_includes_selected_laps(self):

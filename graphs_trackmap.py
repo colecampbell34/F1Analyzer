@@ -7,6 +7,19 @@ from graphs_common import _add_driver_legend_entries
 from ui_utils import _apply_base_layout, _downsample, _hex_to_rgba
 
 
+DNA_CATEGORY_LABELS = [
+    'Top Speed (km/h)',
+    'Corner Speed <220 (km/h)',
+    'Full Throttle (%)',
+    'Throttle Ramp (p90 Δ)',
+    'Brake Usage (%)',
+    'Brake Intensity (avg %)',
+    'Gear Diversity (entropy)',
+]
+
+DNA_ABBRS = ['TS', 'CS', 'FT', 'TR', 'BU', 'BI', 'GD']
+
+
 def _identify_corners(tel1, tel2):
     """Detects corners as local minima in speed and extracts comparison metrics."""
     corners = []
