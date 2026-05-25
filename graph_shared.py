@@ -1,5 +1,4 @@
 """Shared Plotly configuration and graph helper utilities."""
-from graph_config import GRAPH_CONFIG
 
 
 def _collapse_lap_ranges(laps):
@@ -48,24 +47,6 @@ def _not_applicable_figure(message):
                        font=dict(size=15, color='#888'),
                        xref="paper", yref="paper", x=0.5, y=0.5)
     return fig
-
-
-def _get_driver_colors(driver1, driver2, session):
-    import fastf1.plotting
-    try:
-        c1 = fastf1.plotting.get_driver_color(driver1, session)
-        c2 = fastf1.plotting.get_driver_color(driver2, session)
-    except (KeyError, ValueError):
-        c1, c2 = '#00ffff', '#ff00ff'
-
-    if not c1.startswith('#'):
-        c1 = f"#{c1}"
-    if not c2.startswith('#'):
-        c2 = f"#{c2}"
-    if c1.lower() == c2.lower():
-        c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
-
-    return c1, c2
 
 
 def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):

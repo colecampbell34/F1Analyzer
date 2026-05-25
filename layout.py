@@ -486,8 +486,17 @@ content = html.Div([
                     inputStyle={"marginRight": "4px"},
                     labelStyle={"marginRight": "15px", "color": "#ccc"}
                 ),
+                html.Div(
+                    id='trackmap-lap-summary',
+                    style={
+                        'marginLeft': 'auto',
+                        'color': '#aaa',
+                        'fontSize': '0.78rem',
+                        'textAlign': 'right'
+                    }
+                ),
             ], className='trackmap-controls-panel',
-               style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center'}),
+               style={'padding': '5px 15px', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px', 'marginBottom': '0.5rem', 'display': 'flex', 'alignItems': 'center', 'gap': '0.5rem', 'flexWrap': 'wrap'}),
             dbc.Row([
                 dbc.Col([
                     dcc.Loading(type='dot', color='#ff0000', children=[
@@ -757,7 +766,6 @@ app_layout = dbc.Container([
     dcc.Store(id='gridpace-cache-key-store', storage_type='memory'),
     dcc.Store(id='preload-status-store', storage_type='memory'),
     dcc.Store(id='active-tab-preload-store', storage_type='memory'),
-    dcc.Store(id='export-status-store', storage_type='memory'),
     dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
     dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=True),

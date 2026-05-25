@@ -6,7 +6,7 @@ import logging
 import hashlib
 import re
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import timezone
 from functools import lru_cache
 import pandas as pd
 from static_schedule import (
@@ -300,13 +300,6 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
             messages=bool(messages)
         )
     return session
-
-
-@lru_cache(maxsize=3)
-def _load_session_cached(year, race, session_name):
-    """Backward compatibility for full loading."""
-    return _load_session_granular_cached(year, race, session_name, 
-                                        laps=True, telemetry=True, weather=True, messages=True)
 
 
 @lru_cache(maxsize=SESSION_SUMMARY_CACHE_MAXSIZE)

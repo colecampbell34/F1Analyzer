@@ -88,6 +88,14 @@ Run the current test suite with:
 python3 -m unittest discover -s tests -q
 ```
 
+For linting and optional browser smoke tests, install the development tools:
+
+```bash
+pip install -r requirements-dev.txt
+python3 -m ruff check .
+RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 python3 -m pytest tests/test_browser_smoke.py
+```
+
 ## Deployment
 
 Example Gunicorn command:

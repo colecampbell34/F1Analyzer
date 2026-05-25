@@ -4,23 +4,7 @@ import logging
 from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
-from callbacks_shared import _figure_cache_key, _timed_callback
-
-
-def _active_telemetry_ready(params, active_tab):
-    if not params or active_tab != 'tab-telemetry':
-        return False
-    from data import background_preload_enabled, ensure_preload_for_tab
-    if not background_preload_enabled():
-        return True
-    status = ensure_preload_for_tab(params, active_tab)
-    return status.get('status') == 'ready'
-
-
-def _lap_dropdown_to_mode(value):
-    if value in (None, '', 'fastest'):
-        return 'fastest', None
-    return 'specific', int(value)
+from callbacks_shared import _active_tab_ready, _figure_cache_key, _lap_dropdown_to_mode, _timed_callback
 
 
 def register_telemetry_callbacks(app):
@@ -35,7 +19,7 @@ def register_telemetry_callbacks(app):
         State('telemetry-figure-cache-key-store', 'data')
     )
     def update_telemetry(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
-        if not _active_telemetry_ready(params, active_tab):
+        if not _active_tab_ready(params, active_tab, 'tab-telemetry'):
             return dash.no_update, dash.no_update
         cache_key = _figure_cache_key(params, 'telemetry', d1_lap_value, d2_lap_value)
         if current_cache_key == cache_key:
@@ -43,9 +27,8 @@ def register_telemetry_callbacks(app):
         with _timed_callback('update_telemetry', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from graphs import _build_telemetry_fig
-                from graph_shared import _sort_fastest_driver, _error_figure
+                from graph_shared import _sort_fastest_driver
                 from telemetry_prep import prepare_selected_lap_comparison
-                from ui_utils import _friendly_error
 
                 d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
                 d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
@@ -81,7 +64,7 @@ def register_telemetry_callbacks(app):
     )
     def update_mini_map_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
         """Precompute track polyline once; hover only moves marker."""
-        if not _active_telemetry_ready(params, active_tab):
+        if not _active_tab_ready(params, active_tab, 'tab-telemetry'):
             return dash.no_update, dash.no_update, dash.no_update
         cache_key = _figure_cache_key(params, 'mini-map', d1_lap_value, d2_lap_value)
         if current_cache_key == cache_key:
@@ -262,7 +245,7 @@ def register_telemetry_callbacks(app):
     )
     def update_gg_base(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_cache_key):
         """Build base friction-circle figure and cache G-series for hover."""
-        if not _active_telemetry_ready(params, active_tab):
+        if not _active_tab_ready(params, active_tab, 'tab-telemetry'):
             return dash.no_update, dash.no_update, dash.no_update
         cache_key = _figure_cache_key(params, 'gg', d1_lap_value, d2_lap_value)
         if current_cache_key == cache_key:

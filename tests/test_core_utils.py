@@ -9,9 +9,15 @@ import data
 import ui_utils
 import ai_cache
 import callbacks_shared
+import callbacks_ai
+import callbacks_tabs
 import telemetry_prep
 import ux_helpers
 import graphs
+import graphs_pace
+import graphs_race
+import graphs_telemetry
+import graphs_trackmap
 from flask import Flask
 
 
@@ -189,7 +195,75 @@ class TestUxHelpers(unittest.TestCase):
         self.assertEqual((d1, d2), ("NOR", "LEC"))
 
 
+class TestGraphModules(unittest.TestCase):
+    def test_graphs_module_preserves_public_import_surface(self):
+        self.assertIs(graphs._build_telemetry_fig, graphs_telemetry._build_telemetry_fig)
+        self.assertIs(graphs._build_dominance_fig, graphs_trackmap._build_dominance_fig)
+        self.assertIs(graphs._build_race_gaps_fig, graphs_race._build_race_gaps_fig)
+        self.assertIs(graphs._build_grid_pace_fig, graphs_pace._build_grid_pace_fig)
+
+
+class TestAiLapContext(unittest.TestCase):
+    def test_ai_context_header_includes_selected_laps(self):
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+
+        header = callbacks_ai._ai_context_header(params, 12, "fastest")
+        context = f"{header}\n\nbody"
+
+        self.assertIn("NOR=Lap 12", header)
+        self.assertIn("PIA=fastest", header)
+        self.assertTrue(callbacks_ai._ai_context_matches_params(context, params, 12, "fastest"))
+        self.assertFalse(callbacks_ai._ai_context_matches_params(context, params, 13, "fastest"))
+
+    def test_ai_callbacks_depend_on_lap_dropdowns(self):
+        fake_app = TestLapSelection.FakeDashApp()
+        callbacks_ai.register_ai_callbacks(fake_app)
+
+        context_callback = next(
+            callback for callback in fake_app.callbacks
+            if getattr(callback["outputs"], "component_id", None) == "session-context-store"
+        )
+        context_input_ids = [dependency.component_id for dependency in context_callback["inputs"]]
+        self.assertIn("d1-lap-dropdown", context_input_ids)
+        self.assertIn("d2-lap-dropdown", context_input_ids)
+
+        ask_callback = next(
+            callback for callback in fake_app.callbacks
+            if isinstance(callback["outputs"], (list, tuple))
+            and any(output.component_id == "ai-history-store" for output in callback["outputs"])
+            and any(output.component_id == "ai-question-input" for output in callback["outputs"])
+        )
+        ask_state_ids = [dependency.component_id for dependency in ask_callback["args"][0]]
+        self.assertIn("d1-lap-dropdown", ask_state_ids)
+        self.assertIn("d2-lap-dropdown", ask_state_ids)
+
+
 class TestLapSelection(unittest.TestCase):
+    class FakeDashApp:
+        def __init__(self):
+            self.callbacks = []
+
+        def callback(self, outputs, inputs, *callback_args, **callback_kwargs):
+            def decorator(func):
+                self.callbacks.append({
+                    "outputs": outputs,
+                    "inputs": inputs,
+                    "args": callback_args,
+                    "kwargs": callback_kwargs,
+                    "func": func,
+                })
+                return func
+            return decorator
+
+        def clientside_callback(self, *_args, **_kwargs):
+            return None
+
     def test_specific_missing_lap_raises_clear_error(self):
         class Laps:
             def pick_drivers(self, driver):
@@ -200,6 +274,89 @@ class TestLapSelection(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "VER lap 2 is not available"):
             callbacks_shared._pick_driver_lap(session, "VER", "specific", 2, lambda *_: None)
+
+    def test_lap_dropdown_to_mode_normalizes_fastest_and_specific(self):
+        self.assertEqual(callbacks_shared._lap_dropdown_to_mode("fastest"), ("fastest", None))
+        self.assertEqual(callbacks_shared._lap_dropdown_to_mode(None), ("fastest", None))
+        self.assertEqual(callbacks_shared._lap_dropdown_to_mode(12), ("specific", 12))
+        self.assertEqual(callbacks_shared._lap_dropdown_to_mode("12"), ("specific", 12))
+
+    def test_trackmap_lap_summary_reflects_selected_laps(self):
+        fake_app = self.FakeDashApp()
+        callbacks_tabs.register_tab_callbacks(fake_app)
+
+        summary_callback = next(
+            callback for callback in fake_app.callbacks
+            if getattr(callback["outputs"], "component_id", None) == "trackmap-lap-summary"
+        )
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+
+        self.assertEqual(
+            summary_callback["func"](params, 12, "fastest"),
+            "Laps: NOR Lap 12 vs PIA fastest",
+        )
+
+    def test_trackmap_callback_uses_selected_lap_dropdowns(self):
+        fake_app = self.FakeDashApp()
+        callbacks_tabs.register_tab_callbacks(fake_app)
+
+        def _outputs(callback):
+            outputs = callback["outputs"]
+            return outputs if isinstance(outputs, (list, tuple)) else [outputs]
+
+        trackmap_callback = next(
+            callback for callback in fake_app.callbacks
+            if any(output.component_id == "2d-dominance-graph" for output in _outputs(callback))
+        )
+        input_ids = [dependency.component_id for dependency in trackmap_callback["inputs"]]
+
+        self.assertIn("d1-lap-dropdown", input_ids)
+        self.assertIn("d2-lap-dropdown", input_ids)
+
+        params = {
+            "year": 2025,
+            "race": "British Grand Prix",
+            "session_type": "Race",
+            "driver1": "NOR",
+            "driver2": "PIA",
+        }
+        lap1 = pd.Series({"LapTime": pd.Timedelta(seconds=90)})
+        lap2 = pd.Series({"LapTime": pd.Timedelta(seconds=91)})
+        comparison = {
+            "session": MagicMock(),
+            "d1": "NOR",
+            "d2": "PIA",
+            "lbl1": "NOR",
+            "lbl2": "PIA",
+            "c1": "#f47600",
+            "c2": "#f47600",
+            "lap1": lap1,
+            "lap2": lap2,
+            "tel1": pd.DataFrame(),
+            "tel2": pd.DataFrame(),
+        }
+
+        with (
+            patch.object(callbacks_tabs, "_active_tab_ready", return_value=True),
+            patch("telemetry_prep.prepare_selected_lap_comparison", return_value=comparison) as prep,
+            patch("graph_shared._sort_fastest_driver", return_value=("fast", "slow")),
+            patch("graphs._build_driver_radar", return_value=({"data": [], "layout": {}}, [])),
+            patch("graphs._build_dominance_fig", return_value={"data": [], "layout": {}}),
+        ):
+            figure, _dna_ui, cache_key = trackmap_callback["func"](
+                params, "tab-trackmap", 12, 13, "braking", 0, {}, None
+            )
+
+        prep.assert_called_once_with(params, "specific", "specific", 12, 13)
+        self.assertEqual(figure, {"data": [], "layout": {}})
+        self.assertIn("12", cache_key)
+        self.assertIn("13", cache_key)
 
 
 class TestTelemetryPrepCache(unittest.TestCase):
@@ -476,8 +633,10 @@ class TestApiValidation(unittest.TestCase):
         client = app_module.server.test_client()
 
         response = client.get("/assets/custom.css")
-
-        self.assertEqual(response.headers.get("Cache-Control"), "no-cache, max-age=0, must-revalidate")
+        try:
+            self.assertEqual(response.headers.get("Cache-Control"), "no-cache, max-age=0, must-revalidate")
+        finally:
+            response.close()
 
     def test_preload_status_requires_params(self):
         import app as app_module

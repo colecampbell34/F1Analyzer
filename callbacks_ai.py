@@ -9,40 +9,73 @@ import random
 
 from ai_config import AI_ENABLED, GEMINI_API_KEY, GEMINI_MODELS
 from ai_cache import USER_DAILY_LIMIT
-from callbacks_shared import _timed_callback, _trim_history
+from callbacks_shared import _has_valid_lap, _lap_dropdown_to_mode, _pick_driver_lap, _timed_callback, _trim_history
 
 
-def _ai_context_header(params):
+def _ai_lap_label(value):
+    if value in (None, '', 'fastest'):
+        return 'fastest'
+    return f"Lap {int(value)}"
+
+
+def _ai_context_header(params, d1_lap_value='fastest', d2_lap_value='fastest'):
     """Return the stable header used to identify loaded AI context."""
     if not params:
         return ""
     return (
         f"{params.get('year')} {params.get('race')} | {params.get('session_type')} | "
-        f"{params.get('driver1')} vs {params.get('driver2')}"
+        f"{params.get('driver1')} vs {params.get('driver2')} | "
+        f"laps {params.get('driver1')}={_ai_lap_label(d1_lap_value)}, "
+        f"{params.get('driver2')}={_ai_lap_label(d2_lap_value)}"
     )
 
 
-def _ai_context_matches_params(session_context, params):
+def _ai_context_matches_params(session_context, params, d1_lap_value='fastest', d2_lap_value='fastest'):
     """Return True when the browser-stored context belongs to current dashboard params."""
-    header = _ai_context_header(params)
+    header = _ai_context_header(params, d1_lap_value, d2_lap_value)
     return bool(header and isinstance(session_context, str) and session_context.startswith(f"{header}\n\n"))
 
 
-def _build_ai_session_context(params):
+def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fastest'):
     """Build the AI context for the current dashboard params."""
     if not params or not all(params.get(key) for key in ('year', 'race', 'session_type', 'driver1', 'driver2')):
         return ""
 
+    import pandas as pd
     from data import load_session_with_preload
+    from data import get_best_lap
     from ai_utils import _gather_session_context
+    from telemetry_prep import _telemetry_with_distance
 
     year, race, session_type = params['year'], params['race'], params['session_type']
     driver1, driver2 = params['driver1'], params['driver2']
     session = load_session_with_preload(
         year, race, session_type, laps=True, telemetry=True, weather=True, messages=True
     )
-    context = _gather_session_context(session, session_type, driver1, driver2)
-    return f"{_ai_context_header(params)}\n\n{context}"
+    d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
+    d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
+    lap1 = _pick_driver_lap(session, driver1, d1_mode, d1_lap_num, get_best_lap)
+    lap2 = _pick_driver_lap(session, driver2, d2_mode, d2_lap_num, get_best_lap)
+    if not _has_valid_lap(lap1, pd):
+        raise ValueError(f"{driver1} did not set a valid lap.")
+    if not _has_valid_lap(lap2, pd):
+        raise ValueError(f"{driver2} did not set a valid lap.")
+    tel1 = _telemetry_with_distance(lap1, session=session)
+    tel2 = _telemetry_with_distance(lap2, session=session)
+    context = _gather_session_context(
+        session,
+        session_type,
+        driver1,
+        driver2,
+        selected_lap_context={
+            'lap1': lap1,
+            'lap2': lap2,
+            'tel1': tel1,
+            'tel2': tel2,
+            'label': f"Selected dashboard laps: {driver1} {_ai_lap_label(d1_lap_value)} vs {driver2} {_ai_lap_label(d2_lap_value)}",
+        }
+    )
+    return f"{_ai_context_header(params, d1_lap_value, d2_lap_value)}\n\n{context}"
 
 
 def register_ai_callbacks(app):
@@ -52,25 +85,27 @@ def register_ai_callbacks(app):
         [Output('ai-ask-button', 'disabled'),
          Output('ai-question-input', 'placeholder')],
         [Input('session-context-store', 'data'), Input('main-tabs', 'value'),
-         Input('dashboard-params-store', 'data')]
+         Input('dashboard-params-store', 'data'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value')]
     )
-    def update_ai_input_state(session_context, active_tab, params):
+    def update_ai_input_state(session_context, active_tab, params, d1_lap_value, d2_lap_value):
         if not AI_ENABLED:
             return True, "AI Analysis is not configured."
         if not params:
             return True, "Update the dashboard before asking AI about a session."
-        if active_tab == 'tab-ai' and not _ai_context_matches_params(session_context, params):
+        if active_tab == 'tab-ai' and not _ai_context_matches_params(session_context, params, d1_lap_value, d2_lap_value):
             return False, "Ask about this session... context will finish loading if needed."
         return False, 'Ask about this session... (e.g. "What was the optimal strategy in this race?")'
 
     @app.callback(
         Output('session-context-store', 'data', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
         [State('session-context-store', 'data')],
         prevent_initial_call=True
     )
-    def update_ai_session_context(params, active_tab, _n, _preload_state, current_context):
+    def update_ai_session_context(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_context):
         if not params or active_tab != 'tab-ai':
             return dash.no_update
 
@@ -79,13 +114,13 @@ def register_ai_callbacks(app):
         if background_preload_enabled() and status.get('status') != 'ready':
             return dash.no_update
 
-        if _ai_context_matches_params(current_context, params):
+        if _ai_context_matches_params(current_context, params, d1_lap_value, d2_lap_value):
             return dash.no_update
 
         year, race, session_type = params['year'], params['race'], params['session_type']
         with _timed_callback('update_ai_session_context', year=year, race=race, session=session_type):
             try:
-                return _build_ai_session_context(params)
+                return _build_ai_session_context(params, d1_lap_value, d2_lap_value)
             except Exception as e:
                 logging.error(f"AI Context Error: {e}")
                 return ""
@@ -112,10 +147,11 @@ def register_ai_callbacks(app):
     @app.callback(
         [Output('ai-history-store', 'data', allow_duplicate=True),
          Output('ai-history-index-store', 'data', allow_duplicate=True)],
-        Input('dashboard-params-store', 'data'),
+        [Input('dashboard-params-store', 'data'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def reset_ai_history_on_session_change(_params):
+    def reset_ai_history_on_session_change(_params, _d1_lap_value, _d2_lap_value):
         return [], 0
 
     @app.callback(
@@ -123,10 +159,11 @@ def register_ai_callbacks(app):
          Output('ai-history-index-store', 'data'), Output('ai-loading-dummy', 'children')],
         [Input('ai-ask-button', 'n_clicks'), Input('ai-question-input', 'n_submit')],
         [State('ai-question-input', 'value'), State('session-context-store', 'data'),
-         State('ai-history-store', 'data'), State('dashboard-params-store', 'data')],
+         State('ai-history-store', 'data'), State('dashboard-params-store', 'data'),
+         State('d1-lap-dropdown', 'value'), State('d2-lap-dropdown', 'value')],
         prevent_initial_call=True
     )
-    def ask_ai(n_clicks, n_submit, question, session_context, history, params):
+    def ask_ai(n_clicks, n_submit, question, session_context, history, params, d1_lap_value, d2_lap_value):
         """Send user question + session context to Gemini with guardrails."""
         if history is None:
             history = []
@@ -143,7 +180,7 @@ def register_ai_callbacks(app):
             return new_history, '', len(new_history) - 1, ''
 
         # Guard: session context.
-        if not _ai_context_matches_params(session_context, params):
+        if not _ai_context_matches_params(session_context, params, d1_lap_value, d2_lap_value):
             session_context = ""
 
         if not session_context and params:
@@ -154,7 +191,7 @@ def register_ai_callbacks(app):
                     race=params.get('race'),
                     session=params.get('session_type')
                 ):
-                    session_context = _build_ai_session_context(params)
+                    session_context = _build_ai_session_context(params, d1_lap_value, d2_lap_value)
             except Exception as e:
                 logging.error(f"AI Context Recovery Error: {e}")
                 session_context = ""

@@ -1,7 +1,6 @@
 import numpy as np
 import pandas as pd
 from data import get_track_status_events, get_best_lap, get_pit_stop_data, get_driver_info, get_teammate_from_info
-from ai_config import AI_ENABLED, GEMINI_API_KEY, GEMINI_MODELS
 
 
 def build_ai_prompt(session_context, question, history=None):
@@ -336,15 +335,15 @@ def _calculate_g_and_corners(tel):
         return None
 
 
-def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
-    """Return dashboard-matched delta and Driver DNA context for the selected fastest laps."""
+def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2, tel1=None, tel2=None, lap_label="selected laps"):
+    """Return dashboard-matched delta and Driver DNA context for the selected laps."""
     lines = ["=== DASHBOARD TELEMETRY DELTA + DRIVER DNA ==="]
     try:
         from graph_shared import _compute_lap_delta
         from graphs import _compute_driver_dna_summary
 
-        tel1 = lap1.get_telemetry().add_distance()
-        tel2 = lap2.get_telemetry().add_distance()
+        tel1 = tel1.copy() if tel1 is not None else lap1.get_telemetry().add_distance()
+        tel2 = tel2.copy() if tel2 is not None else lap2.get_telemetry().add_distance()
         if not tel1.empty:
             tel1 = tel1.copy()
             tel1['Distance'] -= tel1['Distance'].min()
@@ -361,6 +360,9 @@ def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
         delta_dist = delta_dist[valid]
         delta_vals = delta_vals[valid]
 
+        lines.append(
+            f"Telemetry source: {lap_label}."
+        )
         lines.append(
             f"Delta convention matches dashboard: {driver1} advantage vs {driver2}; "
             f"positive/green = {driver1} ahead, negative/red = {driver1} behind."
@@ -388,7 +390,7 @@ def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
             lines.append("Dashboard delta trace unavailable.")
 
         legend, raw1, raw2, norm1, norm2 = _compute_driver_dna_summary(tel1, tel2)
-        lines.append("Driver DNA uses the same fastest-lap telemetry and normalized scores as the dashboard radar.")
+        lines.append("Driver DNA uses the same selected-lap telemetry and normalized scores as the dashboard radar.")
         lines.append("Format: code metric | raw values | radar scores (0-100, 50 = equal).")
         for (abbr, label), r1, r2, n1, n2 in zip(legend, raw1, raw2, norm1, norm2):
             lines.append(
@@ -400,7 +402,7 @@ def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2):
     return "\n".join(lines)
 
 
-def _gather_session_context(session, session_type, driver1, driver2):
+def _gather_session_context(session, session_type, driver1, driver2, selected_lap_context=None):
     """Builds a comprehensive text summary of the session data to feed to the LLM as context."""
     lines = ["=== AUTHORITATIVE DRIVER-TEAM ASSIGNMENTS ===",
              "CRITICAL: Use ONLY the team assignments listed here. "
@@ -456,15 +458,23 @@ def _gather_session_context(session, session_type, driver1, driver2):
         lines.append(track_evolution)
         lines.append("")
 
-    # Fastest-lap comparison.
+    # Selected-lap comparison.
     try:
-        lap1 = get_best_lap(session, driver1)
-        lap2 = get_best_lap(session, driver2)
+        selected_lap_context = selected_lap_context or {}
+        lap1 = selected_lap_context.get('lap1')
+        lap2 = selected_lap_context.get('lap2')
+        if lap1 is None:
+            lap1 = get_best_lap(session, driver1)
+        if lap2 is None:
+            lap2 = get_best_lap(session, driver2)
+        tel1 = selected_lap_context.get('tel1')
+        tel2 = selected_lap_context.get('tel2')
+        lap_label = selected_lap_context.get('label') or f"Selected dashboard laps: {driver1} fastest vs {driver2} fastest"
         
         if lap1 is not None and lap2 is not None and pd.notna(lap1['LapTime']) and pd.notna(lap2['LapTime']):
             t1 = lap1['LapTime'].total_seconds()
             t2 = lap2['LapTime'].total_seconds()
-            lines.append(f"Fastest Lap: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
+            lines.append(f"{lap_label}: {driver1} = {t1:.3f}s, {driver2} = {t2:.3f}s (Δ {abs(t1 - t2):.3f}s)")
 
             # Sector times.
             for s in [1, 2, 3]:
@@ -475,19 +485,19 @@ def _gather_session_context(session, session_type, driver1, driver2):
                         f"  Sector {s}: {driver1} = {s1.total_seconds():.3f}s, {driver2} = {s2.total_seconds():.3f}s")
 
             lines.append("")
-            lines.append(_get_dashboard_telemetry_context(driver1, driver2, lap1, lap2))
+            lines.append(_get_dashboard_telemetry_context(driver1, driver2, lap1, lap2, tel1=tel1, tel2=tel2, lap_label=lap_label))
             lines.append("")
             
-            # Fastest-lap telemetry summary.
-            for drv, l in [(driver1, lap1), (driver2, lap2)]:
+            # Selected-lap telemetry summary.
+            for drv, l, selected_tel in [(driver1, lap1, tel1), (driver2, lap2, tel2)]:
                 try:
-                    tel = l.get_telemetry()
+                    tel = selected_tel.copy() if selected_tel is not None else l.get_telemetry()
                     if not tel.empty:
                         max_spd = tel['Speed'].max()
                         min_spd = tel['Speed'].min()
                         full_thr = (tel['Throttle'] == 100).mean() * 100
                         brk = (tel['Brake'] > 0).mean() * 100
-                        lines.append(f"  {drv} Telemetry (Fastest Lap): Max Speed = {max_spd} km/h, Min Speed = {min_spd} km/h, Full Throttle = {full_thr:.1f}%, Braking = {brk:.1f}%")
+                        lines.append(f"  {drv} Telemetry ({lap_label}): Max Speed = {max_spd} km/h, Min Speed = {min_spd} km/h, Full Throttle = {full_thr:.1f}%, Braking = {brk:.1f}%")
                         
                         g_data = _calculate_g_and_corners(tel)
                         if g_data:
@@ -502,9 +512,9 @@ def _gather_session_context(session, session_type, driver1, driver2):
                 except Exception:
                     pass
         else:
-            lines.append("Fastest lap comparison: data incomplete for one or both drivers")
+            lines.append("Selected lap comparison: data incomplete for one or both drivers")
     except Exception:
-        lines.append("Fastest lap data: unavailable")
+        lines.append("Selected lap data: unavailable")
 
     # Race/Sprint-specific context.
     if session_type in ['Race', 'Sprint']:

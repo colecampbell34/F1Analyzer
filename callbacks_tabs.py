@@ -4,45 +4,55 @@ import logging
 from dash import dcc, html
 from dash.dependencies import Input, Output, State
 
-from callbacks_shared import _figure_cache_key, _timed_callback
-
-
-def _active_tab_ready(params, active_tab, expected_tab):
-    if not params or active_tab != expected_tab:
-        return False
-    from data import background_preload_enabled, ensure_preload_for_tab
-    if not background_preload_enabled():
-        return True
-    status = ensure_preload_for_tab(params, active_tab)
-    return status.get('status') == 'ready'
+from callbacks_shared import _active_tab_ready, _figure_cache_key, _lap_dropdown_to_mode, _timed_callback
 
 
 def register_tab_callbacks(app):
     """Register callbacks for Track Map, Strategy, Race, and Grid Pace tabs."""
+
+    @app.callback(
+        Output('trackmap-lap-summary', 'children'),
+        [Input('dashboard-params-store', 'data'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value')]
+    )
+    def update_trackmap_lap_summary(params, d1_lap_value, d2_lap_value):
+        def _label(value):
+            if value in (None, '', 'fastest'):
+                return 'fastest'
+            return f"Lap {int(value)}"
+
+        if not params:
+            return "Laps: fastest vs fastest"
+        return (
+            f"Laps: {params.get('driver1')} {_label(d1_lap_value)} "
+            f"vs {params.get('driver2')} {_label(d2_lap_value)}"
+        )
 
     # Track map tab.
     @app.callback(
         [Output('2d-dominance-graph', 'figure'), Output('driver-dna-container', 'children'),
          Output('trackmap-cache-key-store', 'data')],
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('trackmap-mode', 'value'), Input('preload-status-interval', 'n_intervals'),
          Input('active-tab-preload-store', 'data')],
         State('trackmap-cache-key-store', 'data')
     )
-    def update_dominance(params, active_tab, mode, _n, _preload_state, current_cache_key):
+    def update_dominance(params, active_tab, d1_lap_value, d2_lap_value, mode, _n, _preload_state, current_cache_key):
         if not _active_tab_ready(params, active_tab, 'tab-trackmap'):
             return dash.no_update, dash.no_update, dash.no_update
-        cache_key = _figure_cache_key(params, 'trackmap', mode)
+        cache_key = _figure_cache_key(params, 'trackmap', mode, d1_lap_value, d2_lap_value)
         if current_cache_key == cache_key:
             return dash.no_update, dash.no_update, dash.no_update
         with _timed_callback('update_dominance', year=params['year'], race=params['race'], session=params['session_type']):
             try:
                 from graphs import _build_dominance_fig, _build_driver_radar
-                from graph_shared import _sort_fastest_driver, _error_figure
+                from graph_shared import _sort_fastest_driver
                 from telemetry_prep import prepare_selected_lap_comparison
-                from ui_utils import _friendly_error
 
-                cmp = prepare_selected_lap_comparison(params)
+                d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
+                d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
+                cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
                 session = cmp['session']
                 d1, d2 = cmp['d1'], cmp['d2']
                 lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']
@@ -156,8 +166,7 @@ def register_tab_callbacks(app):
             try:
                 from data import get_shared_data, is_qualifying, is_practice
                 from graphs import _build_strategy_fig, _build_deg_fig
-                from graph_shared import _error_figure, _not_applicable_figure
-                from ui_utils import _friendly_error
+                from graph_shared import _not_applicable_figure
 
                 # Strategy view needs laps + weather; no telemetry.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
@@ -202,8 +211,7 @@ def register_tab_callbacks(app):
             try:
                 from data import get_shared_data, is_race
                 from graphs import _build_race_gaps_fig, _build_pit_stops_fig
-                from graph_shared import _error_figure, _not_applicable_figure
-                from ui_utils import _friendly_error
+                from graph_shared import _not_applicable_figure
 
                 # Race analysis needs laps only.
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False)
@@ -242,8 +250,6 @@ def register_tab_callbacks(app):
             try:
                 from data import load_session_with_preload
                 from graphs import _build_grid_pace_fig
-                from graph_shared import _error_figure
-                from ui_utils import _friendly_error
 
                 # Use weather to detect wet conditions for pace filtering.
                 session = load_session_with_preload(

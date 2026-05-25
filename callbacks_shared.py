@@ -52,6 +52,24 @@ def _pick_driver_lap(session, driver, mode, lap_num, get_best_lap):
     return get_best_lap(session, driver)
 
 
+def _lap_dropdown_to_mode(value):
+    """Convert the shared lap dropdown value into telemetry-prep selection args."""
+    if value in (None, '', 'fastest'):
+        return 'fastest', None
+    return 'specific', int(value)
+
+
+def _active_tab_ready(params, active_tab, expected_tab):
+    """Return True when the requested tab is active and its preload is ready."""
+    if not params or active_tab != expected_tab:
+        return False
+    from data import background_preload_enabled, ensure_preload_for_tab
+    if not background_preload_enabled():
+        return True
+    status = ensure_preload_for_tab(params, active_tab)
+    return status.get('status') == 'ready'
+
+
 def _trim_history(history):
     """Enforce max history length by dropping oldest entries."""
     if len(history) > MAX_AI_HISTORY:
