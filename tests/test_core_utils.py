@@ -644,6 +644,31 @@ class TestGridPaceFiltering(unittest.TestCase):
 
 
 class TestApiValidation(unittest.TestCase):
+    def test_vercel_entrypoint_exports_flask_wsgi_app(self):
+        import flask
+        import app as app_module
+        import api.index as vercel_entrypoint
+
+        self.assertIsInstance(app_module.app, flask.Flask)
+        self.assertIs(vercel_entrypoint.app, app_module.app)
+
+    def test_vercel_runtime_init_uses_lazy_on_demand_setup(self):
+        import app as app_module
+
+        old_started = app_module._RUNTIME_INIT_STARTED
+        old_done = app_module._RUNTIME_INIT_DONE
+        try:
+            app_module._RUNTIME_INIT_STARTED = False
+            app_module._RUNTIME_INIT_DONE = False
+            with patch.dict(os.environ, {"VERCEL": "1"}, clear=False):
+                app_module._start_runtime_init_once()
+
+            self.assertFalse(app_module._RUNTIME_INIT_STARTED)
+            self.assertTrue(app_module._RUNTIME_INIT_DONE)
+        finally:
+            app_module._RUNTIME_INIT_STARTED = old_started
+            app_module._RUNTIME_INIT_DONE = old_done
+
     def test_css_assets_revalidate_after_deploy(self):
         import app as app_module
         client = app_module.server.test_client()

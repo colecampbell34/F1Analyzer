@@ -29,10 +29,15 @@
       ]
     }
   ],
+  "functions": {
+    "api/**/*.py": {
+      "excludeFiles": "{tests/**,__pycache__/**,**/__pycache__/**,*.pyc,**/*.pyc,.pytest_cache/**,.cursor/**,.idea/**,.junie/**,f1_cache/**,ai_cache/**,feedback/**,dist/**,node_modules/**}"
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/api/index"
+      "destination": "/api/index.py"
     }
   ]
 }

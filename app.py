@@ -38,7 +38,7 @@ if PUBLIC_BASE_URL:
         {"property": "og:image", "content": f"{PUBLIC_BASE_URL}/assets/og-image.png"},
     ])
 
-app = dash.Dash(
+dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG, "https://use.fontawesome.com/releases/v5.15.4/css/all.css"],
     title="F1 Analyzer - Advanced Telemetry Dashboard",
@@ -58,7 +58,7 @@ if os.getenv('ENABLE_VERCEL_ANALYTICS') == '1':
         <script defer src="/_vercel/speed-insights/script.js"></script>
     '''
 
-app.index_string = '''
+dash_app.index_string = '''
 <!DOCTYPE html>
 <html>
     <head>
@@ -80,8 +80,9 @@ app.index_string = '''
 </html>
 '''.replace('{analytics_head}', ANALYTICS_HEAD)
 
-Compress(app.server)
-server = app.server
+Compress(dash_app.server)
+server = dash_app.server
+app = server
 server.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
 
 _RUNTIME_INIT_LOCK = threading.Lock()
@@ -108,8 +109,13 @@ def _init_runtime_background():
 
 def _start_runtime_init_once():
     """Start lazy runtime initialization once per process."""
-    global _RUNTIME_INIT_STARTED
+    global _RUNTIME_INIT_STARTED, _RUNTIME_INIT_DONE
     if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
+        return
+    if os.getenv('VERCEL'):
+        # Serverless runtimes should not rely on background work after a response.
+        # Data and feedback modules still initialize their writable /tmp storage on demand.
+        _RUNTIME_INIT_DONE = True
         return
 
     with _RUNTIME_INIT_LOCK:
@@ -287,8 +293,8 @@ def _flush_ai_cache_on_exit():
 
 
 atexit.register(_flush_ai_cache_on_exit)
-app.layout = app_layout
-register_callbacks(app)
+dash_app.layout = app_layout
+register_callbacks(dash_app)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    dash_app.run(host='0.0.0.0', port=8000)
