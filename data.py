@@ -292,13 +292,38 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
     with _GRANULAR_LOAD_LOCK:
         session = fastf1.get_session(int(year), str(race), str(session_name))
         
-        # Selective Loading: Only load what we need
-        session.load(
-            laps=bool(laps), 
-            telemetry=bool(telemetry), 
-            weather=bool(weather), 
-            messages=bool(messages)
-        )
+        # Selective Loading: Only load what we need, with fallback in case of timing/API/caching KeyError failures.
+        try:
+            session.load(
+                laps=bool(laps), 
+                telemetry=bool(telemetry), 
+                weather=bool(weather), 
+                messages=bool(messages)
+            )
+        except (KeyError, ValueError, Exception) as e:
+            logging.warning("Failed to load session granular with full requested streams (%s, %s, %s, %s): %s", laps, telemetry, weather, messages, e)
+            # Try to load laps only first
+            if telemetry or weather or messages:
+                try:
+                    session.load(laps=bool(laps), telemetry=False, weather=False, messages=False)
+                    session._telemetry_unavailable = True
+                    if weather:
+                        session._weather_unavailable = True
+                except (KeyError, ValueError, Exception) as e2:
+                    logging.warning("Fallback load failed: %s. Retrying metadata only.", e2)
+                    try:
+                        session.load(laps=False, telemetry=False, weather=False, messages=False)
+                    except Exception as e3:
+                        logging.error("Failed to load even session metadata: %s", e3)
+                    session._laps_unavailable = True
+                    session._telemetry_unavailable = True
+                    session._weather_unavailable = True
+            else:
+                try:
+                    session.load(laps=False, telemetry=False, weather=False, messages=False)
+                    session._laps_unavailable = True
+                except Exception:
+                    raise e
     return session
 
 
@@ -308,7 +333,18 @@ def _load_session_summary_cached(year, race, session_name, include_laps):
     _ensure_cache_ready()
     import fastf1
     session = fastf1.get_session(year, race, session_name)
-    session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
+    try:
+        session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
+    except (KeyError, ValueError, Exception) as e:
+        logging.warning("Failed to load session summary with laps/messages: %s. Retrying with laps only.", e)
+        try:
+            session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=False)
+        except (KeyError, ValueError, Exception) as e2:
+            logging.warning("Failed to load session summary with laps: %s. Retrying metadata only.", e2)
+            try:
+                session.load(laps=False, telemetry=False, weather=False, messages=False)
+            except Exception as e3:
+                logging.error("Failed to load even summary session metadata: %s", e3)
     return session
 
 

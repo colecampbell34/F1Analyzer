@@ -22,6 +22,10 @@ def _friendly_error(e):
         return "Lap data is not available for this session yet. The event may still be in progress or not published."
     if 'did not set a valid lap' in msg:
         return msg
+    if 'telemetry data is not available' in lower_msg or 'telemetry' in lower_msg:
+        return "Telemetry data is not available or is incomplete for this session from the F1 live timing feed."
+    if 'date' in lower_msg or 'columns' in lower_msg:
+        return "Telemetry data is incomplete or has missing timestamps for this session."
     return f"Something went wrong loading the data: {msg}"
 
 def _tab_label(tab_value):

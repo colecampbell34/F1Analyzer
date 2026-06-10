@@ -23,6 +23,12 @@ DNA_ABBRS = ['TS', 'CS', 'FT', 'TR', 'BU', 'BI', 'GD']
 def _identify_corners(tel1, tel2):
     """Detects corners as local minima in speed and extracts comparison metrics."""
     corners = []
+    if tel1 is None or tel1.empty or tel2 is None or tel2.empty:
+        return corners
+    required_cols_1 = ['Speed', 'Distance', 'X', 'Y']
+    required_cols_2 = ['Speed', 'Distance']
+    if not all(col in tel1.columns for col in required_cols_1) or not all(col in tel2.columns for col in required_cols_2):
+        return corners
     
     # Smooth speed slightly for cleaner apex detection
     s1 = tel1['Speed'].rolling(window=15, center=True).mean().fillna(tel1['Speed'])
@@ -81,6 +87,12 @@ def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0):
     for required in ('Number', 'X', 'Y'):
         if required not in df.columns:
             return []
+            
+    if tel1 is None or tel1.empty or tel2 is None or tel2.empty:
+        return []
+    required_tel_cols = ['X', 'Y', 'Distance', 'Speed']
+    if not all(col in tel1.columns for col in required_tel_cols) or not all(col in tel2.columns for col in required_tel_cols):
+        return []
 
     # Normalize ordering: Number asc, then Letter (if present)
     if 'Letter' in df.columns:
@@ -389,6 +401,10 @@ def _driver_dna_legend():
 def _compute_driver_dna_raw(tel):
     """Return raw Driver DNA metrics using the same source data as the radar chart."""
     if tel is None or getattr(tel, 'empty', False):
+        return [0.0] * len(DNA_CATEGORY_LABELS)
+        
+    required = ['Speed', 'Brake', 'Throttle', 'nGear']
+    if not all(col in tel.columns for col in required):
         return [0.0] * len(DNA_CATEGORY_LABELS)
 
     speed_under_220 = tel[tel['Speed'] < 220]['Speed']

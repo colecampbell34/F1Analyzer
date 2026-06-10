@@ -29,6 +29,8 @@ def _is_dry_session_from_weather(weather_data):
 
 
 def _clean_pace_laps(laps):
+    if laps is None or laps.empty or 'LapTime' not in laps.columns:
+        return pd.DataFrame()
     clean = laps.dropna(subset=['LapTime']).copy()
     if 'IsAccurate' in clean.columns:
         clean = clean[_coerce_bool_series(clean['IsAccurate'])]

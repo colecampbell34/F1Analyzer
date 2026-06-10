@@ -15,19 +15,35 @@ TELEMETRY_PREP_CACHE_MAXSIZE = max(2, min(24, TELEMETRY_PREP_CACHE_MAXSIZE))
 
 
 def _telemetry_with_distance(lap, drop_xy_time=False, session=None):
+    if session is not None and getattr(session, '_telemetry_unavailable', False):
+        raise ValueError("Telemetry data is not available for this session.")
+        
     try:
         tel = lap.get_telemetry().add_distance()
     except Exception as exc:
         message = str(exc).lower()
-        if session is None or ('load' not in message and 'loaded' not in message):
-            raise
-        session.load(laps=True, telemetry=True, weather=False, messages=False)
-        tel = lap.get_telemetry().add_distance()
+        if session is not None and ('load' in message or 'loaded' in message) and not getattr(session, '_telemetry_unavailable', False):
+            try:
+                session.load(laps=True, telemetry=True, weather=False, messages=False)
+                tel = lap.get_telemetry().add_distance()
+            except Exception as inner_exc:
+                if session is not None:
+                    session._telemetry_unavailable = True
+                raise ValueError("Telemetry data is not available for this session.") from inner_exc
+        else:
+            raise ValueError(f"Telemetry data is not available for this session. Error: {exc}") from exc
+
     if drop_xy_time:
-        tel = tel.dropna(subset=['X', 'Y', 'Distance', 'Time'])
+        required_cols = ['X', 'Y', 'Distance', 'Time']
+        if all(col in tel.columns for col in required_cols):
+            tel = tel.dropna(subset=required_cols)
+        else:
+            tel = pd.DataFrame(columns=tel.columns)
+
     if not tel.empty:
         tel = tel.copy()
-        tel['Distance'] -= tel['Distance'].min()
+        if 'Distance' in tel.columns:
+            tel['Distance'] -= tel['Distance'].min()
     return tel
 
 

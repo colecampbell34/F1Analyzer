@@ -669,5 +669,43 @@ class TestApiValidation(unittest.TestCase):
         self.assertIn("perf", response.get_json())
 
 
+class TestRobustErrorHandling(unittest.TestCase):
+    def test_friendly_error_translates_telemetry_and_date_errors(self):
+        e1 = KeyError("None of [Index(['Date'], dtype='object')] are in the columns")
+        e2 = ValueError("telemetry data is not available")
+        
+        self.assertEqual(
+            ui_utils._friendly_error(e1),
+            "Telemetry data is incomplete or has missing timestamps for this session."
+        )
+        self.assertEqual(
+            ui_utils._friendly_error(e2),
+            "Telemetry data is not available or is incomplete for this session from the F1 live timing feed."
+        )
+
+    def test_clean_pace_laps_with_missing_columns(self):
+        # Empty DataFrame without LapTime
+        df_empty = pd.DataFrame()
+        self.assertTrue(graphs_pace._clean_pace_laps(df_empty).empty)
+        
+        # DataFrame without LapTime but with other columns
+        df_no_laptime = pd.DataFrame({"Driver": ["VER"]})
+        self.assertTrue(graphs_pace._clean_pace_laps(df_no_laptime).empty)
+
+    def test_compute_driver_dna_raw_with_missing_columns(self):
+        # Missing required telemetry columns
+        df_invalid = pd.DataFrame({"Speed": [300.0]})
+        dna = graphs_trackmap._compute_driver_dna_raw(df_invalid)
+        self.assertEqual(dna, [0.0] * 7)
+
+    def test_telemetry_with_distance_checks_telemetry_unavailable_flag(self):
+        session = MagicMock()
+        session._telemetry_unavailable = True
+        lap = MagicMock()
+        
+        with self.assertRaisesRegex(ValueError, "Telemetry data is not available"):
+            telemetry_prep._telemetry_with_distance(lap, session=session)
+
+
 if __name__ == "__main__":
     unittest.main()

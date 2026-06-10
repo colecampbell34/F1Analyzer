@@ -129,6 +129,9 @@ def _get_field_tyre_strategy(session):
                         # Skip drivers with no lap data to keep output compact.
                         continue
                     
+                    if 'Stint' not in drv_laps.columns or 'Compound' not in drv_laps.columns or 'LapNumber' not in drv_laps.columns:
+                        continue
+                    
                     stint_summary = []
                     # Process stints in chronological order.
                     stints = sorted(drv_laps['Stint'].dropna().unique())
@@ -342,14 +345,21 @@ def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2, tel1=None, te
         from graph_shared import _compute_lap_delta
         from graphs import _compute_driver_dna_summary
 
-        tel1 = tel1.copy() if tel1 is not None else lap1.get_telemetry().add_distance()
-        tel2 = tel2.copy() if tel2 is not None else lap2.get_telemetry().add_distance()
-        if not tel1.empty:
-            tel1 = tel1.copy()
-            tel1['Distance'] -= tel1['Distance'].min()
-        if not tel2.empty:
-            tel2 = tel2.copy()
-            tel2['Distance'] -= tel2['Distance'].min()
+        try:
+            tel1 = tel1.copy() if tel1 is not None else lap1.get_telemetry().add_distance()
+            if not tel1.empty and 'Distance' in tel1.columns:
+                tel1 = tel1.copy()
+                tel1['Distance'] -= tel1['Distance'].min()
+        except Exception:
+            tel1 = pd.DataFrame()
+
+        try:
+            tel2 = tel2.copy() if tel2 is not None else lap2.get_telemetry().add_distance()
+            if not tel2.empty and 'Distance' in tel2.columns:
+                tel2 = tel2.copy()
+                tel2['Distance'] -= tel2['Distance'].min()
+        except Exception:
+            tel2 = pd.DataFrame()
 
         # This matches the telemetry chart/live badge convention:
         # positive/green means Driver 1 is ahead; negative/red means Driver 1 is behind.
@@ -642,12 +652,16 @@ def _gather_session_context(session, session_type, driver1, driver2, selected_la
             )
             lines.append(f"(Note: Gap is {driver1} minus {driver2}. Negative means {driver1} is ahead. Gap < 1.0s implies dirty air.)")
             
-            laps1 = session.laps.pick_drivers(driver1).dropna(subset=['Time']).set_index('LapNumber')
-            laps2 = session.laps.pick_drivers(driver2).dropna(subset=['Time']).set_index('LapNumber')
+            if 'Time' not in session.laps.columns:
+                laps1 = pd.DataFrame()
+                laps2 = pd.DataFrame()
+            else:
+                laps1 = session.laps.pick_drivers(driver1).dropna(subset=['Time']).set_index('LapNumber')
+                laps2 = session.laps.pick_drivers(driver2).dropna(subset=['Time']).set_index('LapNumber')
             
             # Leader lap times for gap-to-leader context.
             leader = session.results.sort_values('Position').iloc[0]['Abbreviation'] if not session.results.empty else None
-            leader_laps = session.laps.pick_drivers(leader).dropna(subset=['Time']).set_index('LapNumber') if leader else None
+            leader_laps = session.laps.pick_drivers(leader).dropna(subset=['Time']).set_index('LapNumber') if (leader and 'Time' in session.laps.columns) else None
 
             all_lap_nums = sorted(set(laps1.index).union(set(laps2.index)))
             
@@ -702,7 +716,7 @@ def _gather_session_context(session, session_type, driver1, driver2, selected_la
             pass
 
     try:
-        all_laps_session = session.laps.dropna(subset=['LapTime'])
+        all_laps_session = session.laps.dropna(subset=['LapTime']) if 'LapTime' in session.laps.columns else pd.DataFrame()
         if not all_laps_session.empty:
             max_lap = all_laps_session['LapNumber'].max()
             if max_lap > 10:
