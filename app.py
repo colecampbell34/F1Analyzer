@@ -80,6 +80,16 @@ dash_app.index_string = '''
 </html>
 '''.replace('{analytics_head}', ANALYTICS_HEAD)
 
+dash_app.renderer = '''
+(function waitForDashRenderer() {
+    if (window.DashRenderer) {
+        window.renderer = new window.DashRenderer();
+        return;
+    }
+    window.setTimeout(waitForDashRenderer, 50);
+}());
+'''
+
 Compress(dash_app.server)
 server = dash_app.server
 app = server
