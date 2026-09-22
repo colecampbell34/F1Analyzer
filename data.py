@@ -14,7 +14,7 @@ from static_schedule import (
     get_static_sessions,
 )
 
-# Suppress FastF1 and other noisy libraries at the module level
+# Suppress FastF1 and other noisy libraries at the module level.
 logging.getLogger('fastf1').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
