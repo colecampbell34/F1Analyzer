@@ -5,20 +5,12 @@ import hashlib
 import threading
 import logging
 from datetime import datetime, timezone
+from runtime import runtime_directory
 
 _FEEDBACK_LOCK = threading.Lock()
 
 
-def _runtime_dir(env_name, local_name):
-    configured = os.getenv(env_name)
-    if configured:
-        return configured
-    if os.getenv('VERCEL'):
-        return os.path.join('/tmp', local_name)
-    return local_name
-
-
-_FEEDBACK_DIR = _runtime_dir('FEEDBACK_DIR', 'feedback')
+_FEEDBACK_DIR = runtime_directory('FEEDBACK_DIR', 'feedback')
 _FEEDBACK_FILE = os.path.join(_FEEDBACK_DIR, 'entries.jsonl')
 _FEEDBACK_MAX_ENTRIES = 2000
 _FEEDBACK_RETENTION_DAYS = 90

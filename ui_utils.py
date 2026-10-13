@@ -410,19 +410,19 @@ def _hex_to_rgba(hex_val, opacity):
 
 BASE_LAYOUT = dict(
     template='plotly_dark',
-    margin=dict(l=40, r=40, t=60, b=40),
+    margin=dict(l=48, r=28, t=54, b=42),
     hovermode='x unified',
-    font=dict(family='Inter, Segoe UI, Arial, sans-serif', color='#e8edf2'),
-    paper_bgcolor='#0b0f14',
-    plot_bgcolor='#0f141a',
-    hoverlabel=dict(bgcolor='#111820', bordercolor='#44515f', font=dict(color='#f5f7fa')),
-    legend=dict(bgcolor='rgba(10, 15, 20, 0.72)', bordercolor='rgba(255,255,255,0.08)', borderwidth=1)
+    font=dict(family='Arial Narrow, Roboto Condensed, Segoe UI, Arial, sans-serif', color='#eceae4'),
+    paper_bgcolor='#101216',
+    plot_bgcolor='#101216',
+    hoverlabel=dict(bgcolor='#20242a', bordercolor='#555b63', font=dict(color='#f3f1ec')),
+    legend=dict(bgcolor='rgba(16,18,22,0.92)', bordercolor='#353a41', borderwidth=1)
 )
 
 def _apply_base_layout(fig, **kwargs):
     """Applies the base F1 analyzer layout, allowing kwargs to override specifics."""
     fig.update_layout(**BASE_LAYOUT)
     fig.update_layout(**kwargs)
-    fig.update_xaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.18)')
-    fig.update_yaxes(gridcolor='rgba(255,255,255,0.08)', zerolinecolor='rgba(255,255,255,0.18)')
+    fig.update_xaxes(gridcolor='rgba(255,255,255,0.075)', zerolinecolor='rgba(255,255,255,0.18)')
+    fig.update_yaxes(gridcolor='rgba(255,255,255,0.075)', zerolinecolor='rgba(255,255,255,0.18)')
     return fig

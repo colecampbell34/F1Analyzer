@@ -1,11 +1,17 @@
-# F1 Analyzer
+# F1 Analyzer — Race Intelligence
 
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![Dash](https://img.shields.io/badge/Dash-2.14+-008bb4.svg)](https://dash.plotly.com/)
 [![FastF1](https://img.shields.io/badge/FastF1-3.3+-red.svg)](https://github.com/theOehrly/FastF1)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-An advanced Formula 1 telemetry and strategy analysis dashboard powered by Google Gemini AI. Compare driver performance, visualize track dominance, review race strategy, and ask data-grounded questions about a loaded session.
+A technical Formula 1 analysis desk for comparing drivers through telemetry,
+track position, race pace, and strategy. It is powered by FastF1 and can use
+Google Gemini for data-grounded follow-up questions about the loaded session.
+
+The interface is designed as an engineering workspace: restrained, dense where
+it matters, and focused on explaining a performance delta rather than looking
+like a generic dashboard.
 
 ## Key Features
 
@@ -31,12 +37,20 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - Data: FastF1, Pandas, NumPy, SciPy
 - UI: Dash, Plotly, Dash Bootstrap Components
 - AI: Google Gemini via `google-genai`
-- Runtime: Flask, Gunicorn, Flask-Compress
+- Runtime: Dash, Flask, Gunicorn, Flask-Compress
 - Frontend runtime: Dash's React renderer with clientside JavaScript for high-frequency chart interactions
+
+### Data-source decision
+
+FastF1 remains the primary data layer because this app depends on telemetry,
+lap timing, circuit geometry, weather, and race-control information. Jolpica
+is a useful future supplement for lightweight historical results metadata, but
+it cannot replace FastF1 for the product's core telemetry analysis.
 
 ## Project Structure
 
 - `app.py` - Dash app setup, Flask server, health/warmup routes, runtime init.
+- `runtime.py` - Central local versus serverless policy and writable runtime directories.
 - `layout.py` - Sidebar, tabs, modals, stores, and page structure.
 - `callbacks.py` - Core dropdowns, URL sync, latest-race defaults, summary/status callbacks.
 - `callbacks_telemetry.py` - Telemetry chart, mini-map, G-force, and playback callbacks.
@@ -50,13 +64,18 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - `ai_utils.py` - Gemini prompt construction and session context building.
 - `ai_cache.py` - AI response cache and per-user rate limiting.
 - `ui_utils.py` - UI formatting helpers, summaries, leaderboard, and feedback rendering.
+- `assets/race-intelligence.css` - Product visual system, loaded after compatibility CSS.
+- `docs/ARCHITECTURE.md` - Module boundaries, request flow, and storage model.
+- `docs/DEPLOYMENT.md` - Vercel configuration and release smoke checks.
+- `AGENTS.md` - Contributor rules, workflow, and guardrails for future agents.
 
 ## Local Setup
 
-1. Clone the repo: `git clone https://github.com/colecampbell34/F1Analyzer.git`
-2. Install dependencies: `pip install -r requirements.txt`
-3. Create a `.env` file with your AI key if you want AI enabled.
-4. Run the app: `python app.py`
+1. Use Python 3.12 (the deployment version).
+2. Clone the repo: `git clone https://github.com/colecampbell34/F1Analyzer.git`
+3. Install dependencies: `python -m pip install -r requirements.txt`
+4. Create a `.env` file with your AI key if you want AI enabled.
+5. Run the app: `python app.py`
 
 
 ## Environment Variables
@@ -78,22 +97,24 @@ Use the Share Comparison button to copy a direct link to the current analysis. S
 - `ai_cache/responses.json` stores cached AI answers for repeated questions/context.
 - `feedback/entries.jsonl` stores feedback submissions with hashed reporter IPs.
 
-These directories are runtime artifacts and should not be committed.
+These directories are runtime artifacts and should not be committed. On Vercel,
+they are ephemeral and instance-local. They reduce repeat work within a warm
+function but are not durable storage or global cache/rate-limit state.
 
 ## Testing
 
 Run the current test suite with:
 
 ```bash
-python3 -m unittest discover -s tests -q
+python -m unittest discover -s tests -q
 ```
 
 For linting and optional browser smoke tests, install the development tools:
 
 ```bash
-pip install -r requirements-dev.txt
-python3 -m ruff check .
-RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 python3 -m pytest tests/test_browser_smoke.py
+python -m pip install -r requirements-dev.txt
+python -m ruff check .
+RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 python -m pytest tests/test_browser_smoke.py
 ```
 
 ## Deployment
@@ -113,13 +134,16 @@ The app exposes:
 ### Vercel
 
 This repo includes a Vercel WSGI entrypoint at `api/index.py`, plus `vercel.json`
-and `.vercelignore` to keep the serverless bundle small. Set `PUBLIC_BASE_URL`
-to your production URL so Open Graph metadata points at the Vercel domain.
+and `.vercelignore` to keep the serverless bundle small. The root route rewrites
+to `/api/index` (the function route rather than the Python filename), and the
+project pins Python 3.12 with `.python-version`. Set `PUBLIC_BASE_URL` to your
+production URL so Open Graph metadata points at the Vercel domain.
 
 The FastF1 cache is runtime data and is intentionally excluded from deployment.
 First loads on a cold function can still take time while FastF1 rebuilds cache
-data, so use `/warmup` after deployment if you want to prime lightweight startup
-work before sharing the app.
+data. Vercel functions use direct, on-demand loads rather than background
+preload threads; `/warmup` reports that behavior explicitly. Review
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) before deploying.
 
 ---
 

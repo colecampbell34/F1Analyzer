@@ -1,12 +1,14 @@
-dash>=2.14
-dash-bootstrap-components>=1.5
-plotly>=5.18
-fastf1>=3.3
-pandas>=2.0
-numpy>=1.24
-scipy>=1.10
-google-genai>=1.0
-python-dotenv>=1.0
-gunicorn
-flask
-flask-compress
+# Keep major versions bounded: an unreviewed framework major upgrade is a
+# deployment risk for a Dash app with a custom renderer and client callbacks.
+dash>=3.0,<5
+dash-bootstrap-components>=2.0,<3
+plotly>=6.0,<7
+fastf1>=3.6,<4
+pandas>=2.2,<3
+numpy>=1.26,<3
+scipy>=1.12,<2
+google-genai>=1.0,<2
+python-dotenv>=1.0,<2
+gunicorn>=22,<26
+flask>=3.0,<4
+flask-compress>=1.15,<2

@@ -18,6 +18,7 @@ import graphs_pace
 import graphs_race
 import graphs_telemetry
 import graphs_trackmap
+import runtime
 from flask import Flask
 
 
@@ -678,6 +679,50 @@ class TestApiValidation(unittest.TestCase):
             self.assertEqual(response.headers.get("Cache-Control"), "no-cache, max-age=0, must-revalidate")
         finally:
             response.close()
+
+    def test_runtime_policy_uses_tmp_for_serverless_and_local_by_default(self):
+        with patch.dict(os.environ, {"VERCEL": "1"}, clear=False):
+            self.assertTrue(runtime.is_serverless())
+            self.assertEqual(runtime.runtime_directory("MISSING_CACHE_PATH", "unit-cache"), "/tmp/unit-cache")
+            self.assertEqual(runtime.storage_scope(), "ephemeral")
+
+        with patch.dict(os.environ, {"VERCEL": ""}, clear=False):
+            self.assertFalse(runtime.is_serverless())
+            self.assertEqual(runtime.runtime_directory("MISSING_CACHE_PATH", "unit-cache"), "unit-cache")
+            self.assertEqual(runtime.storage_scope(), "local")
+
+    def test_vercel_configuration_targets_function_route_and_revalidates_shell_assets(self):
+        import json
+
+        with open("vercel.json", encoding="utf-8") as config_file:
+            config = json.load(config_file)
+
+        self.assertEqual(config["rewrites"][0]["destination"], "/api/index")
+        self.assertIn("api/index.py", config["functions"])
+        self.assertEqual(config["functions"]["api/index.py"]["maxDuration"], 60)
+        mutable_header = next(
+            item for item in config["headers"]
+            if item["source"] == "/assets/(custom.css|race-intelligence.css|scripts.js|manifest.json)"
+        )
+        self.assertEqual(
+            mutable_header["headers"][0]["value"],
+            "no-cache, max-age=0, must-revalidate",
+        )
+
+    def test_renderer_waits_for_the_cross_version_dash_constructor(self):
+        with open("app.py", encoding="utf-8") as app_file:
+            app_source = app_file.read()
+
+        self.assertIn("typeof DashRenderer !== 'undefined'", app_source)
+        self.assertNotIn("new window.DashRenderer", app_source)
+
+    def test_service_worker_does_not_cache_mutable_dash_shell_assets(self):
+        with open("assets/service-worker.js", encoding="utf-8") as worker_file:
+            worker_source = worker_file.read()
+
+        self.assertNotIn("'/assets/custom.css'", worker_source)
+        self.assertNotIn("'/assets/scripts.js'", worker_source)
+        self.assertIn("isCacheableStaticAsset", worker_source)
 
     def test_preload_status_requires_params(self):
         import app as app_module

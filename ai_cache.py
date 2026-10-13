@@ -7,6 +7,7 @@ import threading
 import logging
 from collections import defaultdict
 from datetime import datetime, timezone
+from runtime import runtime_directory
 
 
 _RATE_LIMIT_LOCK = threading.Lock()
@@ -15,16 +16,7 @@ USER_DAILY_LIMIT = 10
 _daily_reset_date = None
 
 
-def _runtime_dir(env_name, local_name):
-    configured = os.getenv(env_name)
-    if configured:
-        return configured
-    if os.getenv('VERCEL'):
-        return os.path.join('/tmp', local_name)
-    return local_name
-
-
-_AI_CACHE_DIR = _runtime_dir('AI_CACHE_DIR', 'ai_cache')
+_AI_CACHE_DIR = runtime_directory('AI_CACHE_DIR', 'ai_cache')
 _AI_CACHE_FILE = os.path.join(_AI_CACHE_DIR, 'responses.json')
 _AI_CACHE_LOCK = threading.Lock()
 _AI_RESPONSE_CACHE = {}

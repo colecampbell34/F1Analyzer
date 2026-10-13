@@ -13,6 +13,7 @@ from static_schedule import (
     get_latest_static_race_session,
     get_static_sessions,
 )
+from runtime import is_serverless, runtime_directory
 
 # Suppress FastF1 and other noisy libraries at the module level.
 logging.getLogger('fastf1').setLevel(logging.WARNING)
@@ -46,17 +47,7 @@ _MAX_TRACKED_PRELOAD_JOBS = 24
 _PRELOAD_JOB_TTL_SECONDS = 900
 
 
-def _runtime_dir(env_name, local_name):
-    """Return a writable runtime directory for local and serverless hosts."""
-    configured = os.getenv(env_name)
-    if configured:
-        return configured
-    if os.getenv('VERCEL'):
-        return os.path.join('/tmp', local_name)
-    return local_name
-
-
-_CACHE_DIR = _runtime_dir('FASTF1_CACHE_DIR', 'f1_cache')
+_CACHE_DIR = runtime_directory('FASTF1_CACHE_DIR', 'f1_cache')
 _CACHE_SETUP_LOCK = threading.Lock()
 _CACHE_READY = False
 _CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
@@ -236,7 +227,7 @@ def background_preload_enabled():
     configured = os.getenv('ENABLE_BACKGROUND_PRELOAD')
     if configured is not None:
         return _env_bool('ENABLE_BACKGROUND_PRELOAD', default=True)
-    return not os.getenv('VERCEL')
+    return not is_serverless()
 
 
 @lru_cache(maxsize=EVENT_SCHEDULE_CACHE_MAXSIZE)

@@ -1,8 +1,9 @@
-const CACHE_NAME = 'f1-analyzer-assets-v11';
+// Do not cache Dash's mutable application shell or custom JS/CSS here.  Their
+// URLs are stable between deployments, and a cache-first strategy can combine
+// an old renderer with a new server response after a release.
+const CACHE_NAME = 'f1-analyzer-static-v12';
 const STATIC_ASSETS = [
     '/assets/manifest.json',
-    '/assets/custom.css',
-    '/assets/scripts.js',
     '/assets/icon-192.png',
     '/assets/icon-512.png'
 ];
@@ -30,8 +31,9 @@ self.addEventListener('fetch', event => {
     if (request.method !== 'GET') return;
 
     const url = new URL(request.url);
-    const isAsset = url.origin === self.location.origin && url.pathname.startsWith('/assets/');
-    if (!isAsset) return;
+    const isCacheableStaticAsset = url.origin === self.location.origin &&
+        /^\/assets\/icon-\d+\.png$/.test(url.pathname);
+    if (!isCacheableStaticAsset) return;
 
     event.respondWith(
         caches.match(request).then(cached => {

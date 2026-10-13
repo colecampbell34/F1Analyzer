@@ -1,8 +1,23 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60,
+      "excludeFiles": "{tests/**,__pycache__/**,**/*.pyc,.DS_Store,.env,.cursor/**,.idea/**,.junie/**,f1_cache/**,ai_cache/**,feedback/**}"
+    }
+  },
   "headers": [
     {
-      "source": "/assets/(.*)",
+      "source": "/assets/(custom.css|race-intelligence.css|scripts.js|manifest.json)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, max-age=0, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(icon-192.png|icon-512.png)",
       "headers": [
         {
           "key": "Cache-Control",
@@ -32,7 +47,7 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/api/index.py"
+      "destination": "/api/index"
     }
   ]
 }

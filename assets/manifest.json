@@ -1,6 +1,6 @@
 {
   "short_name": "F1 Analyzer",
-  "name": "F1 Analyzer - Advanced Telemetry & AI",
+  "name": "F1 Analyzer — Race Intelligence",
   "icons": [
     {
       "src": "/assets/icon-192.png",
@@ -17,11 +17,11 @@
   ],
   "id": "/",
   "start_url": "/",
-  "background_color": "#111111",
+  "background_color": "#0a0b0d",
   "display": "standalone",
   "orientation": "portrait-primary",
   "scope": "/",
-  "theme_color": "#ff0000",
+  "theme_color": "#0a0b0d",
   "categories": ["sports", "utilities"],
-  "description": "Advanced Formula 1 telemetry and strategy analysis dashboard."
+  "description": "A technical Formula 1 telemetry and strategy analysis desk."
 }

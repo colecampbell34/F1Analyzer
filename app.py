@@ -8,6 +8,7 @@ from flask_compress import Compress
 import threading
 import atexit
 from flask import jsonify, redirect, request, send_from_directory
+from runtime import is_serverless, storage_scope
 
 # Set global log level to WARNING
 logging.basicConfig(level=logging.WARNING)
@@ -17,19 +18,20 @@ logging.getLogger('flask').setLevel(logging.WARNING)
 logging.getLogger('google.genai').setLevel(logging.WARNING)
 
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
+APP_VERSION = os.getenv('VERCEL_GIT_COMMIT_SHA', 'local')[:12]
 
 META_TAGS = [
     {"name": "viewport", "content": "width=device-width, initial-scale=1"},
     {"name": "mobile-web-app-capable", "content": "yes"},
     {"name": "apple-mobile-web-app-capable", "content": "yes"},
     {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
-    {"name": "description", "content": "Advanced Formula 1 telemetry and strategy analysis dashboard. Compare driver performance, track dominance, and get AI-powered race insights using FastF1 and Google Gemini."},
-    {"property": "og:title", "content": "F1 Analyzer - Advanced Telemetry & AI Insights"},
-    {"property": "og:description", "content": "Interactive F1 telemetry, strategy analysis, and Gemini AI insights. Compare laps, visualize track dominance, and analyze race pace."},
+    {"name": "description", "content": "A technical Formula 1 analysis desk for telemetry, race pace, track position, and strategy."},
+    {"property": "og:title", "content": "F1 Analyzer — Race Intelligence"},
+    {"property": "og:description", "content": "Compare Formula 1 laps, race pace, strategy, and track position using FastF1 live timing data."},
     {"property": "og:type", "content": "website"},
     {"name": "twitter:card", "content": "summary_large_image"},
     {"name": "twitter:site", "content": "@F1Analyzer"},
-    {"name": "theme-color", "content": "#ff0000"}
+    {"name": "theme-color", "content": "#0a0b0d"}
 ]
 
 if PUBLIC_BASE_URL:
@@ -41,7 +43,7 @@ if PUBLIC_BASE_URL:
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG, "https://use.fontawesome.com/releases/v5.15.4/css/all.css"],
-    title="F1 Analyzer - Advanced Telemetry Dashboard",
+    title="F1 Analyzer — Race Intelligence",
     update_title=None,
     suppress_callback_exceptions=True,
     assets_ignore='service-worker\\.js',
@@ -82,8 +84,10 @@ dash_app.index_string = '''
 
 dash_app.renderer = '''
 (function waitForDashRenderer() {
-    if (window.DashRenderer) {
-        window.renderer = new window.DashRenderer();
+    // Dash 4 exposes DashRenderer as a script-level binding, not necessarily
+    // as window.DashRenderer.  Using typeof works with both Dash 2/3 and 4.
+    if (typeof DashRenderer !== 'undefined') {
+        window.renderer = new DashRenderer();
         return;
     }
     window.setTimeout(waitForDashRenderer, 50);
@@ -122,7 +126,7 @@ def _start_runtime_init_once():
     global _RUNTIME_INIT_STARTED, _RUNTIME_INIT_DONE
     if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
         return
-    if os.getenv('VERCEL'):
+    if is_serverless():
         # Serverless runtimes should not rely on background work after a response.
         # Data and feedback modules still initialize their writable /tmp storage on demand.
         _RUNTIME_INIT_DONE = True
@@ -154,7 +158,7 @@ def _set_cache_headers(response):
     path = request.path or ''
     if path == '/service-worker.js':
         response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    elif path.startswith('/assets/') and path.endswith('.css'):
+    elif path.startswith('/assets/') and path.endswith(('.css', '.js', '.json')):
         response.headers['Cache-Control'] = 'no-cache, max-age=0, must-revalidate'
     elif path.startswith('/assets/') or path.startswith('/_dash-component-suites/'):
         response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
@@ -166,15 +170,26 @@ def _set_cache_headers(response):
 @server.route('/health', strict_slashes=False)
 @server.route('/healthz', strict_slashes=False)
 def healthz():
-    """Cheap liveness endpoint for host health checks."""
-    return jsonify({'status': 'ok'}), 200
+    """Cheap liveness endpoint for host health checks and deployment probes."""
+    return jsonify({
+        'status': 'ok',
+        'version': APP_VERSION,
+        'runtime': 'vercel' if is_serverless() else 'local',
+        'filesystem_storage': storage_scope(),
+    }), 200
 
 
 @server.route('/warmup')
 def warmup():
-    """Prime lightweight caches to reduce cold-start request latency."""
+    """Prime local runtime state when a persistent process is available."""
     _start_runtime_init_once()
-    return jsonify({'status': 'warming'}), 200
+    return jsonify({
+        'status': 'direct-load' if is_serverless() else 'warming',
+        'message': (
+            'Serverless instances load FastF1 data on demand.' if is_serverless()
+            else 'Local runtime initialization has started.'
+        ),
+    }), 200
 
 
 @server.route('/m')

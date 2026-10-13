@@ -439,6 +439,415 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
     }
 }
 
+/*
+   Race Intelligence system
+   ------------------------
+   A restrained, editorial treatment layered after the legacy styles while the
+   dashboard keeps its stable Dash component IDs.  The visual language is
+   intentionally functional: graphite surfaces, hairline rules, compact type,
+   and a single signal-red action colour.
+*/
+:root {
+    --surface-0: #090a0c;
+    --surface-1: #101216;
+    --surface-2: #171a1f;
+    --surface-3: #20242a;
+    --line-soft: #2a2e34;
+    --line-strong: #454a52;
+    --text-main: #f3f1ec;
+    --text-muted: #9b9fa6;
+    --f1-red: #e32c31;
+    --f1-red-deep: #b41f25;
+    --teal-accent: #b6c8c0;
+    --amber-accent: #e8bf68;
+    --control-radius: 3px;
+}
+
+html,
+body,
+.container-fluid {
+    background: var(--surface-0) !important;
+    color: var(--text-main);
+    font-family: "Arial Narrow", "Roboto Condensed", Inter, "Segoe UI", Arial, sans-serif;
+}
+
+.app-root {
+    background:
+        linear-gradient(90deg, rgba(227, 44, 49, 0.025) 1px, transparent 1px),
+        linear-gradient(rgba(227, 44, 49, 0.018) 1px, transparent 1px),
+        var(--surface-0);
+    background-size: 48px 48px;
+}
+
+.sidebar-panel,
+.sidebar-col > div {
+    background: #0d0f12 !important;
+}
+
+.sidebar-panel {
+    padding: 1.25rem 1.05rem !important;
+}
+
+.sidebar-col {
+    border-right: 1px solid var(--line-soft) !important;
+    box-shadow: none !important;
+}
+
+.product-kicker,
+.workspace-kicker,
+.view-label,
+.section-heading,
+.source-badge,
+.source-detail {
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.63rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.product-kicker {
+    color: var(--f1-red);
+    margin-bottom: 0.75rem;
+}
+
+.product-lockup {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+.product-mark {
+    display: grid;
+    width: 2.1rem;
+    height: 2.1rem;
+    place-items: center;
+    background: var(--f1-red);
+    color: #fff;
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: 0.86rem;
+    font-style: italic;
+    letter-spacing: -0.08em;
+    transform: skew(-8deg);
+}
+
+.product-name,
+.sidebar-header h2 {
+    margin: 0;
+    color: var(--text-main) !important;
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: 1.45rem !important;
+    font-weight: 400;
+    letter-spacing: -0.035em !important;
+    line-height: 0.86 !important;
+    text-transform: uppercase;
+}
+
+.sidebar-header h2::after {
+    display: none;
+}
+
+.product-subtitle {
+    margin: 0.28rem 0 0;
+    color: var(--text-muted) !important;
+    font-size: 0.69rem !important;
+    letter-spacing: 0.025em;
+}
+
+.section-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.35rem;
+    color: #d8d9d7;
+}
+
+.section-index {
+    color: var(--f1-red);
+}
+
+.rail-divider {
+    margin: 0.75rem 0 !important;
+    border-color: var(--line-soft) !important;
+    opacity: 1;
+}
+
+.sidebar-control-label,
+.sidebar-driver-selector label,
+.telemetry-sidecar-label {
+    color: #c9cbc9 !important;
+    font-size: 0.7rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+}
+
+.sidebar-control-field,
+.sidebar-driver-selector,
+.shortcut-wrap,
+.experience-mode-wrap {
+    border-radius: 0;
+}
+
+.sidebar-driver-selector {
+    margin-bottom: 0.9rem !important;
+}
+
+.Select-control,
+.Select-menu-outer {
+    border-color: var(--line-strong) !important;
+    border-radius: 2px !important;
+    background: #eceae4 !important;
+}
+
+.Select-control:hover,
+.Select.is-focused > .Select-control,
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--f1-red) !important;
+    box-shadow: 0 0 0 1px var(--f1-red) !important;
+}
+
+.btn {
+    border-radius: 2px;
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.btn-danger,
+.btn-success,
+.feedback-fab {
+    background: var(--f1-red) !important;
+    border-color: var(--f1-red) !important;
+    box-shadow: none !important;
+}
+
+.btn-success {
+    background: #d8ddd8 !important;
+    border-color: #d8ddd8 !important;
+    color: #101216 !important;
+}
+
+.btn-info {
+    background: transparent !important;
+    border: 1px solid #71777f !important;
+    color: #e8e7e1 !important;
+}
+
+.btn-secondary,
+.btn-outline-secondary {
+    background: transparent !important;
+    border-color: #555b63 !important;
+    color: #e8e7e1 !important;
+}
+
+.btn:hover {
+    transform: none;
+    box-shadow: none;
+    filter: brightness(1.1);
+}
+
+.source-note {
+    display: block;
+    margin-top: 0.65rem;
+    color: #777d84;
+    font-size: 0.62rem;
+    letter-spacing: 0.025em;
+}
+
+.content-col {
+    background: rgba(9, 10, 12, 0.82);
+}
+
+.analysis-workspace {
+    min-height: 100%;
+    padding: 1.7rem clamp(1rem, 3vw, 2.75rem) 2rem;
+}
+
+.workspace-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--line-soft);
+}
+
+.workspace-kicker {
+    color: var(--f1-red);
+    margin-bottom: 0.45rem;
+}
+
+#main-title {
+    max-width: 900px;
+    margin: 0;
+    color: var(--text-main) !important;
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: clamp(1.4rem, 2.7vw, 2.35rem) !important;
+    font-weight: 400;
+    letter-spacing: -0.02em !important;
+    line-height: 0.98;
+    text-align: left !important;
+    text-transform: uppercase;
+}
+
+.workspace-provenance {
+    display: flex;
+    min-width: max-content;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--text-muted);
+}
+
+.source-badge {
+    padding: 0.35rem 0.42rem;
+    border: 1px solid #555b63;
+    color: #e9e6df;
+}
+
+.source-detail {
+    color: #80868e;
+}
+
+.dashboard-action-row,
+.telemetry-controls-panel,
+.trackmap-controls-panel,
+.telemetry-sidecar,
+#ai-response-output {
+    border: 1px solid var(--line-soft) !important;
+    border-radius: 0 !important;
+    background: var(--surface-1) !important;
+    box-shadow: none !important;
+}
+
+.dashboard-action-row {
+    margin-bottom: 0.85rem;
+}
+
+.loading-status-banner {
+    border-radius: 0;
+    background: transparent;
+    color: #c9cbc9;
+}
+
+.view-label {
+    margin: 1.35rem 0 0.45rem;
+    color: #8e949b;
+}
+
+.analysis-tabs,
+.tab-container,
+div[class*="tab-container"] {
+    border-bottom: 1px solid var(--line-soft) !important;
+}
+
+.analysis-tabs .tab,
+.tab {
+    background: transparent !important;
+    border: 0 !important;
+    border-bottom: 2px solid transparent !important;
+    border-radius: 0 !important;
+    color: #969ba1 !important;
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.analysis-tabs .tab:hover,
+.tab:hover {
+    background: rgba(255, 255, 255, 0.025) !important;
+    color: var(--text-main) !important;
+}
+
+.analysis-tabs .tab--selected,
+.tab--selected {
+    background: transparent !important;
+    border-color: var(--f1-red) !important;
+    box-shadow: none !important;
+    color: var(--text-main) !important;
+}
+
+.tab-label-with-tip {
+    gap: 0.28rem;
+}
+
+.js-plotly-plot {
+    border-radius: 0;
+}
+
+.live-dashboard-container {
+    border-radius: 0;
+    border-left-color: var(--f1-red);
+    background: #0b0d10;
+}
+
+.modal-content {
+    border-radius: 0;
+    background: var(--surface-1);
+    border-color: var(--line-strong);
+}
+
+@media (min-width: 769px) {
+    .sidebar-col {
+        flex: 0 0 296px !important;
+        width: 296px !important;
+        max-width: 296px !important;
+        height: 100dvh;
+        overflow: hidden;
+    }
+
+    .content-col {
+        flex: 1 1 0 !important;
+        width: auto !important;
+        max-width: none !important;
+        height: 100dvh;
+        overflow-y: auto;
+    }
+}
+
+@media (max-width: 768px) {
+    .app-root {
+        background: var(--surface-0);
+    }
+
+    .sidebar-panel {
+        padding: 0.9rem !important;
+    }
+
+    .product-kicker,
+    .product-mark,
+    .product-subtitle,
+    .section-heading,
+    .source-note,
+    .workspace-provenance {
+        display: none;
+    }
+
+    .analysis-workspace {
+        padding: 0.85rem !important;
+    }
+
+    .workspace-header {
+        margin-bottom: 0.7rem;
+        padding-bottom: 0.7rem;
+    }
+
+    #main-title {
+        font-size: 1.05rem !important;
+    }
+
+    .view-label {
+        margin-top: 0.8rem;
+    }
+}
+
 /* Tabs: horizontal scroll on narrow screens instead of truncation */
 .tab-container,
 div[class*="tab-container"] {

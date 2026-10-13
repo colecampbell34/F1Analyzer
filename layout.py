@@ -82,7 +82,7 @@ def _tab_help_tip(text, level='beginner'):
 
 def _tab_label(label, tip, level='beginner'):
     return html.Span([
-        html.Span(label),
+        html.Span(label, className='tab-label-title'),
         _tab_help_tip(tip, level)
     ], className='tab-label-with-tip')
 
@@ -173,12 +173,23 @@ RACE_LABEL = _label_with_tip("Grand Prix", "Choose the race weekend. Each weeken
 SESSION_LABEL = _label_with_tip("Session", "Choose which part of the weekend to analyze. Race and Sprint unlock strategy and gap views.")
 
 
-# Sidebar control panel.
+# Sidebar control panel.  The IDs in this layout are a stable public contract
+# for the callback modules, so visual changes should add classes/structure
+# without casually renaming controls.
 sidebar = html.Div([
-    # Fixed Header
     html.Div([
-        html.H2("F1 Analyzer", className="display-6", style={"fontSize": "1.4rem", "fontWeight": "bold"}),
-        html.P("Session Analysis Dashboard", style={"fontSize": "0.75rem", "color": "#888", "marginBottom": "0.5rem"}),
+        html.Div("RACE INTELLIGENCE", className='product-kicker'),
+        html.Div([
+            html.Div("F1", className='product-mark', **{'aria-hidden': 'true'}),
+            html.Div([
+                html.H2("Analyzer", className="product-name"),
+                html.P("Telemetry · pace · strategy", className='product-subtitle'),
+            ]),
+        ], className='product-lockup'),
+        html.Div([
+            html.Span("SESSION BUILDER"),
+            html.Span("01", className='section-index'),
+        ], className='section-heading'),
         html.Div([
             html.Div(
                 _label_with_tip(
@@ -191,7 +202,7 @@ sidebar = html.Div([
             ),
             _mode_selector('experience-mode-control')
         ], className='experience-mode-wrap'),
-        html.Hr(style={'margin': '0.5rem 0'}),
+        html.Hr(className='rail-divider'),
     ], className='sidebar-header', style={'flex': '0 0 auto'}),
 
     # Scrollable Content (Controls + Leaderboard)
@@ -246,8 +257,7 @@ sidebar = html.Div([
                    title='Load the selected session and driver comparison',
                    style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
         html.Hr(className='sidebar-divider'),
-        html.H4(_label_with_tip("Session Leaderboard", "Shows the session order or best lap ranking so you can pick useful driver comparisons."), className='sidebar-leaderboard-title',
-                style={"fontSize": "1.1rem", "marginTop": "0.5rem", "marginBottom": "0rem"}),
+        html.H4(_label_with_tip("Session Leaderboard", "Shows the session order or best lap ranking so you can pick useful driver comparisons."), className='sidebar-leaderboard-title'),
         dbc.Button(["Update Leaderboard",
                     _help_tip("Refreshes the session order without changing the main comparison.", 'beginner')],
                    id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
@@ -260,9 +270,8 @@ sidebar = html.Div([
         ], className='sidebar-leaderboard', style={'minHeight': '0'})
     ], className='sidebar-controls', style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
 
-    # Fixed Footer
     html.Div([
-        html.Hr(style={'margin': '0.5rem 0'}),
+        html.Hr(className='rail-divider'),
         dbc.Button([html.I(className="fas fa-share-alt me-2"), "Share Comparison"],
                    id='share-btn', color='info', size='sm', n_clicks=0,
                    title='Copy a shareable link for the current comparison',
@@ -271,7 +280,8 @@ sidebar = html.Div([
             html.A(html.I(className="fab fa-github fa-lg"), href="https://github.com/colecampbell34/F1Analyzer", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
             html.A(html.I(className="fab fa-twitter fa-lg"), href=f"https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url={PUBLIC_SHARE_URL_ENCODED}", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
             html.A(html.I(className="fab fa-reddit fa-lg"), href=f"https://reddit.com/submit?url={PUBLIC_SHARE_URL_ENCODED}&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
-        ], style={'textAlign': 'center', 'paddingBottom': '5px'})
+        ], style={'textAlign': 'center', 'paddingBottom': '5px'}),
+        html.Small("Built on FastF1 live timing data", className='source-note'),
     ], className='sidebar-footer', style={'flex': '0 0 auto'})
 
 ], className='sidebar-panel', style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
@@ -373,8 +383,17 @@ mobile_companion = html.Div([
 ], className='mobile-companion')
 
 
-content = html.Div([
-    html.H3("Session Telemetry Analysis", className="text-center mt-2", id='main-title'),
+content = html.Main([
+    html.Header([
+        html.Div([
+            html.Div("ANALYSIS WORKSPACE", className='workspace-kicker'),
+            html.H1("Build a comparison", id='main-title'),
+        ]),
+        html.Div([
+            html.Span("FASTF1", className='source-badge'),
+            html.Span("LIVE TIMING DATA", className='source-detail'),
+        ], className='workspace-provenance'),
+    ], className='workspace-header'),
     html.Div([
         html.Div(id='loading-status-banner', className='loading-status-banner',
                  children=[
@@ -393,7 +412,8 @@ content = html.Div([
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
     html.Div(id='plot-resize-sentinel', style={'display': 'none'}),
 
-    dcc.Tabs(id='main-tabs', value='tab-telemetry', children=[
+    html.Div("VIEW", className='view-label'),
+    dcc.Tabs(id='main-tabs', value='tab-telemetry', parent_className='analysis-tabs', children=[
         dcc.Tab(id='tab-telemetry-control', label=_tab_label(
             'Telemetry',
             "Telemetry compares two selected laps using speed, gap, throttle/brake, gear, track position, and G-force. Use Replay Focus to watch the lap evolve.",
@@ -627,21 +647,15 @@ content = html.Div([
             ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
     ])
-], style={"padding": "1rem"})
+], className='analysis-workspace')
 
 
 app_layout = dbc.Container([
     dcc.Location(id='url', refresh=False),
     mobile_companion,
     dbc.Row([
-        # Sidebar column.
-        dbc.Col(sidebar, md=2, xs=12, 
-                style={'height': '100vh', 'overflowY': 'auto', 'borderRight': '1px solid #333'},
-                className='sidebar-col'),
-        # Main content column.
-        dbc.Col(content, md=10, xs=12, 
-                style={'height': '100vh', 'overflowY': 'auto'},
-                className='content-col')
+        dbc.Col(sidebar, xs=12, className='sidebar-col'),
+        dbc.Col(content, xs=12, className='content-col')
     ], className='g-0'),
     dbc.Button("Send Feedback", id='open-feedback-modal-btn', color='danger', n_clicks=0,
                className='feedback-fab'),
