@@ -645,13 +645,11 @@ class TestGridPaceFiltering(unittest.TestCase):
 
 
 class TestApiValidation(unittest.TestCase):
-    def test_vercel_entrypoint_exports_flask_wsgi_app(self):
+    def test_root_app_exports_flask_wsgi_app_for_vercel(self):
         import flask
         import app as app_module
-        import api.index as vercel_entrypoint
 
         self.assertIsInstance(app_module.app, flask.Flask)
-        self.assertIs(vercel_entrypoint.app, app_module.app)
 
     def test_vercel_runtime_init_uses_lazy_on_demand_setup(self):
         import app as app_module
@@ -676,6 +674,7 @@ class TestApiValidation(unittest.TestCase):
 
         response = client.get("/assets/custom.css")
         try:
+            self.assertEqual(response.mimetype, "text/css")
             self.assertEqual(response.headers.get("Cache-Control"), "no-cache, max-age=0, must-revalidate")
         finally:
             response.close()
@@ -691,17 +690,17 @@ class TestApiValidation(unittest.TestCase):
             self.assertEqual(runtime.runtime_directory("MISSING_CACHE_PATH", "unit-cache"), "unit-cache")
             self.assertEqual(runtime.storage_scope(), "local")
 
-    def test_vercel_configuration_preserves_dash_asset_paths_and_revalidates_shell_assets(self):
+    def test_vercel_configuration_uses_native_flask_routing_and_revalidates_shell_assets(self):
         import json
 
         with open("vercel.json", encoding="utf-8") as config_file:
             config = json.load(config_file)
 
-        # The filename form is significant: /api/index causes Vercel to serve
-        # the Dash HTML shell for CSS and component-suite JavaScript requests.
-        self.assertEqual(config["rewrites"][0]["destination"], "/api/index.py")
-        self.assertIn("api/index.py", config["functions"])
-        self.assertEqual(config["functions"]["api/index.py"]["maxDuration"], 60)
+        # A fixed catch-all rewrite loses the requested Dash asset path, so
+        # native Flask routing must receive the original URL unchanged.
+        self.assertNotIn("rewrites", config)
+        self.assertIn("app.py", config["functions"])
+        self.assertEqual(config["functions"]["app.py"]["maxDuration"], 60)
         mutable_header = next(
             item for item in config["headers"]
             if item["source"] == "/assets/(custom.css|race-intelligence.css|scripts.js|manifest.json)"

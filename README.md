@@ -133,10 +133,11 @@ The app exposes:
 
 ### Vercel
 
-This repo includes a Vercel WSGI entrypoint at `api/index.py`, plus `vercel.json`
-and `.vercelignore` to keep the serverless bundle small. The root route rewrites
-to `/api/index.py` (the Python function entrypoint), and the
-project pins Python 3.12 with `.python-version`. Set `PUBLIC_BASE_URL` to your
+This repo deploys its root `app.py` Flask WSGI application on Vercel, plus
+`vercel.json` and `.vercelignore` to keep the serverless bundle small. Do not
+add a catch-all rewrite: Vercel's Flask integration preserves each Dash request
+path, allowing CSS and component-suite JavaScript assets to be served correctly.
+The project pins Python 3.12 with `.python-version`. Set `PUBLIC_BASE_URL` to your
 production URL so Open Graph metadata points at the Vercel domain.
 
 The FastF1 cache is runtime data and is intentionally excluded from deployment.
