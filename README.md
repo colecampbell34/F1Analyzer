@@ -135,7 +135,7 @@ The app exposes:
 
 This repo includes a Vercel WSGI entrypoint at `api/index.py`, plus `vercel.json`
 and `.vercelignore` to keep the serverless bundle small. The root route rewrites
-to `/api/index` (the function route rather than the Python filename), and the
+to `/api/index.py` (the Python function entrypoint), and the
 project pins Python 3.12 with `.python-version`. Set `PUBLIC_BASE_URL` to your
 production URL so Open Graph metadata points at the Vercel domain.
 

@@ -5,7 +5,7 @@
 The app deploys as one Flask WSGI Vercel Function:
 
 - entrypoint: `api/index.py`
-- root rewrite: `/api/index`
+- root rewrite: `/api/index.py`
 - deployment Python: 3.12 (`.python-version`)
 - function timeout: 60 seconds, compatible with the conservative Vercel plan
   limit while first FastF1 loads remain bounded

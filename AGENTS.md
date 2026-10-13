@@ -80,8 +80,9 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
 
 ## Vercel constraints
 
-- Vercel imports the Flask WSGI object from `api/index.py`. Root traffic is
-  rewritten to `/api/index`, not the Python source filename.
+- Vercel imports the Flask WSGI object from `api/index.py`. Root traffic must
+  be rewritten to `/api/index.py`. Rewriting to `/api/index` makes Vercel
+  return the dashboard HTML for Dash CSS and component-suite JavaScript URLs.
 - `/tmp` cache, AI-response cache, feedback file, rate-limit state, and Python
   LRU caches are instance-local and ephemeral on Vercel. They are performance
   aids, not durable storage or globally consistent rate limits.

@@ -691,13 +691,15 @@ class TestApiValidation(unittest.TestCase):
             self.assertEqual(runtime.runtime_directory("MISSING_CACHE_PATH", "unit-cache"), "unit-cache")
             self.assertEqual(runtime.storage_scope(), "local")
 
-    def test_vercel_configuration_targets_function_route_and_revalidates_shell_assets(self):
+    def test_vercel_configuration_preserves_dash_asset_paths_and_revalidates_shell_assets(self):
         import json
 
         with open("vercel.json", encoding="utf-8") as config_file:
             config = json.load(config_file)
 
-        self.assertEqual(config["rewrites"][0]["destination"], "/api/index")
+        # The filename form is significant: /api/index causes Vercel to serve
+        # the Dash HTML shell for CSS and component-suite JavaScript requests.
+        self.assertEqual(config["rewrites"][0]["destination"], "/api/index.py")
         self.assertIn("api/index.py", config["functions"])
         self.assertEqual(config["functions"]["api/index.py"]["maxDuration"], 60)
         mutable_header = next(
