@@ -314,11 +314,19 @@ def _label_with_trace_lap(label, lap, used_fallback):
 
 
 def _shared_cache_wait_seconds():
+    """Wait for the Redis lock holder instead of duplicating a cold load.
+
+    A complete FastF1 car-data download commonly takes longer than the old
+    twelve-second wait.  On Vercel, three telemetry figures are requested at
+    nearly the same moment; falling through while the holder is still loading
+    makes each Function download the same upstream payload.  Leave enough time
+    for the 75-second Redis lock to be released or populated.
+    """
     try:
-        value = float(os.getenv('SHARED_TELEMETRY_LOCK_WAIT_SECONDS', '12'))
+        value = float(os.getenv('SHARED_TELEMETRY_LOCK_WAIT_SECONDS', '80'))
     except ValueError:
-        value = 12.0
-    return max(0.0, min(25.0, value))
+        value = 80.0
+    return max(5.0, min(90.0, value))
 
 
 def _load_selected_lap_payload(cache_args):

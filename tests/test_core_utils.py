@@ -616,6 +616,41 @@ class TestTelemetryTraceFallbacks(unittest.TestCase):
 
 
 class TestSharedTelemetryPayload(unittest.TestCase):
+    def test_contended_redis_lock_waits_for_the_leader_payload(self):
+        """A follower must not start another FastF1 load during a cold miss."""
+        trace = pd.DataFrame({
+            'Time': pd.to_timedelta(range(8), unit='s'),
+            'Distance': [float(point * 10) for point in range(8)],
+            'Speed': [180.0 + point for point in range(8)],
+        })
+        payload = {
+            'session': MagicMock(), 'd1': 'NOR', 'd2': 'PIA',
+            'lbl1': 'NOR (P1)', 'lbl2': 'PIA (P2)',
+            'c1': '#F47600', 'c2': '#F47600',
+            'lap1': pd.Series({'LapTime': pd.Timedelta(seconds=90)}),
+            'lap2': pd.Series({'LapTime': pd.Timedelta(seconds=91)}),
+            'tel1': trace, 'tel2': trace,
+        }
+        wire = telemetry_prep._payload_to_shared_wire(payload)
+        args = (2025, 'British Grand Prix', 'Race', 'NOR', 'PIA', 'fastest', 'fastest', None, None)
+
+        with (
+            patch('shared_cache.is_configured', return_value=True),
+            patch('shared_cache.get_json', side_effect=[None]),
+            patch('shared_cache.acquire_lock', return_value=False),
+            patch('shared_cache.wait_for_json', return_value=wire) as wait_for_payload,
+            patch.object(telemetry_prep, '_prepare_selected_lap_comparison_cached') as local_load,
+        ):
+            loaded = telemetry_prep._load_selected_lap_payload(args)
+
+        wait_for_payload.assert_called_once()
+        local_load.assert_not_called()
+        self.assertEqual(loaded['d1'], 'NOR')
+
+    def test_shared_cache_wait_default_covers_a_cold_fastf1_load(self):
+        with patch.dict(os.environ, {'SHARED_TELEMETRY_LOCK_WAIT_SECONDS': ''}, clear=False):
+            self.assertEqual(telemetry_prep._shared_cache_wait_seconds(), 80.0)
+
     def test_shared_payload_skips_a_second_fastf1_load(self):
         trace = pd.DataFrame({
             'Time': pd.to_timedelta(range(8), unit='s'),
@@ -1044,7 +1079,8 @@ class TestApiValidation(unittest.TestCase):
         # native Flask routing must receive the original URL unchanged.
         self.assertNotIn("rewrites", config)
         self.assertIn("app.py", config["functions"])
-        self.assertEqual(config["functions"]["app.py"]["maxDuration"], 60)
+        self.assertTrue(config["fluid"])
+        self.assertEqual(config["functions"]["app.py"]["maxDuration"], 300)
         mutable_header = next(
             item for item in config["headers"]
             if item["source"] == "/assets/(custom.css|race-intelligence.css|scripts.js|manifest.json)"

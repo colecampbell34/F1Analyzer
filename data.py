@@ -360,10 +360,24 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                     # Return later requests to normal cached operation. The
                     # successfully renewed response remains on disk.
                     fastf1.Cache.enable_cache(_CACHE_DIR)
+            root_cause = failures[-1]
+            # One stable ERROR-level line is much easier to find in Vercel Logs
+            # than the many FastF1 request messages emitted during a cold load.
+            # Keep it free of request headers and response bodies.
+            logging.error(
+                "telemetry_load_exhausted year=%s race=%s session=%s attempts=%s "
+                "cause_type=%s cause=%s",
+                year,
+                race,
+                session_name,
+                TELEMETRY_LOAD_ATTEMPTS,
+                type(root_cause).__name__,
+                root_cause,
+            )
             raise RuntimeError(
                 "FastF1 could not load telemetry after "
                 f"{TELEMETRY_LOAD_ATTEMPTS} attempt(s)."
-            ) from failures[-1]
+            ) from root_cause
 
         session = _new_session()
         try:

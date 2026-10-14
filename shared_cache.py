@@ -180,14 +180,23 @@ def release_lock(key):
 
 
 def wait_for_json(key, wait_seconds):
-    """Briefly wait for another Vercel instance to populate a cache miss."""
+    """Wait for another Vercel instance to populate a cache miss.
+
+    Back off polling to avoid turning one cold telemetry request into hundreds
+    of Upstash reads when several Dash callbacks arrive together.
+    """
     deadline = time.monotonic() + max(0.0, float(wait_seconds))
+    delay = 0.35
     while time.monotonic() < deadline:
-        time.sleep(0.35)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
         value = get_json(key)
         if value is not None:
             _record('lock_wait_hits')
             return value
+        delay = min(2.0, delay * 1.6)
     return None
 
 
