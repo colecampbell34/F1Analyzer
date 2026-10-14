@@ -582,6 +582,29 @@ div[class*="tab-container"] {
     overflow: hidden;
 }
 
+.dashboard-info-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 0.45rem;
+}
+
+.dashboard-data-note {
+    flex: 1 1 auto;
+    min-height: 34px;
+    display: flex;
+    align-items: center;
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--line-soft);
+    color: #a5abb2;
+    font-size: 0.72rem;
+    font-style: italic;
+}
+
+.dashboard-info-row #download-active-chart-btn {
+    flex: 0 0 auto;
+}
+
 @media (min-width: 769px) {
     .content-col {
         overflow: hidden !important;
@@ -603,11 +626,6 @@ div[class*="tab-container"] {
         padding-bottom: 0.7rem;
     }
 
-    .dashboard-action-row {
-        flex: 0 0 auto;
-        margin-bottom: 0.45rem;
-    }
-
     .export-status {
         flex: 0 0 auto;
     }
@@ -625,5 +643,14 @@ div[class*="tab-container"] {
     .analysis-view-selector-wrap {
         min-width: min(100%, 190px);
         margin-left: auto;
+    }
+
+    .dashboard-info-row {
+        margin-bottom: 0.35rem;
+    }
+
+    .dashboard-data-note {
+        font-size: 0.62rem;
+        line-height: 1.15;
     }
 }

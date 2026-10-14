@@ -17,11 +17,11 @@ TAB_HEIGHTS = {
     'sidecar':      'calc((100dvh - 480px) / 2)',
 }
 
-# Shared disclaimer.
-DISCLAIMER = html.Div([
-    html.Span("Note: F1 data can occasionally be missing or incomplete for specific stints/laps due to session recording issues.",
-              style={'fontSize': '0.75rem', 'color': '#888', 'fontStyle': 'italic'})
-], style={'textAlign': 'center', 'marginBottom': '0.5rem'})
+# Displayed once above the active view instead of repeating inside every panel.
+DATA_AVAILABILITY_NOTE = html.Span(
+    "Note: F1 data can occasionally be missing or incomplete for specific stints/laps due to session recording issues.",
+    className='data-availability-note',
+)
 
 # Shared tab styles.
 TAB_STYLE          = {'backgroundColor': '#222', 'color': 'white'}
@@ -317,9 +317,7 @@ content = html.Main([
             html.H1("Build a comparison", id='main-title'),
         ]),
         html.Div([
-            html.Div([
-                html.Span("FASTF1", className='source-badge'),
-            ], className='workspace-provenance'),
+            html.Div(className='workspace-provenance'),
             html.Div([
                 html.Label("Analysis view", className='view-selector-label', htmlFor='main-tabs'),
                 dcc.Dropdown(
@@ -333,19 +331,22 @@ content = html.Main([
             ], className='analysis-view-selector-wrap', title='Choose the dashboard view to display'),
         ], className='workspace-actions'),
     ], className='workspace-header'),
+    # Status updates still drive preload behavior, but are no longer surfaced
+    # as a prominent strip above every chart.
+    html.Div(
+        id='loading-status-banner',
+        className='loading-status-banner',
+        children=html.Span('Choose a session and click Load analysis.'),
+        role='status',
+        style={'display': 'none'},
+        **{'aria-live': 'polite'},
+    ),
     html.Div([
-        html.Div(id='loading-status-banner', className='loading-status-banner',
-                 children=html.Span(
-                     'Choose a session and click Load analysis.',
-                     title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
-                 ),
-                 role='status', **{'aria-live': 'polite'}),
-        html.Div([
-            dbc.Button([html.I(className='fas fa-download me-1'), "Download Chart"],
-                       id='download-active-chart-btn', color='secondary', outline=True, size='sm',
-                       n_clicks=0, title='Download the active Plotly chart as a PNG'),
-        ], className='export-actions'),
-    ], className='dashboard-action-row'),
+        html.Div(DATA_AVAILABILITY_NOTE, className='dashboard-data-note'),
+        dbc.Button([html.I(className='fas fa-download me-1'), "Download Chart"],
+                   id='download-active-chart-btn', color='secondary', outline=True, size='sm',
+                   n_clicks=0, title='Download the active Plotly chart as a PNG'),
+    ], className='dashboard-info-row'),
     html.Div(id='export-status', className='export-status', role='status', **{'aria-live': 'polite'}),
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
     html.Div(id='plot-resize-sentinel', style={'display': 'none'}),
@@ -356,7 +357,6 @@ content = html.Main([
             "Telemetry compares two selected laps using speed, gap, throttle/brake, gear, track position, and G-force. Use Replay Focus to watch the lap evolve.",
             'beginner'
         ), value='tab-telemetry', children=[
-            DISCLAIMER,
             telemetry_controls,
             dbc.Row([
                 dbc.Col([
@@ -420,7 +420,6 @@ content = html.Main([
             "Track Map shows where each driver is stronger around the circuit. Dominance is best for who gained where; braking and speed isolate driving style.",
             'beginner'
         ), value='tab-trackmap', children=[
-            DISCLAIMER,
             html.Div([
                 dbc.Label(
                     _label_with_tip(
@@ -476,7 +475,6 @@ content = html.Main([
             "Strategy focuses on tyre stints and degradation. It works best for Race and Sprint sessions where pit stops and tyre ageing matter.",
             'intermediate'
         ), value='tab-strategy', children=[
-            DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
             ]),
@@ -490,7 +488,6 @@ content = html.Main([
             "Race view explains gaps and pit stops over the event. Safety Cars, VSCs, and traffic can make raw gaps misleading.",
             'intermediate'
         ), value='tab-race', children=[
-            DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
             ]),
@@ -504,7 +501,6 @@ content = html.Main([
             "Grid Pace compares the whole field using representative pace. It is useful when you want context beyond the two selected drivers.",
             'beginner'
         ), value='tab-gridpace', children=[
-            DISCLAIMER,
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
             ])
