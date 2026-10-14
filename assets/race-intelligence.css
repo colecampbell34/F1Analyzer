@@ -553,16 +553,35 @@ div[class*="tab-container"] {
     color: #f5f3ee !important;
 }
 
-.dash-dropdown-options-list:has(.analysis-view-selector),
-.dash-options-list-option.dash-dropdown-option {
-    background: #14171b;
-    color: #e9e7e1;
+/* Dash renders every menu in a portal, so these must be global selectors. */
+.dash-options-list.dash-dropdown-options,
+.dash-options-list.dash-dropdown-options .dash-options-list-option {
+    background: #14171b !important;
+    color: #eef1f4 !important;
 }
 
-.dash-options-list-option.dash-dropdown-option:hover,
-.dash-options-list-option.dash-dropdown-option.selected {
-    background: rgba(227, 44, 49, 0.24);
-    color: #fff;
+.dash-options-list.dash-dropdown-options .dash-options-list-option *,
+.dash-options-list.dash-dropdown-options .dash-options-list-option-text {
+    color: #eef1f4 !important;
+}
+
+.dash-options-list.dash-dropdown-options .dash-options-list-option:hover,
+.dash-options-list.dash-dropdown-options .dash-options-list-option:focus,
+.dash-options-list.dash-dropdown-options .dash-options-list-option.selected,
+.dash-options-list.dash-dropdown-options .dash-options-list-option[aria-selected="true"] {
+    background: #e7eef0 !important;
+    color: #081219 !important;
+}
+
+.dash-options-list.dash-dropdown-options .dash-options-list-option:hover *,
+.dash-options-list.dash-dropdown-options .dash-options-list-option:focus *,
+.dash-options-list.dash-dropdown-options .dash-options-list-option.selected *,
+.dash-options-list.dash-dropdown-options .dash-options-list-option[aria-selected="true"] * {
+    color: #081219 !important;
+}
+
+.dash-options-list.dash-dropdown-options .dash-options-list-option-checkbox {
+    accent-color: var(--f1-red);
 }
 
 .analysis-view-panels {
