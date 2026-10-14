@@ -240,11 +240,21 @@ def _lap_number(lap):
 
 
 def _telemetry_fallback_attempts():
+    """Return an optional cap for Fastest-mode trace substitutions.
+
+    Car data is already loaded at session scope by FastF1, so checking another
+    valid lap normally filters in-memory data rather than making another
+    network request. A low default cap could therefore hide a perfectly usable
+    trace later in a long race. ``0`` (the default) means try every valid lap;
+    deployments that need a latency guard may set a positive cap.
+    """
     try:
-        value = int(os.getenv('TELEMETRY_LAP_FALLBACK_ATTEMPTS', '8'))
+        value = int(os.getenv('TELEMETRY_LAP_FALLBACK_ATTEMPTS', '0'))
     except ValueError:
-        value = 8
-    return max(1, min(20, value))
+        value = 0
+    if value <= 0:
+        return None
+    return min(100, value)
 
 
 def _usable_lap_and_trace(session, driver, selected_lap, mode, selected_lap_num):
@@ -275,11 +285,12 @@ def _usable_lap_and_trace(session, driver, selected_lap, mode, selected_lap_num)
         raise initial_error
 
     attempts = 0
+    attempt_limit = _telemetry_fallback_attempts()
     for _, candidate in candidates.iterrows():
         if selected_number is not None and _lap_number(candidate) == selected_number:
             continue
         attempts += 1
-        if attempts > _telemetry_fallback_attempts():
+        if attempt_limit is not None and attempts > attempt_limit:
             break
         try:
             trace = _telemetry_with_distance(candidate, drop_xy_time=False, session=session)
@@ -287,7 +298,9 @@ def _usable_lap_and_trace(session, driver, selected_lap, mode, selected_lap_num)
             continue
         return candidate, trace, True
 
-    raise initial_error
+    raise ValueError(
+        f'{driver}: No usable speed trace after checking alternate valid laps.'
+    ) from initial_error
 
 
 def _label_with_trace_lap(label, lap, used_fallback):

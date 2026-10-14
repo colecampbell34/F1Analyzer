@@ -93,7 +93,7 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN` - Optional shared Redis cache for prepared selected-lap traces on Vercel; these are the names provided by the Vercel Upstash integration. Direct Upstash connections may instead use `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`. The aliases `F1_ANALYZER_REDIS_REST_URL` and `F1_ANALYZER_REDIS_REST_TOKEN` are also supported.
 - `F1_ANALYZER_SHARED_CACHE_ENABLED=0` - Explicitly disables the shared cache, even when Redis credentials are configured.
 - `SHARED_TELEMETRY_CURRENT_TTL_SECONDS` / `SHARED_TELEMETRY_HISTORICAL_TTL_SECONDS` - Optional cache TTLs. Defaults are 6 hours for the current season and 30 days for older seasons.
-- `TELEMETRY_LAP_FALLBACK_ATTEMPTS` - Maximum alternate laps tried when Fastest has a recorded lap time but no usable trace. Defaults to `8`; explicitly selected lap numbers are never substituted.
+- `TELEMETRY_LAP_FALLBACK_ATTEMPTS` - Optional maximum alternate laps tried when Fastest has a recorded lap time but no usable trace. Defaults to `0` (try every valid lap); explicitly selected lap numbers are never substituted.
 
 ## Runtime Data
 

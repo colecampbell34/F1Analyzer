@@ -45,13 +45,24 @@ def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fast
     from data import load_session_with_preload
     from data import get_best_lap
     from ai_utils import _gather_session_context
-    from telemetry_prep import _telemetry_with_distance
+    from telemetry_prep import _usable_lap_and_trace
 
     year, race, session_type = params['year'], params['race'], params['session_type']
     driver1, driver2 = params['driver1'], params['driver2']
-    session = load_session_with_preload(
-        year, race, session_type, laps=True, telemetry=True, weather=True, messages=True
-    )
+    telemetry_loaded = True
+    try:
+        session = load_session_with_preload(
+            year, race, session_type, laps=True, telemetry=True, weather=True, messages=True
+        )
+    except Exception as telemetry_load_error:
+        # Race results, lap times, sectors, strategy and messages remain useful
+        # AI context. Do not make the entire assistant depend on the optional
+        # high-volume telemetry feed.
+        logging.warning('AI context continuing without telemetry: %s', telemetry_load_error)
+        telemetry_loaded = False
+        session = load_session_with_preload(
+            year, race, session_type, laps=True, telemetry=False, weather=True, messages=True
+        )
     d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
     d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
     lap1 = _pick_driver_lap(session, driver1, d1_mode, d1_lap_num, get_best_lap)
@@ -60,8 +71,33 @@ def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fast
         raise ValueError(f"{driver1} did not set a valid lap.")
     if not _has_valid_lap(lap2, pd):
         raise ValueError(f"{driver2} did not set a valid lap.")
-    tel1 = _telemetry_with_distance(lap1, session=session)
-    tel2 = _telemetry_with_distance(lap2, session=session)
+    tel1 = tel2 = None
+    telemetry_note = ''
+    if telemetry_loaded:
+        try:
+            # Use the same trace-selection logic as the Telemetry tab. This
+            # avoids an AI answer being based on a nominal fastest lap whose
+            # trace FastF1 did not publish while the dashboard selected a
+            # viable nearby lap.
+            lap1, tel1, d1_fallback = _usable_lap_and_trace(
+                session, driver1, lap1, d1_mode, d1_lap_num
+            )
+            lap2, tel2, d2_fallback = _usable_lap_and_trace(
+                session, driver2, lap2, d2_mode, d2_lap_num
+            )
+            if d1_fallback or d2_fallback:
+                telemetry_note = (
+                    'Telemetry note: FastF1 did not publish a complete trace for one or more '
+                    'selected fastest laps; the nearest valid telemetry-bearing lap was used.'
+                )
+        except Exception as telemetry_error:
+            # Preserve the complete non-telemetry session context and tell the
+            # model not to make unsupported telemetry claims.
+            logging.warning('AI context telemetry unavailable: %s', telemetry_error)
+            telemetry_note = (
+                'Telemetry note: FastF1 did not return a usable speed trace for the selected '
+                'comparison. Do not infer speed, braking, throttle, gear, GPS, or delta details.'
+            )
     context = _gather_session_context(
         session,
         session_type,
@@ -75,6 +111,8 @@ def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fast
             'label': f"Selected dashboard laps: {driver1} {_ai_lap_label(d1_lap_value)} vs {driver2} {_ai_lap_label(d2_lap_value)}",
         }
     )
+    if telemetry_note:
+        context = f'{context}\n\n=== TELEMETRY AVAILABILITY ===\n{telemetry_note}'
     return f"{_ai_context_header(params, d1_lap_value, d2_lap_value)}\n\n{context}"
 
 

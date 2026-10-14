@@ -265,6 +265,37 @@ class TestAiLapContext(unittest.TestCase):
         self.assertIn("d1-lap-dropdown", ask_state_ids)
         self.assertIn("d2-lap-dropdown", ask_state_ids)
 
+    def test_ai_context_survives_an_unavailable_speed_trace(self):
+        """Telemetry must enrich AI context, never prevent it from loading."""
+        params = {
+            'year': 2025,
+            'race': 'British Grand Prix',
+            'session_type': 'Race',
+            'driver1': 'NOR',
+            'driver2': 'PIA',
+        }
+        session = MagicMock()
+        lap1 = pd.Series({'LapTime': pd.Timedelta(seconds=90)})
+        lap2 = pd.Series({'LapTime': pd.Timedelta(seconds=91)})
+
+        with (
+            patch('data.load_session_with_preload', return_value=session),
+            patch('data.get_best_lap', side_effect=[lap1, lap2]),
+            patch(
+                'telemetry_prep._usable_lap_and_trace',
+                side_effect=ValueError('No usable speed trace is available for this selected lap.'),
+            ),
+            patch('ai_utils._gather_session_context', return_value='core session context') as gather,
+        ):
+            context = callbacks_ai._build_ai_session_context(params)
+
+        self.assertTrue(context.startswith(callbacks_ai._ai_context_header(params)))
+        self.assertIn('core session context', context)
+        self.assertIn('Do not infer speed, braking, throttle, gear, GPS, or delta details.', context)
+        selected_context = gather.call_args.kwargs['selected_lap_context']
+        self.assertIsNone(selected_context['tel1'])
+        self.assertIsNone(selected_context['tel2'])
+
 
 class TestLapSelection(unittest.TestCase):
     class FakeDashApp:
@@ -536,6 +567,40 @@ class TestTelemetryTraceFallbacks(unittest.TestCase):
                 telemetry_prep._usable_lap_and_trace(
                     session, 'NOR', laps.iloc[0], 'fastest', None
                 )
+
+    def test_fastest_mode_checks_laps_beyond_the_old_eight_lap_limit(self):
+        class DriverLaps(pd.DataFrame):
+            @property
+            def _constructor(self):
+                return DriverLaps
+
+            def pick_drivers(self, _driver):
+                return self
+
+        laps = DriverLaps([
+            {'LapNumber': lap_number, 'LapTime': pd.Timedelta(seconds=89 + lap_number / 10)}
+            for lap_number in range(1, 12)
+        ])
+        session = MagicMock()
+        session.laps = laps
+        trace = self._core_trace()
+
+        def get_trace(lap, **_kwargs):
+            if int(lap['LapNumber']) != 11:
+                raise ValueError('No usable speed trace is available for this selected lap.')
+            return trace
+
+        with (
+            patch.dict(os.environ, {'TELEMETRY_LAP_FALLBACK_ATTEMPTS': '0'}, clear=False),
+            patch.object(telemetry_prep, '_telemetry_with_distance', side_effect=get_trace),
+        ):
+            lap, actual_trace, used_fallback = telemetry_prep._usable_lap_and_trace(
+                session, 'NOR', laps.iloc[0], 'fastest', None
+            )
+
+        self.assertTrue(used_fallback)
+        self.assertEqual(int(lap['LapNumber']), 11)
+        self.assertIs(actual_trace, trace)
 
     def test_specific_lap_never_substitutes_another_trace(self):
         session = MagicMock()

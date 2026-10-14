@@ -68,8 +68,11 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   gear analysis when position samples are incomplete; track maps and other
   position-dependent views must instead explain that limitation clearly.
 - When the Fastest lap has a valid time but no trace, the telemetry view may
-  use the next-fastest usable lap and must label that substitution. Never
-  substitute an explicitly selected lap number.
+  use any faster-to-slower valid lap with a usable trace and must label that
+  substitution. Never substitute an explicitly selected lap number.
+- AI session context must remain available when telemetry is unavailable. It
+  may include telemetry only as an optional enhancement and must instruct the
+  model not to invent telemetry-derived claims when no usable trace exists.
 - `shared_cache.py` may cache only bounded, JSON-safe derived telemetry
   payloads. Never serialize FastF1 session objects, pickle data, or cache
   credentials; a shared-cache miss or outage must fall back to FastF1.
