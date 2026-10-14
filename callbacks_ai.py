@@ -273,12 +273,9 @@ def register_ai_callbacks(app):
                 new_history = _trim_history(history + [{'question': question, 'answer': cached}])
                 return new_history, '', len(new_history) - 1, ''
 
-            # Try configured Gemini models in random order.
-            shuffled_models = GEMINI_MODELS.copy()
-            random.shuffle(shuffled_models)
 
             last_error = ""
-            for model_name in shuffled_models:
+            for model_name in GEMINI_MODELS:
                 try:
                     from google import genai
                     client = genai.Client(api_key=GEMINI_API_KEY)
