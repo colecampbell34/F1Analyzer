@@ -666,8 +666,13 @@ class TestSharedTelemetryPayload(unittest.TestCase):
             'Brake': [0.0] * 8,
             'nGear': [5.0] * 8,
         })
+        session = MagicMock()
+        session.get_circuit_info.return_value = MagicMock(corners=pd.DataFrame([
+            {'Number': 1, 'Letter': '', 'X': 100.0, 'Y': 200.0},
+            {'Number': 2, 'Letter': 'A', 'X': 300.0, 'Y': 400.0},
+        ]))
         payload = {
-            'session': MagicMock(),
+            'session': session,
             'd1': 'NOR',
             'd2': 'PIA',
             'lbl1': 'NOR (P1)',
@@ -693,6 +698,35 @@ class TestSharedTelemetryPayload(unittest.TestCase):
         self.assertIsNone(loaded['session'])
         self.assertEqual(loaded['lap1']['LapTime'], pd.Timedelta(seconds=90))
         self.assertEqual(len(loaded['tel1']), len(trace))
+        self.assertEqual(loaded['circuit_corners'], [
+            {'Number': 1, 'Letter': '', 'X': 100.0, 'Y': 200.0},
+            {'Number': 2, 'Letter': 'A', 'X': 300.0, 'Y': 400.0},
+        ])
+
+
+class TestTrackMapCornerMarkers(unittest.TestCase):
+    def test_cached_circuit_markers_preserve_every_official_turn(self):
+        """A Redis cache hit must not replace official markers with speed dips."""
+        telemetry = pd.DataFrame({
+            'Distance': [float(index * 100) for index in range(16)],
+            'Speed': [250.0 - index for index in range(16)],
+            'X': [float(index * 10) for index in range(16)],
+            'Y': [float(index * 5) for index in range(16)],
+        })
+        circuit_corners = [
+            {'Number': index, 'Letter': '', 'X': float(index * 10), 'Y': float(index * 5)}
+            for index in range(1, 16)
+        ]
+
+        corners = graphs_trackmap._identify_corners_from_circuit(
+            None,
+            telemetry,
+            telemetry,
+            circuit_corners=circuit_corners,
+        )
+
+        self.assertEqual(len(corners), 15)
+        self.assertEqual([corner['turn'] for corner in corners], [str(index) for index in range(1, 16)])
 
 
 class TestSharedCacheTransport(unittest.TestCase):

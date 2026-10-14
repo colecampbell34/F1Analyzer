@@ -3,16 +3,18 @@ import dash_bootstrap_components as dbc
 from graph_config import GRAPH_CONFIG
 from ai_config import AI_ENABLED
 from static_schedule import get_static_years
+from callbacks_shared import ANALYSIS_VIEW_OPTIONS
 
 
 # Tab graph heights by view.
 TAB_HEIGHTS = {
-    'single':       '75vh',
-    'telemetry':    '68vh',
-    'strategy_top': '40vh',
-    'strategy_bot': '35vh',
-    'race_top':     '42vh',
-    'race_bot':     '33vh',
+    'single':       'calc(100dvh - 235px)',
+    'telemetry':    'calc(100dvh - 315px)',
+    'strategy_top': 'calc((100dvh - 215px) / 2)',
+    'strategy_bot': 'calc((100dvh - 215px) / 2)',
+    'race_top':     'calc((100dvh - 215px) / 2)',
+    'race_bot':     'calc((100dvh - 215px) / 2)',
+    'sidecar':      'calc((100dvh - 480px) / 2)',
 }
 
 # Shared disclaimer.
@@ -135,7 +137,6 @@ SESSION_LABEL = _label_with_tip("Session", "Choose which part of the weekend to 
 # without casually renaming controls.
 sidebar = html.Div([
     html.Div([
-        html.Div("RACE INTELLIGENCE", className='product-kicker'),
         html.Div([
             html.Div("F1", className='product-mark', **{'aria-hidden': 'true'}),
             html.Div([
@@ -143,10 +144,7 @@ sidebar = html.Div([
                 html.P("Telemetry · Pace · Strategy", className='product-subtitle'),
             ]),
         ], className='product-lockup'),
-        html.Div([
-            html.Span("SESSION BUILDER"),
-            html.Span("01", className='section-index'),
-        ], className='section-heading'),
+        html.Div(className='section-heading'),
         html.Hr(className='rail-divider'),
     ], className='sidebar-header', style={'flex': '0 0 auto'}),
 
@@ -316,13 +314,24 @@ mobile_companion = html.Div([
 content = html.Main([
     html.Header([
         html.Div([
-            html.Div("ANALYSIS WORKSPACE", className='workspace-kicker'),
             html.H1("Build a comparison", id='main-title'),
         ]),
         html.Div([
-            html.Span("FASTF1", className='source-badge'),
-            html.Span("LIVE TIMING DATA", className='source-detail'),
-        ], className='workspace-provenance'),
+            html.Div([
+                html.Span("FASTF1", className='source-badge'),
+            ], className='workspace-provenance'),
+            html.Div([
+                html.Label("Analysis view", className='view-selector-label', htmlFor='main-tabs'),
+                dcc.Dropdown(
+                    id='main-tabs',
+                    options=list(ANALYSIS_VIEW_OPTIONS),
+                    value='tab-telemetry',
+                    clearable=False,
+                    searchable=False,
+                    className='analysis-view-selector',
+                ),
+            ], className='analysis-view-selector-wrap', title='Choose the dashboard view to display'),
+        ], className='workspace-actions'),
     ], className='workspace-header'),
     html.Div([
         html.Div(id='loading-status-banner', className='loading-status-banner',
@@ -341,8 +350,7 @@ content = html.Main([
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
     html.Div(id='plot-resize-sentinel', style={'display': 'none'}),
 
-    html.Div("VIEW", className='view-label'),
-    dcc.Tabs(id='main-tabs', value='tab-telemetry', parent_className='analysis-tabs', children=[
+    dcc.Tabs(id='analysis-view-panels', value='tab-telemetry', parent_className='analysis-view-panels', children=[
         dcc.Tab(id='tab-telemetry-control', label=_tab_label(
             'Telemetry',
             "Telemetry compares two selected laps using speed, gap, throttle/brake, gear, track position, and G-force. Use Replay Focus to watch the lap evolve.",
@@ -389,7 +397,7 @@ content = html.Main([
                             ])
                         ]),
                     ]),
-                    _sidecar_empty_state('mini-track-map', '200px'),
+                    _sidecar_empty_state('mini-track-map', TAB_HEIGHTS['sidecar']),
                     html.Hr(style={'margin': '6px 0'}),
                     html.Div(_label_with_tip(
                         "G-Force Traces",
@@ -401,7 +409,7 @@ content = html.Main([
                         'fontSize': '0.7rem',
                         'marginBottom': '3px'
                     }),
-                    _sidecar_empty_state('gg-diagram', '250px')
+                    _sidecar_empty_state('gg-diagram', TAB_HEIGHTS['sidecar'])
                 ], lg=3, md=4, xs=12, className='telemetry-sidecar',
                    style={'backgroundColor': '#151515', 'borderRadius': '8px', 'padding': '8px', 'marginTop': '6px', 'overflow': 'hidden'})
             ], className='telemetry-visual-grid')

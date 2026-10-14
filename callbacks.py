@@ -18,6 +18,7 @@ from callbacks_shared import (
     _parse_url_state,
     _build_url_search,
     _missing_required_fields,
+    analysis_view_options,
 )
 
 # Sub-module registrations.
@@ -158,6 +159,13 @@ def _register_core_callbacks(app):
         if url_state.get('tab') and url_state['tab'] != current_tab:
             return url_state['tab']
         return dash.no_update
+
+    @app.callback(
+        Output('analysis-view-panels', 'value'),
+        Input('main-tabs', 'value')
+    )
+    def render_selected_analysis_view(active_tab):
+        return active_tab or 'tab-telemetry'
 
     @app.callback(
         Output('trackmap-mode', 'value'),
@@ -701,19 +709,18 @@ def _register_core_callbacks(app):
             return dash.no_update
         return new_search
 
-    @app.callback(
-        [Output('tab-strategy-control', 'disabled'),
-         Output('tab-race-control', 'disabled')],
-        Input('session-dropdown', 'value')
-    )
+    @app.callback(Output('main-tabs', 'options'), Input('session-dropdown', 'value'))
     def update_tab_availability(session_type):
         if not session_type:
-            return False, False
+            return analysis_view_options()
         from data import is_qualifying, is_practice, is_race
 
-        strategy_disabled = is_qualifying(session_type) or is_practice(session_type)
-        race_disabled = not is_race(session_type)
-        return strategy_disabled, race_disabled
+        disabled_views = set()
+        if is_qualifying(session_type) or is_practice(session_type):
+            disabled_views.add('tab-strategy')
+        if not is_race(session_type):
+            disabled_views.add('tab-race')
+        return analysis_view_options(disabled_views)
 
     @app.callback(
         Output('main-tabs', 'value', allow_duplicate=True),

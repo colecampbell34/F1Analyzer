@@ -20,7 +20,7 @@ except ValueError:
 TELEMETRY_PREP_CACHE_MAXSIZE = max(2, min(24, TELEMETRY_PREP_CACHE_MAXSIZE))
 _PREPARATION_FUTURES = {}
 _PREPARATION_FUTURES_LOCK = threading.Lock()
-_SHARED_CACHE_SCHEMA_VERSION = 1
+_SHARED_CACHE_SCHEMA_VERSION = 2
 _SHARED_TRACE_COLUMNS = ('Time', 'Distance', 'Speed', 'Throttle', 'Brake', 'nGear', 'RPM', 'X', 'Y')
 
 
@@ -175,6 +175,46 @@ def _lap_time_seconds(lap):
     return float(seconds)
 
 
+def _circuit_corners_to_shared_wire(session):
+    """Return official circuit corner markers in a small JSON-safe form.
+
+    A Redis cache hit deliberately does not restore a FastF1 ``Session``
+    object.  Keeping the marker metadata alongside the selected telemetry is
+    cheap, but lets the track-map view retain official corner numbers instead
+    of falling back to an approximate speed-dip detector on every cache hit.
+    """
+    try:
+        circuit_info = session.get_circuit_info()
+        corners = getattr(circuit_info, 'corners', None)
+    except Exception:
+        return []
+
+    if not isinstance(corners, pd.DataFrame) or corners.empty:
+        return []
+    if not all(column in corners.columns for column in ('Number', 'X', 'Y')):
+        return []
+
+    records = []
+    for _, row in corners.iterrows():
+        try:
+            number = int(row['Number'])
+            x = float(row['X'])
+            y = float(row['Y'])
+        except (TypeError, ValueError):
+            continue
+        if number <= 0 or pd.isna(x) or pd.isna(y):
+            continue
+        letter_value = row.get('Letter', '')
+        letter = '' if pd.isna(letter_value) else str(letter_value).strip()
+        records.append({
+            'Number': number,
+            'Letter': letter,
+            'X': x,
+            'Y': y,
+        })
+    return records
+
+
 def _payload_to_shared_wire(payload):
     return {
         'schema': _SHARED_CACHE_SCHEMA_VERSION,
@@ -188,19 +228,26 @@ def _payload_to_shared_wire(payload):
         'lap2_seconds': _lap_time_seconds(payload['lap2']),
         'tel1': _trace_to_shared_wire(payload['tel1']),
         'tel2': _trace_to_shared_wire(payload['tel2']),
+        'circuit_corners': _circuit_corners_to_shared_wire(payload.get('session')),
     }
 
 
 def _payload_from_shared_wire(payload):
     if not isinstance(payload, dict) or payload.get('schema') != _SHARED_CACHE_SCHEMA_VERSION:
         raise ValueError('unknown shared telemetry payload')
-    required = ('d1', 'd2', 'lbl1', 'lbl2', 'c1', 'c2', 'lap1_seconds', 'lap2_seconds', 'tel1', 'tel2')
+    required = (
+        'd1', 'd2', 'lbl1', 'lbl2', 'c1', 'c2', 'lap1_seconds', 'lap2_seconds',
+        'tel1', 'tel2', 'circuit_corners',
+    )
     if not all(key in payload for key in required):
         raise ValueError('incomplete shared telemetry payload')
+    circuit_corners = payload.get('circuit_corners')
+    if not isinstance(circuit_corners, list):
+        raise ValueError('invalid shared circuit marker data')
     return {
-        # Circuit metadata is optional in the track-map builder. Cached traces
-        # avoid a FastF1 session load; it will use its documented heuristic for
-        # turn markers when circuit metadata is not locally available.
+        # Cached traces avoid restoring a costly FastF1 session object. The
+        # separately serialized circuit markers keep the track-map annotations
+        # authoritative without that object.
         'session': None,
         'd1': str(payload['d1']),
         'd2': str(payload['d2']),
@@ -212,6 +259,7 @@ def _payload_from_shared_wire(payload):
         'lap2': pd.Series({'LapTime': pd.to_timedelta(float(payload['lap2_seconds']), unit='s')}),
         'tel1': _trace_from_shared_wire(payload['tel1']),
         'tel2': _trace_from_shared_wire(payload['tel2']),
+        'circuit_corners': circuit_corners,
     }
 
 

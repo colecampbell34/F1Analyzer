@@ -57,17 +57,24 @@ def _identify_corners(tel1, tel2):
     return corners
 
 
-def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0):
+def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0, circuit_corners=None):
     """Map FastF1 circuit corner definitions onto lap telemetry.
 
     This uses `session.get_circuit_info().corners` when available to get the intended
     corner count and numbering, then finds the nearest telemetry point for placement.
     """
-    try:
-        circuit_info = session.get_circuit_info()
-        corners_df = getattr(circuit_info, 'corners', None)
-    except Exception:
-        corners_df = None
+    corners_df = None
+    if circuit_corners is not None:
+        try:
+            corners_df = pd.DataFrame(circuit_corners)
+        except (TypeError, ValueError):
+            corners_df = None
+    elif session is not None:
+        try:
+            circuit_info = session.get_circuit_info()
+            corners_df = getattr(circuit_info, 'corners', None)
+        except Exception:
+            corners_df = None
 
     if corners_df is None:
         return []
@@ -161,7 +168,19 @@ def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0):
     return corners
 
 
-def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_data, mode='dominance', session=None):
+def _build_dominance_fig(
+    driver1,
+    driver2,
+    c1,
+    c2,
+    tel1,
+    tel2,
+    fast_data,
+    slow_data,
+    mode='dominance',
+    session=None,
+    circuit_corners=None,
+):
     """Builds the 2D Track Map with multiple overlay modes."""
     from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, _, fast_lbl = fast_data
@@ -249,10 +268,18 @@ def _build_dominance_fig(driver1, driver2, c1, c2, tel1, tel2, fast_data, slow_d
                     ))
                 group_start = ms
 
-        # Add Apex Markers for all corners if circuit corner metadata is available.
+        # Use FastF1's official circuit-marker data even after Redis serves a
+        # telemetry cache hit. Without it, the speed-dip fallback can miss
+        # several turns and relabel a subset as 1..N.
         corners = []
-        if session is not None:
-            corners = _identify_corners_from_circuit(session, tel1, tel2, window_m=28.0)
+        if session is not None or circuit_corners:
+            corners = _identify_corners_from_circuit(
+                session,
+                tel1,
+                tel2,
+                window_m=28.0,
+                circuit_corners=circuit_corners,
+            )
         if not corners:
             corners = _identify_corners(tel1, tel2)
         for c in corners:

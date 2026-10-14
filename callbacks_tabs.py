@@ -135,7 +135,9 @@ def register_tab_callbacks(app):
 
                 fig = _build_dominance_fig(
                     d1, d2, c1, c2, tel1, tel2, fast_data, slow_data,
-                    mode=mode, session=session
+                    mode=mode,
+                    session=session,
+                    circuit_corners=cmp.get('circuit_corners'),
                 )
                 return fig, dna_ui, cache_key
             except Exception as e:

@@ -475,3 +475,155 @@ div[class*="tab-container"] {
         margin-top: 0.8rem;
     }
 }
+
+/* The view selector replaces the wide tab rail and keeps the workspace in one viewport. */
+.workspace-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.85rem;
+}
+
+.analysis-view-selector-wrap {
+    display: grid;
+    gap: 0.28rem;
+    min-width: 196px;
+}
+
+.view-selector-label {
+    color: var(--f1-red);
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.62rem;
+    font-weight: 900;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+}
+
+.analysis-view-selector .Select-control {
+    min-height: 38px;
+    border-color: var(--f1-red) !important;
+    border-radius: 0 !important;
+    background: #14171b !important;
+    box-shadow: inset 0 0 0 1px rgba(227, 44, 49, 0.15) !important;
+}
+
+.analysis-view-selector .Select-value,
+.analysis-view-selector .Select-placeholder,
+.analysis-view-selector .Select-input,
+.analysis-view-selector .Select-arrow {
+    color: #f5f3ee !important;
+}
+
+.analysis-view-selector .Select-menu-outer {
+    z-index: 1300;
+    border-color: var(--f1-red) !important;
+    border-radius: 0 !important;
+    background: #14171b !important;
+}
+
+.analysis-view-selector .VirtualizedSelectOption {
+    color: #e9e7e1;
+    background: #14171b;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.analysis-view-selector .VirtualizedSelectFocusedOption {
+    color: #fff;
+    background: rgba(227, 44, 49, 0.24);
+}
+
+/* Dash 4's Dropdown is Radix-based instead of the older Select markup. */
+.analysis-view-selector.dash-dropdown {
+    width: 100%;
+    min-height: 38px;
+    height: 38px;
+    border: 1px solid var(--f1-red) !important;
+    border-radius: 0 !important;
+    background: #14171b !important;
+    color: #f5f3ee !important;
+    box-shadow: inset 0 0 0 1px rgba(227, 44, 49, 0.15) !important;
+}
+
+.analysis-view-selector .dash-dropdown-trigger,
+.analysis-view-selector .dash-dropdown-value,
+.analysis-view-selector .dash-dropdown-value-item,
+.analysis-view-selector .dash-dropdown-trigger-icon {
+    min-height: 36px;
+    color: #f5f3ee !important;
+}
+
+.dash-dropdown-options-list:has(.analysis-view-selector),
+.dash-options-list-option.dash-dropdown-option {
+    background: #14171b;
+    color: #e9e7e1;
+}
+
+.dash-options-list-option.dash-dropdown-option:hover,
+.dash-options-list-option.dash-dropdown-option.selected {
+    background: rgba(227, 44, 49, 0.24);
+    color: #fff;
+}
+
+.analysis-view-panels {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    border: 0 !important;
+}
+
+.analysis-view-panels > .tab-container,
+.analysis-view-panels > div[class*="tab-container"] {
+    display: none !important;
+}
+
+.analysis-view-panels .tab-content {
+    height: 100%;
+    overflow: hidden;
+}
+
+@media (min-width: 769px) {
+    .content-col {
+        overflow: hidden !important;
+    }
+
+    .analysis-workspace {
+        display: flex;
+        flex-direction: column;
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+    }
+
+    .workspace-header {
+        flex: 0 0 auto;
+        margin-bottom: 0.7rem;
+        padding-bottom: 0.7rem;
+    }
+
+    .dashboard-action-row {
+        flex: 0 0 auto;
+        margin-bottom: 0.45rem;
+    }
+
+    .export-status {
+        flex: 0 0 auto;
+    }
+}
+
+@media (max-width: 768px) {
+    .workspace-header {
+        align-items: flex-start;
+    }
+
+    .workspace-actions {
+        width: 100%;
+    }
+
+    .analysis-view-selector-wrap {
+        min-width: min(100%, 190px);
+        margin-left: auto;
+    }
+}

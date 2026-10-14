@@ -14,8 +14,22 @@ VALID_TABS = {
     'tab-telemetry', 'tab-trackmap', 'tab-strategy',
     'tab-race', 'tab-gridpace', 'tab-ai'
 }
+ANALYSIS_VIEW_OPTIONS = (
+    {'label': 'Telemetry', 'value': 'tab-telemetry'},
+    {'label': 'Track map', 'value': 'tab-trackmap'},
+    {'label': 'Strategy', 'value': 'tab-strategy'},
+    {'label': 'Race', 'value': 'tab-race'},
+    {'label': 'Grid pace', 'value': 'tab-gridpace'},
+    {'label': 'AI analysis', 'value': 'tab-ai'},
+)
 VALID_LAP_MODES = {'fastest', 'specific'}
 VALID_TRACKMAP_MODES = {'dominance', 'braking', 'speed'}
+
+
+def analysis_view_options(disabled_views=()):
+    """Return dropdown options while preserving unavailable-view context."""
+    disabled = set(disabled_views or ())
+    return [{**option, 'disabled': option['value'] in disabled} for option in ANALYSIS_VIEW_OPTIONS]
 
 CALLBACK_TIMING_THRESHOLD_MS = float(os.getenv('CALLBACK_TIMING_THRESHOLD_MS', '400'))
 LOG_ALL_CALLBACKS = os.getenv('LOG_ALL_CALLBACKS') == '1'
