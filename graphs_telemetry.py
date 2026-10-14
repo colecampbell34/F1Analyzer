@@ -68,9 +68,17 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
         driver1, driver1_lap = driver1_delta_data
         driver2, driver2_lap = driver2_delta_data
 
+    driver1_tel = fast_tel if fast_driver == driver1 else slow_tel
+    driver2_tel = fast_tel if fast_driver == driver2 else slow_tel
+
     # FastF1 returns compare_time - reference_time. Use Driver 2 as the
     # reference and invert the sign so positive means Driver 1 is ahead.
-    delta_time, ref_tel, comp_tel = _compute_lap_delta(driver2_lap, driver1_lap)
+    delta_time, ref_tel, comp_tel = _compute_lap_delta(
+        driver2_lap,
+        driver1_lap,
+        reference_tel=driver2_tel,
+        compare_tel=driver1_tel,
+    )
 
     fast_tel = _downsample(fast_tel)
     slow_tel = _downsample(slow_tel)

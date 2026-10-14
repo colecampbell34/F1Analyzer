@@ -575,24 +575,43 @@ def _register_core_callbacks(app):
         with _timed_callback('update_dashboard_metadata', year=year, race=race, session=session_type):
             try:
                 import pandas as pd
-                from data import load_session_summary
+                from data import get_driver_info, load_session_summary
 
                 session = load_session_summary(year, race, session_type, include_laps=False)
+                info_by_abbr = {
+                    item['abbr']: item
+                    for item in get_driver_info(session)
+                    if item.get('abbr')
+                }
 
-                # Include finishing position in title when available.
-                try:
-                    p1 = session.results.loc[session.results['Abbreviation'] == driver1, 'Position'].values[0]
-                    lbl1 = f"{driver1} (P{int(p1)})" if pd.notna(p1) else driver1
-                except (IndexError, KeyError):
-                    lbl1 = driver1
-                try:
-                    p2 = session.results.loc[session.results['Abbreviation'] == driver2, 'Position'].values[0]
-                    lbl2 = f"{driver2} (P{int(p2)})" if pd.notna(p2) else driver2
-                except (IndexError, KeyError):
-                    lbl2 = driver2
+                def _driver_title(driver):
+                    info = info_by_abbr.get(driver, {})
+                    full_name = info.get('name') or driver
+                    color = info.get('color') or '#d8d8d4'
+                    position = None
+                    try:
+                        value = session.results.loc[
+                            session.results['Abbreviation'] == driver, 'Position'
+                        ].values[0]
+                        position = int(value) if pd.notna(value) else None
+                    except (IndexError, KeyError, TypeError, ValueError):
+                        position = None
+                    position_text = f"P{position}" if position else "Selected driver"
+                    return html.Span([
+                        html.Span(driver, className='matchup-driver-code'),
+                        html.Span(full_name, className='matchup-driver-name'),
+                        html.Span(position_text, className='matchup-driver-position'),
+                    ], className='matchup-driver', style={'--driver-accent': color})
 
-                title_text = f"{year} {race} | {session_type} | {lbl1} vs {lbl2}"
-                return title_text, ""
+                title = html.Div([
+                    html.Div(f"{year} · {race} · {session_type}", className='session-title-context'),
+                    html.Div([
+                        _driver_title(driver1),
+                        html.Span("VS", className='matchup-versus'),
+                        _driver_title(driver2),
+                    ], className='driver-matchup-title'),
+                ], className='comparison-header-title')
+                return title, ""
 
             except Exception as e:
                 logging.error(f"Metadata Error: {e}")

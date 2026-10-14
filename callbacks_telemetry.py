@@ -79,7 +79,9 @@ def register_telemetry_callbacks(app):
             d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
             d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
             cmp = prepare_selected_lap_comparison(
-                params, d1_mode, d2_mode, d1_lap_num, d2_lap_num, drop_xy_time=True
+                params, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
+                drop_xy_time=True,
+                require_position=True,
             )
             d1, d2 = cmp['d1'], cmp['d2']
             c1, c2 = cmp['c1'], cmp['c2']
@@ -138,7 +140,12 @@ def register_telemetry_callbacks(app):
             track_x = tel1['X'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
             track_y = tel1['Y'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
             # Positive delta means Driver 1 is ahead of Driver 2 at that point.
-            delta_time, ref_tel, _ = _compute_lap_delta(lap2, lap1)
+            delta_time, ref_tel, _ = _compute_lap_delta(
+                lap2,
+                lap1,
+                reference_tel=tel2,
+                compare_tel=tel1,
+            )
             delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
             delta_vals = -pd.Series(delta_time).astype(float).to_numpy()
             valid_delta = np.isfinite(delta_dist) & np.isfinite(delta_vals)
@@ -199,8 +206,15 @@ def register_telemetry_callbacks(app):
             return fig, store, cache_key
         except PreventUpdate:
             raise
-        except Exception:
-            return dash.no_update, dash.no_update, dash.no_update
+        except Exception as exc:
+            from graph_shared import _not_applicable_figure
+            from ui_utils import _friendly_error
+
+            return (
+                _not_applicable_figure(_friendly_error(exc)),
+                {},
+                None,
+            )
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='updateMiniMap'),
@@ -312,7 +326,10 @@ def register_telemetry_callbacks(app):
             try:
                 d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
                 d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
-                cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
+                cmp = prepare_selected_lap_comparison(
+                    params, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
+                    require_position=True,
+                )
                 d1, d2 = cmp['d1'], cmp['d2']
                 c1, c2 = cmp['c1'], cmp['c2']
                 tel1, tel2 = cmp['tel1'], cmp['tel2']

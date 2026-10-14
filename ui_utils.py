@@ -22,6 +22,15 @@ def _friendly_error(e):
         return "Lap data is not available for this session yet. The event may still be in progress or not published."
     if 'did not set a valid lap' in msg:
         return msg
+    if 'track-position data is unavailable' in lower_msg:
+        return (
+            "Track-position samples are missing for one selected lap. "
+            "Try Fastest for both drivers; the speed trace can still be used."
+        )
+    if 'after' in lower_msg and 'telemetry' in lower_msg and 'attempt' in lower_msg:
+        return "FastF1 could not retrieve telemetry after retrying. Please try the session again shortly."
+    if 'selected lap' in lower_msg and 'telemetry' in lower_msg:
+        return "That lap does not have a complete telemetry trace. Try the driver's Fastest lap."
     if 'telemetry data is not available' in lower_msg or 'telemetry' in lower_msg:
         return "Telemetry data is not available or is incomplete for this session from the F1 live timing feed."
     if 'date' in lower_msg or 'columns' in lower_msg:

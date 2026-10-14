@@ -52,7 +52,10 @@ def register_tab_callbacks(app):
 
                 d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
                 d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
-                cmp = prepare_selected_lap_comparison(params, d1_mode, d2_mode, d1_lap_num, d2_lap_num)
+                cmp = prepare_selected_lap_comparison(
+                    params, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
+                    require_position=True,
+                )
                 session = cmp['session']
                 d1, d2 = cmp['d1'], cmp['d2']
                 lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']

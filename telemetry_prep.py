@@ -1,5 +1,7 @@
 """Shared selected-lap telemetry preparation for dashboard callbacks."""
 import os
+import threading
+from concurrent.futures import Future
 from functools import lru_cache
 
 import pandas as pd
@@ -12,26 +14,48 @@ try:
 except ValueError:
     TELEMETRY_PREP_CACHE_MAXSIZE = 8
 TELEMETRY_PREP_CACHE_MAXSIZE = max(2, min(24, TELEMETRY_PREP_CACHE_MAXSIZE))
+_PREPARATION_FUTURES = {}
+_PREPARATION_FUTURES_LOCK = threading.Lock()
+
+
+def _has_position_data(telemetry):
+    """Return whether a telemetry frame can support a circuit-position view."""
+    required = ('X', 'Y', 'Distance', 'Time')
+    if telemetry is None or telemetry.empty or not all(column in telemetry.columns for column in required):
+        return False
+    return len(telemetry.dropna(subset=list(required))) >= 12
+
+
+def _validate_trace_data(telemetry):
+    """Reject empty/partial car traces before graph code raises a KeyError."""
+    required = ('Time', 'Distance', 'Speed', 'Throttle', 'Brake', 'nGear')
+    if telemetry is None or telemetry.empty or not all(column in telemetry.columns for column in required):
+        return False
+    return len(telemetry.dropna(subset=['Time', 'Distance', 'Speed'])) >= 12
 
 
 def _telemetry_with_distance(lap, drop_xy_time=False, session=None):
-    if session is not None and getattr(session, '_telemetry_unavailable', False):
-        raise ValueError("Telemetry data is not available for this session.")
-        
+    """Return the richest usable trace for one lap.
+
+    ``get_telemetry`` merges car and position channels. On some historical
+    laps the position channel is incomplete even though car data is present.
+    In that case the speed/throttle/gear analysis should still work; position
+    specific views can check ``_has_position_data`` and explain the limitation.
+    """
     try:
         tel = lap.get_telemetry().add_distance()
     except Exception as exc:
-        message = str(exc).lower()
-        if session is not None and ('load' in message or 'loaded' in message) and not getattr(session, '_telemetry_unavailable', False):
-            try:
-                session.load(laps=True, telemetry=True, weather=False, messages=False)
-                tel = lap.get_telemetry().add_distance()
-            except Exception as inner_exc:
-                if session is not None:
-                    session._telemetry_unavailable = True
-                raise ValueError("Telemetry data is not available for this session.") from inner_exc
-        else:
-            raise ValueError(f"Telemetry data is not available for this session. Error: {exc}") from exc
+        try:
+            # FastF1 recommends car data where a merged position trace is not
+            # required. It is lighter and survives sessions with partial GPS.
+            tel = lap.get_car_data().add_distance()
+        except Exception as car_exc:
+            raise ValueError("Telemetry data is not available for this selected lap.") from car_exc
+        if not _validate_trace_data(tel):
+            raise ValueError("Telemetry data is incomplete for this selected lap.") from exc
+
+    if not _validate_trace_data(tel):
+        raise ValueError("Telemetry data is incomplete for this selected lap.")
 
     if drop_xy_time:
         required_cols = ['X', 'Y', 'Distance', 'Time']
@@ -52,7 +76,11 @@ def _copy_comparison_payload(payload, drop_xy_time=False):
     for key in ('tel1', 'tel2'):
         tel = comparison[key].copy()
         if drop_xy_time:
-            tel = tel.dropna(subset=['X', 'Y', 'Distance', 'Time']).copy()
+            position_cols = ['X', 'Y', 'Distance', 'Time']
+            if all(column in tel.columns for column in position_cols):
+                tel = tel.dropna(subset=position_cols).copy()
+            else:
+                tel = tel.iloc[0:0].copy()
             if not tel.empty:
                 tel['Distance'] -= tel['Distance'].min()
         comparison[key] = tel
@@ -119,9 +147,10 @@ def prepare_selected_lap_comparison(
     d1_lap_num=None,
     d2_lap_num=None,
     drop_xy_time=False,
+    require_position=False,
 ):
     """Load shared session data, pick requested laps, and return normalized telemetry."""
-    payload = _prepare_selected_lap_comparison_cached(
+    cache_args = (
         int(params['year']),
         str(params['race']),
         str(params['session_type']),
@@ -132,7 +161,37 @@ def prepare_selected_lap_comparison(
         _normalize_lap_number(d1_lap_num),
         _normalize_lap_number(d2_lap_num),
     )
-    return _copy_comparison_payload(payload, drop_xy_time=drop_xy_time)
+    with _PREPARATION_FUTURES_LOCK:
+        future = _PREPARATION_FUTURES.get(cache_args)
+        leader = future is None
+        if leader:
+            future = Future()
+            _PREPARATION_FUTURES[cache_args] = future
+
+    if leader:
+        try:
+            payload = _prepare_selected_lap_comparison_cached(*cache_args)
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        else:
+            future.set_result(payload)
+        finally:
+            with _PREPARATION_FUTURES_LOCK:
+                if _PREPARATION_FUTURES.get(cache_args) is future:
+                    _PREPARATION_FUTURES.pop(cache_args, None)
+    else:
+        payload = future.result()
+
+    comparison = _copy_comparison_payload(payload, drop_xy_time=drop_xy_time)
+    if require_position and not (
+        _has_position_data(comparison['tel1']) and _has_position_data(comparison['tel2'])
+    ):
+        raise ValueError(
+            "Track-position data is unavailable for one of the selected laps. "
+            "Try each driver's fastest lap or use the telemetry trace instead."
+        )
+    return comparison
 
 
 def get_selected_lap_cache_stats():

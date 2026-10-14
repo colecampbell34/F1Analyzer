@@ -5,7 +5,7 @@ import time
 import logging
 import hashlib
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import timezone
 from functools import lru_cache
 import pandas as pd
@@ -42,6 +42,8 @@ _SESSION_PRELOAD_FUTURES = {}
 _SESSION_PRELOAD_LOCK = threading.Lock()
 _SESSION_PRELOAD_JOBS = {}
 _GRANULAR_LOAD_LOCK = threading.Lock()
+_DIRECT_PROFILE_FUTURES = {}
+_DIRECT_PROFILE_LOCK = threading.Lock()
 _MAX_TRACKED_PRELOAD_FUTURES = 12
 _MAX_TRACKED_PRELOAD_JOBS = 24
 _PRELOAD_JOB_TTL_SECONDS = 900
@@ -55,6 +57,7 @@ _CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
 LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
 SESSION_CACHE_MAXSIZE = _env_int('SESSION_CACHE_MAXSIZE', 6, minimum=2, maximum=12)
 SESSION_SUMMARY_CACHE_MAXSIZE = _env_int('SESSION_SUMMARY_CACHE_MAXSIZE', 16, minimum=4, maximum=48)
+TELEMETRY_LOAD_ATTEMPTS = _env_int('TELEMETRY_LOAD_ATTEMPTS', 2, minimum=1, maximum=3)
 EVENT_SCHEDULE_CACHE_MAXSIZE = 20
 EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
@@ -271,51 +274,74 @@ def get_latest_race_session_default(now=None, first_year=2018):
 
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
 def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
-    """LRU-cached session loader with granular control.
-    Uses the same keys but allows loading specific data streams.
-    Note: FastF1 handles repeated .load() calls efficiently if data is already loaded.
+    """LRU-cached session loader with selective streams and telemetry retries.
+
+    A telemetry request must either return a telemetry-capable Session or fail.
+    Returning a lap-only Session marked as telemetry-unavailable poisoned the
+    cache after one transient upstream failure and made every later telemetry
+    view fail until the process restarted.
     """
     _ensure_cache_ready()
     import fastf1
-    
-    # We use a lock here because lru_cache might allow multiple threads 
-    # to enter the function for the same missing key simultaneously.
+
+    def _new_session():
+        return fastf1.get_session(int(year), str(race), str(session_name))
+
+    def _load(session, include_telemetry):
+        session.load(
+            laps=bool(laps),
+            telemetry=bool(include_telemetry),
+            weather=bool(weather),
+            messages=bool(messages),
+        )
+        return session
+
+    # FastF1's cache is process-local on Vercel. A retry with a fresh Session
+    # object is cheap relative to surfacing a permanent false-negative after a
+    # one-off timing endpoint/cache failure.
     with _GRANULAR_LOAD_LOCK:
-        session = fastf1.get_session(int(year), str(race), str(session_name))
-        
-        # Selective Loading: Only load what we need, with fallback in case of timing/API/caching KeyError failures.
+        if telemetry:
+            failures = []
+            for attempt in range(TELEMETRY_LOAD_ATTEMPTS):
+                session = _new_session()
+                try:
+                    return _load(session, include_telemetry=True)
+                except Exception as exc:
+                    failures.append(exc)
+                    logging.warning(
+                        "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
+                        attempt + 1, TELEMETRY_LOAD_ATTEMPTS, year, race, session_name, exc,
+                    )
+                    if attempt + 1 < TELEMETRY_LOAD_ATTEMPTS:
+                        time.sleep(0.15 * (attempt + 1))
+            raise RuntimeError(
+                "FastF1 could not load telemetry after "
+                f"{TELEMETRY_LOAD_ATTEMPTS} attempt(s)."
+            ) from failures[-1]
+
+        session = _new_session()
         try:
-            session.load(
-                laps=bool(laps), 
-                telemetry=bool(telemetry), 
-                weather=bool(weather), 
-                messages=bool(messages)
+            return _load(session, include_telemetry=False)
+        except Exception as exc:
+            logging.warning(
+                "Session profile load failed (laps=%s weather=%s messages=%s) for %s %s %s: %s",
+                laps, weather, messages, year, race, session_name, exc,
             )
-        except (KeyError, ValueError, Exception) as e:
-            logging.warning("Failed to load session granular with full requested streams (%s, %s, %s, %s): %s", laps, telemetry, weather, messages, e)
-            # Try to load laps only first
-            if telemetry or weather or messages:
-                try:
-                    session.load(laps=bool(laps), telemetry=False, weather=False, messages=False)
-                    session._telemetry_unavailable = True
-                    if weather:
-                        session._weather_unavailable = True
-                except (KeyError, ValueError, Exception) as e2:
-                    logging.warning("Fallback load failed: %s. Retrying metadata only.", e2)
-                    try:
-                        session.load(laps=False, telemetry=False, weather=False, messages=False)
-                    except Exception as e3:
-                        logging.error("Failed to load even session metadata: %s", e3)
-                    session._laps_unavailable = True
-                    session._telemetry_unavailable = True
-                    session._weather_unavailable = True
-            else:
-                try:
-                    session.load(laps=False, telemetry=False, weather=False, messages=False)
-                    session._laps_unavailable = True
-                except Exception:
-                    raise e
-    return session
+            # Non-telemetry tabs can still offer useful metadata if ancillary
+            # data feeds fail. This fallback is deliberately not used for
+            # telemetry requests above.
+            fallback = _new_session()
+            try:
+                fallback.load(laps=bool(laps), telemetry=False, weather=False, messages=False)
+                if weather:
+                    fallback._weather_unavailable = True
+                return fallback
+            except Exception:
+                metadata = _new_session()
+                metadata.load(laps=False, telemetry=False, weather=False, messages=False)
+                metadata._laps_unavailable = True
+                metadata._weather_unavailable = bool(weather)
+                return metadata
 
 
 @lru_cache(maxsize=SESSION_SUMMARY_CACHE_MAXSIZE)
@@ -509,6 +535,45 @@ def preload_session(year, race, session_name, laps=True, telemetry=False, weathe
         return future
 
 
+def _load_session_profile_singleflight(year, race, session_name, laps, telemetry, weather, messages):
+    """Load one cold profile once, while concurrent callbacks wait for it.
+
+    Dash starts the telemetry chart, mini-map, and G-force callbacks together.
+    ``lru_cache`` does not coalesce concurrent cache misses, so without this
+    gate each callback could independently construct and load the same FastF1
+    session on a Vercel cold start.
+    """
+    profile_key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
+    with _DIRECT_PROFILE_LOCK:
+        future = _DIRECT_PROFILE_FUTURES.get(profile_key)
+        leader = future is None
+        if leader:
+            future = Future()
+            _DIRECT_PROFILE_FUTURES[profile_key] = future
+
+    if not leader:
+        return future.result()
+
+    try:
+        session = _load_session_granular_cached(
+            profile_key[0], profile_key[1], profile_key[2],
+            profile_key[3], profile_key[4], profile_key[5], profile_key[6],
+        )
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    else:
+        future.set_result(session)
+        return session
+    finally:
+        # The LRU cache owns successful sessions; the Future only exists to
+        # coordinate the initial miss. Failed profiles are also removable so a
+        # later user action can retry them.
+        with _DIRECT_PROFILE_LOCK:
+            if _DIRECT_PROFILE_FUTURES.get(profile_key) is future:
+                _DIRECT_PROFILE_FUTURES.pop(profile_key, None)
+
+
 def load_session_with_preload(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """Return a session with specific data streams, reusing preloaded object when possible."""
     key = _session_cache_key(year, race, session_name)
@@ -551,7 +616,9 @@ def load_session_with_preload(year, race, session_name, laps=True, telemetry=Fal
             f"year={key[0]} race={key[1]} session={key[2]} "
             f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
         )
-    return _load_session_granular_cached(key[0], key[1], key[2], laps, telemetry, weather, messages)
+    return _load_session_profile_singleflight(
+        key[0], key[1], key[2], laps, telemetry, weather, messages
+    )
 
 
 def get_preload_status(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):

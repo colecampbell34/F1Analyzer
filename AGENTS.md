@@ -63,6 +63,10 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   finishing after the response.
 - Treat FastF1 data as incomplete until validated. Graphs should return a
   useful empty/error figure rather than failing the entire dashboard.
+- Share concurrent selected-lap preparation for the same telemetry profile.
+  A car-data trace is an acceptable fallback for speed, throttle, brake, and
+  gear analysis when position samples are incomplete; track maps and other
+  position-dependent views must instead explain that limitation clearly.
 
 ## Dash and frontend rules
 

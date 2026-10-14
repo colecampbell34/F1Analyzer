@@ -253,6 +253,81 @@ body,
     text-transform: uppercase;
 }
 
+.comparison-header-title {
+    display: grid;
+    gap: 0.42rem;
+}
+
+.session-title-context {
+    color: var(--text-muted);
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+    line-height: 1;
+}
+
+.driver-matchup-title {
+    display: flex;
+    align-items: stretch;
+    gap: 0.6rem;
+    min-width: 0;
+}
+
+.matchup-driver {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: baseline;
+    column-gap: 0.48rem;
+    min-width: 0;
+    padding: 0.12rem 0.85rem 0.2rem 0.65rem;
+    border-left: 3px solid var(--driver-accent);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--driver-accent) 12%, transparent), transparent 72%);
+}
+
+.matchup-driver-code {
+    color: var(--driver-accent);
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.68rem;
+    font-weight: 900;
+    letter-spacing: 0.12em;
+    line-height: 1.1;
+}
+
+.matchup-driver-name {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--driver-accent);
+    font-family: Impact, "Arial Black", sans-serif;
+    font-size: clamp(1.12rem, 2.35vw, 2rem);
+    font-weight: 400;
+    letter-spacing: -0.025em;
+    line-height: 0.92;
+    text-overflow: ellipsis;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.matchup-driver-position {
+    grid-column: 2;
+    color: #aeb3b8;
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.6rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    line-height: 1.15;
+    text-transform: uppercase;
+}
+
+.matchup-versus {
+    align-self: center;
+    color: #6e747b;
+    font-family: "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+    font-size: 0.64rem;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+}
+
 .workspace-provenance {
     display: flex;
     min-width: max-content;
@@ -390,6 +465,19 @@ div[class*="tab-container"] {
 
     #main-title {
         font-size: 1.05rem !important;
+    }
+
+    .driver-matchup-title {
+        gap: 0.35rem;
+    }
+
+    .matchup-driver {
+        padding-right: 0.45rem;
+        padding-left: 0.4rem;
+    }
+
+    .matchup-driver-name {
+        font-size: 1rem;
     }
 
     .view-label {

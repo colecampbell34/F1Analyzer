@@ -1,5 +1,7 @@
 import os
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
@@ -14,6 +16,7 @@ import callbacks_tabs
 import telemetry_prep
 import ux_helpers
 import graphs
+import graph_shared
 import graphs_pace
 import graphs_race
 import graphs_telemetry
@@ -370,7 +373,9 @@ class TestLapSelection(unittest.TestCase):
                 params, "tab-trackmap", 12, 13, "braking", 0, {}, None
             )
 
-        prep.assert_called_once_with(params, "specific", "specific", 12, 13)
+        prep.assert_called_once_with(
+            params, "specific", "specific", 12, 13, require_position=True
+        )
         self.assertEqual(figure, {"data": [], "layout": {}})
         self.assertIn("12", cache_key)
         self.assertIn("13", cache_key)
@@ -428,6 +433,23 @@ class TestTelemetryPrepCache(unittest.TestCase):
 
 
 class TestDeltaChartSegments(unittest.TestCase):
+    def test_car_trace_delta_fallback_preserves_a_usable_gap_series(self):
+        points = list(range(12))
+        reference = pd.DataFrame({
+            'Distance': [float(point * 10) for point in points],
+            'Time': pd.to_timedelta(points, unit='s'),
+        })
+        compare = pd.DataFrame({
+            'Distance': [float(point * 11) for point in points],
+            'Time': pd.to_timedelta([point * 1.1 for point in points], unit='s'),
+        })
+
+        delta, ref_trace, compare_trace = graph_shared._telemetry_delta_fallback(reference, compare)
+
+        self.assertGreater(len(delta), 100)
+        self.assertAlmostEqual(float(delta[-1]), 1.1, places=6)
+        self.assertEqual(len(ref_trace), len(compare_trace))
+
     def test_zero_crossing_is_inserted_into_both_colored_traces(self):
         ahead_x, ahead_y, behind_x, behind_y = graphs._split_delta_by_sign(
             np.array([0.0, 10.0]),
@@ -546,6 +568,35 @@ class TestPreloadJobs(unittest.TestCase):
         with data._SESSION_PRELOAD_LOCK:
             data._SESSION_PRELOAD_FUTURES.clear()
             data._SESSION_PRELOAD_JOBS.clear()
+        with data._DIRECT_PROFILE_LOCK:
+            data._DIRECT_PROFILE_FUTURES.clear()
+
+    def test_direct_profile_singleflight_dedupes_concurrent_telemetry_callbacks(self):
+        entered = threading.Event()
+        release = threading.Event()
+        sentinel = object()
+
+        def loader(*_args):
+            entered.set()
+            self.assertTrue(release.wait(timeout=2))
+            return sentinel
+
+        with patch.object(data, '_load_session_granular_cached', side_effect=loader) as mocked_loader:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first = executor.submit(
+                    data._load_session_profile_singleflight,
+                    2025, 'British Grand Prix', 'Race', True, True, False, False,
+                )
+                self.assertTrue(entered.wait(timeout=1))
+                second = executor.submit(
+                    data._load_session_profile_singleflight,
+                    2025, 'British Grand Prix', 'Race', True, True, False, False,
+                )
+                release.set()
+                self.assertIs(first.result(timeout=2), sentinel)
+                self.assertIs(second.result(timeout=2), sentinel)
+
+        self.assertEqual(mocked_loader.call_count, 1)
 
     def test_preload_dedupes_and_reports_ready(self):
         with patch.object(data, "_load_session_granular_cached", return_value="session") as loader:
@@ -769,13 +820,27 @@ class TestRobustErrorHandling(unittest.TestCase):
         dna = graphs_trackmap._compute_driver_dna_raw(df_invalid)
         self.assertEqual(dna, [0.0] * 7)
 
-    def test_telemetry_with_distance_checks_telemetry_unavailable_flag(self):
+    def test_telemetry_with_distance_does_not_trust_a_stale_unavailable_flag(self):
         session = MagicMock()
         session._telemetry_unavailable = True
         lap = MagicMock()
-        
-        with self.assertRaisesRegex(ValueError, "Telemetry data is not available"):
-            telemetry_prep._telemetry_with_distance(lap, session=session)
+        points = list(range(12))
+        telemetry = pd.DataFrame({
+            "Time": pd.to_timedelta(points, unit="s"),
+            "Distance": [float(point * 10) for point in points],
+            "Speed": [100.0 + point for point in points],
+            "Throttle": [50.0 + point for point in points],
+            "Brake": [0.0] * len(points),
+            "nGear": [3] * len(points),
+        })
+        merged_trace = MagicMock()
+        merged_trace.add_distance.return_value = telemetry
+        lap.get_telemetry.return_value = merged_trace
+
+        result = telemetry_prep._telemetry_with_distance(lap, session=session)
+
+        self.assertEqual(len(result), len(points))
+        lap.get_telemetry.assert_called_once()
 
 
 if __name__ == "__main__":
