@@ -724,6 +724,16 @@ class TestSharedCacheTransport(unittest.TestCase):
         }, clear=True):
             self.assertTrue(shared_cache.is_configured())
 
+    def test_probe_reports_live_cache_without_exposing_credentials(self):
+        with (
+            patch('shared_cache.is_configured', return_value=True),
+            patch('shared_cache._command', return_value='PONG'),
+        ):
+            self.assertEqual(
+                shared_cache.probe(),
+                {'configured': True, 'reachable': True},
+            )
+
 
 class TestDeltaChartSegments(unittest.TestCase):
     def test_car_trace_delta_fallback_preserves_a_usable_gap_series(self):
@@ -1110,6 +1120,17 @@ class TestApiValidation(unittest.TestCase):
         client = app_module.server.test_client()
         response = client.get("/api/preload-status")
         self.assertEqual(response.status_code, 400)
+
+    def test_health_cache_probe_is_opt_in(self):
+        import app as app_module
+
+        with patch('shared_cache.probe', return_value={'configured': True, 'reachable': True}):
+            response = app_module.server.test_client().get('/healthz?cache=1')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json()['shared_cache'],
+            {'configured': True, 'reachable': True},
+        )
 
     def test_perf_requires_admin_token_and_returns_snapshot(self):
         import app as app_module

@@ -171,12 +171,19 @@ def _set_cache_headers(response):
 @server.route('/healthz', strict_slashes=False)
 def healthz():
     """Cheap liveness endpoint for host health checks and deployment probes."""
-    return jsonify({
+    payload = {
         'status': 'ok',
         'version': APP_VERSION,
         'runtime': 'vercel' if is_serverless() else 'local',
         'filesystem_storage': storage_scope(),
-    }), 200
+    }
+    # Opt-in only: host health checks should stay local and cheap, while a
+    # deployment investigation can verify the Upstash path without exposing
+    # its URL, token, or cached data.
+    if request.args.get('cache') == '1':
+        from shared_cache import probe
+        payload['shared_cache'] = probe()
+    return jsonify(payload), 200
 
 
 @server.route('/warmup')

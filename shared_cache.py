@@ -22,7 +22,10 @@ from collections import Counter
 _STATS_LOCK = threading.Lock()
 _STATS = Counter()
 _LAST_ERROR = ''
-_DEFAULT_TIMEOUT_SECONDS = 1.25
+# A Vercel cold function may need a fresh TLS connection to Upstash.  The old
+# 1.25-second limit turned a healthy cache into a silent miss under that brief
+# startup latency, which in turn allowed duplicate FastF1 downloads.
+_DEFAULT_TIMEOUT_SECONDS = 4.0
 _MAX_VALUE_BYTES = 900_000
 
 
@@ -63,6 +66,14 @@ def _redis_rest_config():
 def is_configured():
     """Return whether this process has a usable shared-cache configuration."""
     return _redis_rest_config() is not None
+
+
+def probe():
+    """Return a secret-free live connectivity status for deployment checks."""
+    configured = is_configured()
+    if not configured:
+        return {'configured': False, 'reachable': False}
+    return {'configured': True, 'reachable': _command(('PING',)) == 'PONG'}
 
 
 def _record(name, error=None):
