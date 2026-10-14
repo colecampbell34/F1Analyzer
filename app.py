@@ -41,7 +41,7 @@ if PUBLIC_BASE_URL:
 dash_app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.CYBORG, "https://use.fontawesome.com/releases/v5.15.4/css/all.css"],
-    title="F1 Analyzer — Race Intelligence",
+    title="F1 Analyzer",
     update_title=None,
     suppress_callback_exceptions=True,
     assets_ignore='service-worker\\.js',
