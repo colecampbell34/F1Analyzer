@@ -503,6 +503,19 @@ class TestTelemetryTraceFallbacks(unittest.TestCase):
         self.assertEqual(len(trace), 8)
         self.assertIn('RPM', trace.columns)
 
+    def test_openf1_recovers_when_fastf1_has_no_car_trace(self):
+        lap = MagicMock()
+        lap.get_telemetry.side_effect = KeyError('no FastF1 telemetry')
+        lap.get_car_data.side_effect = KeyError('no FastF1 car data')
+        session = MagicMock()
+        expected = self._core_trace()
+
+        with patch('openf1_fallback.trace_for_fastf1_lap', return_value=expected) as fallback:
+            trace = telemetry_prep._telemetry_with_distance(lap, session=session)
+
+        fallback.assert_called_once_with(session, lap)
+        self.assertEqual(trace['Speed'].tolist(), expected['Speed'].tolist())
+
     def test_fastest_mode_uses_next_fastest_lap_when_the_nominal_best_has_no_trace(self):
         class DriverLaps(pd.DataFrame):
             @property
@@ -908,6 +921,28 @@ class TestPreloadJobs(unittest.TestCase):
             unittest.mock.call(data._CACHE_DIR, force_renew=True),
             unittest.mock.call(data._CACHE_DIR),
         ])
+
+    def test_vercel_keeps_valid_laps_for_openf1_after_empty_fastf1_car_data(self):
+        empty_session = MagicMock()
+        empty_session.car_data = {}
+        empty_session.laps = pd.DataFrame([
+            {'DriverNumber': '1', 'LapNumber': 4},
+        ])
+
+        with (
+            patch.dict(os.environ, {'VERCEL': '1', 'OPENF1_FALLBACK_ENABLED': '1'}, clear=False),
+            patch.object(data, '_ensure_cache_ready'),
+            patch('fastf1.get_session', return_value=empty_session) as get_session,
+            patch('fastf1.Cache.enable_cache') as enable_cache,
+        ):
+            loaded = data._load_session_granular_cached(
+                2026, 'Singapore Grand Prix', 'Race', laps=True, telemetry=True
+            )
+
+        self.assertIs(loaded, empty_session)
+        self.assertTrue(loaded._fastf1_telemetry_unavailable)
+        self.assertEqual(get_session.call_count, 1)
+        enable_cache.assert_not_called()
 
     def test_direct_profile_singleflight_dedupes_concurrent_telemetry_callbacks(self):
         entered = threading.Event()

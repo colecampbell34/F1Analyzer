@@ -298,6 +298,22 @@ def _session_has_usable_car_telemetry(session):
     return False
 
 
+def _session_has_lap_data(session):
+    """Return whether a telemetry-fallback candidate still has valid laps."""
+    try:
+        laps = session.laps
+        return bool(len(laps)) and 'DriverNumber' in laps.columns and 'LapNumber' in laps.columns
+    except Exception:
+        return False
+
+
+def _openf1_fallback_enabled():
+    """Return whether the selected-lap OpenF1 fallback may be used."""
+    return str(os.getenv('OPENF1_FALLBACK_ENABLED', '1')).lower() not in {
+        '0', 'false', 'no', 'off'
+    }
+
+
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
 def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """LRU-cached session loader with selective streams and telemetry retries.
@@ -329,8 +345,18 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
         if telemetry:
             failures = []
             cache_renewed = False
+            last_loaded_session = None
+            # On Vercel, an empty FastF1 car stream has repeatedly been a
+            # deterministic egress/content problem rather than a one-off
+            # request blip. A second 8+ MB download only increases callback
+            # time; the selected-lap OpenF1 fallback below is better suited to
+            # that exact failure. Non-serverless deployments retain retries.
+            attempt_count = (
+                1 if is_serverless() and _openf1_fallback_enabled()
+                else TELEMETRY_LOAD_ATTEMPTS
+            )
             try:
-                for attempt in range(TELEMETRY_LOAD_ATTEMPTS):
+                for attempt in range(attempt_count):
                     if attempt:
                         # FastF1 can cache a syntactically valid but empty car
                         # data response. On the retry, bypass both cache stages
@@ -342,6 +368,7 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                     session = _new_session()
                     try:
                         loaded = _load(session, include_telemetry=True)
+                        last_loaded_session = loaded
                         if not _session_has_usable_car_telemetry(loaded):
                             raise RuntimeError(
                                 'FastF1 completed the session load but returned no usable car-speed data.'
@@ -351,9 +378,9 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                         failures.append(exc)
                         logging.warning(
                             "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
-                            attempt + 1, TELEMETRY_LOAD_ATTEMPTS, year, race, session_name, exc,
+                            attempt + 1, attempt_count, year, race, session_name, exc,
                         )
-                        if attempt + 1 < TELEMETRY_LOAD_ATTEMPTS:
+                        if attempt + 1 < attempt_count:
                             time.sleep(0.15 * (attempt + 1))
             finally:
                 if cache_renewed:
@@ -361,6 +388,19 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                     # successfully renewed response remains on disk.
                     fastf1.Cache.enable_cache(_CACHE_DIR)
             root_cause = failures[-1]
+            if _openf1_fallback_enabled() and _session_has_lap_data(last_loaded_session):
+                # Do not discard FastF1's trustworthy event/lap metadata when
+                # only its car stream is empty. telemetry_prep will ask OpenF1
+                # for the same selected driver/lap and cache the normalized
+                # result in Redis. Marking the session avoids treating this as
+                # a normal FastF1 success in diagnostics.
+                last_loaded_session._fastf1_telemetry_unavailable = True
+                logging.warning(
+                    "telemetry_primary_unavailable year=%s race=%s session=%s "
+                    "cause_type=%s fallback=openf1",
+                    year, race, session_name, type(root_cause).__name__,
+                )
+                return last_loaded_session
             # One stable ERROR-level line is much easier to find in Vercel Logs
             # than the many FastF1 request messages emitted during a cold load.
             # Keep it free of request headers and response bodies.
@@ -370,7 +410,7 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                 year,
                 race,
                 session_name,
-                TELEMETRY_LOAD_ATTEMPTS,
+                attempt_count,
                 type(root_cause).__name__,
                 root_cause,
             )

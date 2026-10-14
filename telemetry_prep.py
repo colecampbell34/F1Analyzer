@@ -80,7 +80,18 @@ def _telemetry_with_distance(lap, drop_xy_time=False, session=None):
             # required. It is lighter and survives sessions with partial GPS.
             tel = lap.get_car_data().add_distance()
         except Exception as car_exc:
-            raise ValueError("No usable speed trace is available for this selected lap.") from car_exc
+            merged_error = car_exc
+
+    if not _validate_trace_data(tel):
+        try:
+            # FastF1 remains the normal path. This only activates after its
+            # session-level car stream was empty/incomplete, a condition that
+            # occurs in some Vercel functions despite valid published data.
+            from openf1_fallback import OpenF1FallbackError, trace_for_fastf1_lap
+            tel = trace_for_fastf1_lap(session, lap)
+            logging.warning("telemetry_fallback_used source=openf1")
+        except (OpenF1FallbackError, ImportError, TypeError, ValueError) as fallback_exc:
+            raise ValueError("No usable speed trace is available for this selected lap.") from fallback_exc
 
     if not _validate_trace_data(tel):
         raise ValueError("No usable speed trace is available for this selected lap.") from merged_error

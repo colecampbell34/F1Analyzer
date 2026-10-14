@@ -51,9 +51,11 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
 
 ## Data and performance rules
 
-- Keep FastF1 as the telemetry source. Jolpica is useful for lightweight
-  results metadata but cannot replace FastF1's lap telemetry, circuit data,
-  and timing streams.
+- Keep FastF1 as the primary telemetry source. Jolpica is useful for
+  lightweight results metadata but cannot replace FastF1's lap telemetry,
+  circuit data, and timing streams. OpenF1 may be used only as a selected-lap
+  fallback when FastF1 has loaded valid session/lap metadata but returns an
+  empty car-data stream; do not use it to replace normal FastF1 loads.
 - Request the narrowest FastF1 profile needed by a tab. Do not load telemetry,
   weather, or race-control messages globally by default.
 - Never mutate a cached session, telemetry DataFrame, or figure input in place.
@@ -65,7 +67,10 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   useful empty/error figure rather than failing the entire dashboard.
 - A successful `Session.load(telemetry=True)` is provisional: validate that
   `session.car_data` contains speed samples before caching the session. If it
-  does not, renew FastF1's cache and retry once with a new Session object.
+  does not, renew FastF1's cache and retry once with a new Session object on a
+  persistent runtime. On Vercel, retain valid FastF1 lap metadata and use the
+  optional OpenF1 selected-lap fallback instead of repeating a known empty
+  upstream car stream.
 - Share concurrent selected-lap preparation for the same telemetry profile.
   A car-data trace is an acceptable fallback for speed, throttle, brake, and
   gear analysis when position samples are incomplete; track maps and other

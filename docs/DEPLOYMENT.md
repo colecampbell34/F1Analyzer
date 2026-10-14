@@ -19,6 +19,8 @@ Set these environment variables in Vercel as appropriate:
 | `GEMINI_API_KEY` | Optional | Enables AI Analysis |
 | `FEEDBACK_ADMIN_TOKEN` | Optional | Enables feedback review endpoints |
 | `FASTF1_CACHE_DIR` | Optional | Overrides FastF1 writable cache directory |
+| `OPENF1_FALLBACK_ENABLED` | Optional | Defaults to `1`. Uses OpenF1 only for a selected lap when FastF1 returns an empty car-data stream; set to `0` to disable. |
+| `OPENF1_FALLBACK_TIMEOUT_SECONDS` | Optional | Per-request timeout for the optional OpenF1 fallback; defaults to `8` (range: 1–20). |
 | `AI_CACHE_DIR` | Optional | Overrides local AI cache directory |
 | `FEEDBACK_DIR` | Optional | Overrides local feedback directory |
 | `KV_REST_API_URL` | Recommended | Upstash REST endpoint injected by Vercel for the shared selected-lap cache |

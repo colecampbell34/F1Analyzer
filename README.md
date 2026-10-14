@@ -86,6 +86,8 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 - `LOG_ALL_CALLBACKS=1` - Logs every timed callback.
 - `LOG_SESSION_LOADING=1` - Logs session preload/load behavior.
 - `FASTF1_CACHE_DIR` - Optional runtime cache directory. Defaults to `f1_cache/` locally and `/tmp/f1_cache` on Vercel.
+- `OPENF1_FALLBACK_ENABLED` - Optional, defaults to `1`. OpenF1 is used only when FastF1 has valid session/lap data but an empty car-data stream; set `0` to disable this last-resort selected-lap fallback.
+- `OPENF1_FALLBACK_TIMEOUT_SECONDS` - Optional per-request timeout for the OpenF1 fallback. Defaults to `8` seconds (range: 1–20).
 - `AI_CACHE_DIR` - Optional AI response cache directory. Defaults to `ai_cache/` locally and `/tmp/ai_cache` on Vercel.
 - `FEEDBACK_DIR` - Optional feedback storage directory. Defaults to `feedback/` locally and `/tmp/feedback` on Vercel.
 - `PUBLIC_BASE_URL` - Optional production URL for Open Graph metadata and social share links.
