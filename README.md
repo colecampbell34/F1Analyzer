@@ -20,12 +20,12 @@ like a generic dashboard.
 - Track maps for dominance, braking, and speed overlays.
 - Strategy, race gap, pit stop, tyre degradation, and grid pace views.
 - AI analysis with session-specific telemetry, weather, messages, and lap context.
-- Shareable URLs that preserve session, drivers, active tab, lap mode, lap numbers, and track-map mode.
+- Bookmarkable URLs that preserve session, drivers, active tab, lap mode, lap numbers, and track-map mode.
 - Feedback capture with optional admin review and CSV export.
 
-## Sharing
+## Bookmarks
 
-Use the Share Comparison button to copy a direct link to the current analysis. Shared links include:
+The dashboard URL automatically retains the current analysis state, so a useful view can be bookmarked and returned to later. It includes:
 
 - Year, race, session, drivers
 - Active tab
@@ -90,7 +90,7 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 - `OPENF1_FALLBACK_TIMEOUT_SECONDS` - Optional per-request timeout for the OpenF1 fallback. Defaults to `8` seconds (range: 1–20).
 - `AI_CACHE_DIR` - Optional AI response cache directory. Defaults to `ai_cache/` locally and `/tmp/ai_cache` on Vercel.
 - `FEEDBACK_DIR` - Optional feedback storage directory. Defaults to `feedback/` locally and `/tmp/feedback` on Vercel.
-- `PUBLIC_BASE_URL` - Optional production URL for Open Graph metadata and social share links.
+- `PUBLIC_BASE_URL` - Optional production URL for Open Graph metadata.
 - `ENABLE_VERCEL_ANALYTICS=1` - Opts into Vercel Web Analytics and Speed Insights scripts. They are disabled by default to keep the first frontend load lighter.
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN` - Optional shared Redis cache for prepared selected-lap traces on Vercel; these are the names provided by the Vercel Upstash integration. Direct Upstash connections may instead use `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`. The aliases `F1_ANALYZER_REDIS_REST_URL` and `F1_ANALYZER_REDIS_REST_TOKEN` are also supported.
 - `F1_ANALYZER_SHARED_CACHE_ENABLED=0` - Explicitly disables the shared cache, even when Redis credentials are configured.

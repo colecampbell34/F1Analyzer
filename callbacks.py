@@ -12,12 +12,7 @@ from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import logging
 
-from ux_helpers import (
-    DEFAULT_EXPERIENCE_MODE,
-    VALID_EXPERIENCE_MODES,
-    get_comparison_shortcut_pair,
-    normalize_experience_mode,
-)
+from ux_helpers import get_comparison_shortcut_pair
 from callbacks_shared import (
     _timed_callback,
     _parse_url_state,
@@ -59,44 +54,15 @@ def _register_core_callbacks(app):
     )
 
     @app.callback(
-        Output('experience-mode-store', 'data'),
-        [Input('url', 'search'),
-         Input('experience-mode-control', 'value'),
-         Input('mobile-experience-mode-control', 'value')],
-        State('experience-mode-store', 'data')
-    )
-    def sync_experience_mode(url_search, desktop_mode, mobile_mode, stored_mode):
-        trigger_id = dash.ctx.triggered_id
-        if trigger_id == 'experience-mode-control' and desktop_mode in VALID_EXPERIENCE_MODES:
-            return desktop_mode
-        if trigger_id == 'mobile-experience-mode-control' and mobile_mode in VALID_EXPERIENCE_MODES:
-            return mobile_mode
-
-        url_state = _parse_url_state(url_search)
-        if url_state.get('mode'):
-            return url_state['mode']
-        return normalize_experience_mode(stored_mode, DEFAULT_EXPERIENCE_MODE)
-
-    @app.callback(
-        [Output('experience-mode-control', 'value'),
-         Output('mobile-experience-mode-control', 'value')],
-        Input('experience-mode-store', 'data')
-    )
-    def render_experience_mode_controls(mode):
-        mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
-        return mode, mode
-
-    @app.callback(
         Output('app-root', 'className'),
-        [Input('experience-mode-store', 'data'), Input('replay-focus-store', 'data'),
+        [Input('replay-focus-store', 'data'),
          Input('dashboard-params-store', 'data'),
          Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
          Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
          Input('driver2-dropdown', 'value'), Input('mobile-setup-open-store', 'data')]
     )
-    def update_app_root_class(mode, replay_focus, params, year, race, session_type, driver1, driver2, mobile_setup_open):
-        mode = normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE)
-        classes = ['app-root', f'app-mode-{mode}']
+    def update_app_root_class(replay_focus, params, year, race, session_type, driver1, driver2, mobile_setup_open):
+        classes = ['app-root']
         if mobile_setup_open:
             classes.append('mobile-setup-open')
         if not all([year, race, session_type]):
@@ -651,14 +617,10 @@ def _register_core_callbacks(app):
     def update_loading_status(params, active_tab, _n, _preload_state):
         if not params:
             return (
-                [
-                    html.Span("Select a session and update the dashboard."),
-                    html.Span(
-                        '?',
-                        className='help-tip tip-intermediate',
-                        title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
-                    )
-                ],
+                html.Span(
+                    "Choose a session and click Load analysis.",
+                    title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
+                ),
                 "loading-status-banner status-idle",
                 {'status': 'idle'},
                 True
@@ -679,22 +641,17 @@ def _register_core_callbacks(app):
             text = f"Ready to load {profile} data for {session_label}."
         else:
             text = f"Ready to load {profile} data for {session_label}."
-        return [
-            html.Span(text),
-            html.Span(
-                '?',
-                className='help-tip tip-intermediate',
-                title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
-            )
-        ], f"loading-status-banner status-{state}", status, state not in ('queued', 'loading')
+        return html.Span(
+            text,
+            title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
+        ), f"loading-status-banner status-{state}", status, state not in ('queued', 'loading')
 
     @app.callback(
         Output('graph-summary', 'children'),
         [Input('dashboard-params-store', 'data'),
-         Input('main-tabs', 'value'),
-         Input('experience-mode-store', 'data')]
+         Input('main-tabs', 'value')]
     )
-    def update_graph_summary(params, active_tab, mode):
+    def update_graph_summary(params, active_tab):
         if not params:
             return "No chart loaded yet. Select a session and two drivers."
         tab_label = {
@@ -707,8 +664,7 @@ def _register_core_callbacks(app):
         }.get(active_tab, 'analysis')
         return (
             f"{tab_label.title()} view for {params['year']} {params['race']} "
-            f"{params['session_type']}, comparing {params['driver1']} and {params['driver2']} "
-            f"in {normalize_experience_mode(mode)} mode."
+            f"{params['session_type']}, comparing {params['driver1']} and {params['driver2']}."
         )
 
     @app.callback(
@@ -725,11 +681,11 @@ def _register_core_callbacks(app):
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
-         Input('trackmap-mode', 'value'), Input('experience-mode-store', 'data')],
+         Input('trackmap-mode', 'value')],
         State('url', 'search'),
         prevent_initial_call=True
     )
-    def sync_url_with_dashboard(params, active_tab, d1_lap_value, d2_lap_value, trackmap_mode, mode, current_search):
+    def sync_url_with_dashboard(params, active_tab, d1_lap_value, d2_lap_value, trackmap_mode, current_search):
         if not params:
             raise PreventUpdate
         d1_specific = d1_lap_value not in (None, '', 'fastest')
@@ -740,7 +696,6 @@ def _register_core_callbacks(app):
             'd1_lap': d1_lap_value if d1_specific else None,
             'd2_lap': d2_lap_value if d2_specific else None,
             'trackmap_mode': trackmap_mode,
-            'mode': normalize_experience_mode(mode, DEFAULT_EXPERIENCE_MODE),
         })
         if new_search == (current_search or ''):
             return dash.no_update
@@ -842,12 +797,6 @@ def _register_core_callbacks(app):
         except Exception:
             default_options = [{'label': 'Fastest', 'value': 'fastest'}]
             return default_options, 'fastest', default_options, 'fastest'
-
-    app.clientside_callback(
-        ClientsideFunction(namespace='clientside', function_name='copyToClipboard'),
-        Output('share-toast', 'is_open'),
-        [Input('share-btn', 'n_clicks'), Input('mobile-share-btn', 'n_clicks')]
-    )
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='downloadActiveChart'),

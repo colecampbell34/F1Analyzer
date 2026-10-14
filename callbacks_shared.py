@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from urllib.parse import parse_qs, urlencode
 
 import dash
-from ux_helpers import VALID_EXPERIENCE_MODES, normalize_experience_mode
 
 # Max AI Q&A exchanges kept in browser session storage.
 MAX_AI_HISTORY = 20
@@ -126,8 +125,6 @@ def _parse_url_state(url_search):
 
     trackmap_mode = (query_params.get('trackmap') or [None])[0]
     state['trackmap_mode'] = trackmap_mode if trackmap_mode in VALID_TRACKMAP_MODES else None
-    mode = (query_params.get('mode') or [None])[0]
-    state['mode'] = normalize_experience_mode(mode) if mode in VALID_EXPERIENCE_MODES else None
 
     return state
 
@@ -151,8 +148,6 @@ def _build_url_search(params, active_tab, ui_state=None):
             query[key] = int(ui_state[key])
     if ui_state.get('trackmap_mode') in VALID_TRACKMAP_MODES:
         query['trackmap'] = ui_state['trackmap_mode']
-    if ui_state.get('mode') in VALID_EXPERIENCE_MODES:
-        query['mode'] = ui_state['mode']
 
     clean_query = {key: value for key, value in query.items() if value not in (None, '')}
     return f"?{urlencode(clean_query)}" if clean_query else ""

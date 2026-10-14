@@ -1,58 +1,5 @@
-"""Small UX helpers for modes, glossary text, and comparison shortcuts."""
+"""Safe driver-comparison shortcuts."""
 import math
-
-
-VALID_EXPERIENCE_MODES = {"beginner", "intermediate", "engineer"}
-DEFAULT_EXPERIENCE_MODE = "beginner"
-
-EXPERIENCE_MODE_LABELS = {
-    "beginner": "Beginner",
-    "intermediate": "Intermediate",
-    "engineer": "Engineer",
-}
-
-GLOSSARY = {
-    "delta": "Time gap between two laps or drivers. Negative usually means the selected driver is ahead.",
-    "telemetry": "Car data such as speed, throttle, brake, gear, RPM, position, and time.",
-    "stint": "A run on one tyre set between pit stops.",
-    "tyre_life": "How many laps a tyre set has completed. Older tyres normally lose grip.",
-    "undercut": "Pitting earlier to use fresh tyres and gain time before a rival stops.",
-    "overcut": "Staying out longer and gaining time before stopping later.",
-    "vsc": "Virtual Safety Car, a controlled slow period that changes gaps and strategy.",
-    "drs": "Drag Reduction System, which opens the rear wing in allowed zones to improve straight-line speed.",
-    "degradation": "Lap-time loss as tyres age or overheat.",
-    "dominance": "Track-map colouring that shows where one compared driver is faster than the other.",
-}
-
-
-def normalize_experience_mode(value, default=DEFAULT_EXPERIENCE_MODE):
-    """Return a valid experience mode, falling back to beginner."""
-    value = str(value or "").strip().lower()
-    return value if value in VALID_EXPERIENCE_MODES else default
-
-
-def get_glossary_definition(term):
-    """Return a glossary definition for a term or an empty string."""
-    return GLOSSARY.get(str(term or "").strip().lower(), "")
-
-
-def empty_state_text(session_type=None, mode=DEFAULT_EXPERIENCE_MODE):
-    """Return a concise empty-state instruction tuned to the active mode."""
-    mode = normalize_experience_mode(mode)
-    session_label = f" {session_type}" if session_type else ""
-    if mode == "beginner":
-        return (
-            f"Pick a year, Grand Prix,{session_label} and two drivers, then update the dashboard. "
-            "Start with Top 2 or Teammates if you are not sure who to compare."
-        )
-    if mode == "intermediate":
-        return (
-            "Select a session and driver pair, then update. Shortcuts can quickly choose common comparisons."
-        )
-    return (
-        "Select a session and two drivers, then update the dashboard. First telemetry loads may take up to a minute."
-    )
-
 
 def _abbrs_from_driver_info(driver_info):
     return [

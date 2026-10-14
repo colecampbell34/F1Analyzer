@@ -1,11 +1,8 @@
 from dash import dcc, html
 import dash_bootstrap_components as dbc
-import os
-from urllib.parse import quote_plus
 from graph_config import GRAPH_CONFIG
 from ai_config import AI_ENABLED
 from static_schedule import get_static_years
-from ux_helpers import DEFAULT_EXPERIENCE_MODE
 
 
 # Tab graph heights by view.
@@ -28,31 +25,6 @@ DISCLAIMER = html.Div([
 TAB_STYLE          = {'backgroundColor': '#222', 'color': 'white'}
 TAB_SELECTED_STYLE = {'backgroundColor': '#ff0000', 'color': 'white'}
 
-MODE_OPTIONS = [
-    {'label': 'Beginner', 'value': 'beginner'},
-    {'label': 'Intermediate', 'value': 'intermediate'},
-    {'label': 'Engineer', 'value': 'engineer'},
-]
-
-REPO_URL = "https://github.com/colecampbell34/F1Analyzer"
-PUBLIC_SHARE_URL = os.getenv('PUBLIC_BASE_URL', REPO_URL).rstrip('/') or REPO_URL
-PUBLIC_SHARE_URL_ENCODED = quote_plus(PUBLIC_SHARE_URL)
-
-
-def _mode_selector(component_id, compact=False):
-    return dbc.RadioItems(
-        id=component_id,
-        options=MODE_OPTIONS,
-        value=DEFAULT_EXPERIENCE_MODE,
-        inline=True,
-        className='experience-mode-control',
-        inputClassName='experience-mode-input',
-        labelClassName='experience-mode-label',
-        persistence=False,
-        style={'fontSize': '0.72rem' if compact else '0.78rem'}
-    )
-
-
 def _shortcut_buttons(prefix=''):
     id_prefix = f"{prefix}-" if prefix else ""
     return html.Div([
@@ -63,28 +35,13 @@ def _shortcut_buttons(prefix=''):
     ], className='comparison-shortcuts', role='group', **{'aria-label': 'Comparison shortcuts'})
 
 
-def _help_tip(text, level='beginner'):
-    """Mode-aware inline help marker. Beginner sees all; Intermediate sees advanced tips only."""
-    class_name = 'help-tip tip-intermediate' if level == 'intermediate' else 'help-tip tip-beginner-only'
-    return html.Span('?', className=class_name, title=text)
+def _label_with_tip(label, tip, *_unused, **style):
+    """A readable label whose native hover preserves contextual help without visual clutter."""
+    return html.Span(label, className='label-with-tip', title=tip, style=style or None)
 
 
-def _label_with_tip(label, tip, level='beginner', **style):
-    return html.Span([
-        html.Span(label),
-        _help_tip(tip, level)
-    ], className='label-with-tip', style=style or None)
-
-
-def _tab_help_tip(text, level='beginner'):
-    return _help_tip(text, level)
-
-
-def _tab_label(label, tip, level='beginner'):
-    return html.Span([
-        html.Span(label, className='tab-label-title'),
-        _tab_help_tip(tip, level)
-    ], className='tab-label-with-tip')
+def _tab_label(label, tip, *_unused):
+    return html.Span(label, className='tab-label-with-tip', title=tip)
 
 
 # Reusable empty-state graph placeholder.
@@ -104,7 +61,7 @@ def _empty_state(graph_id, height='68vh'):
                 'xaxis': {'visible': False},
                 'yaxis': {'visible': False},
                 'annotations': [{
-                    'text': 'Select a session and two drivers,<br>then click "Update Dashboard"<br><br><span style="font-size: 13px; color: #888;"><i>Note: Loading a session for the very first time<br>may take up to a minute to cache the raw telemetry.</i></span>',
+                    'text': 'Choose a session and two drivers,<br>then click "Load analysis"<br><br><span style="font-size: 13px; color: #888;"><i>Loading a session for the first time<br>may take up to a minute while telemetry is cached.</i></span>',
                     'showarrow': False,
                     'font': {'size': 15, 'color': '#ccc'},
                     'xref': 'paper', 'yref': 'paper', 'x': 0.5, 'y': 0.5
@@ -190,99 +147,81 @@ sidebar = html.Div([
             html.Span("SESSION BUILDER"),
             html.Span("01", className='section-index'),
         ], className='section-heading'),
-        html.Div([
-            html.Div(
-                _label_with_tip(
-                    "Experience",
-                    "Beginner adds more inline explanations. Intermediate keeps only harder tips. Engineer hides tips and keeps the workspace dense.",
-                    'intermediate'
-                ),
-                className='sidebar-control-label',
-                style={'fontSize': '0.72rem', 'color': '#aaa', 'marginBottom': '0.25rem'}
-            ),
-            _mode_selector('experience-mode-control')
-        ], className='experience-mode-wrap'),
         html.Hr(className='rail-divider'),
     ], className='sidebar-header', style={'flex': '0 0 auto'}),
 
-    # Scrollable Content (Controls + Leaderboard)
+    # Scrollable controls are organized around the normal session-to-analysis flow.
     html.Div([
-        _control_field(YEAR_LABEL, dcc.Dropdown(
-            id='year-dropdown',
-            options=[{'label': str(y), 'value': y} for y in get_static_years()],
-            value=max(get_static_years()),
-            persistence=True, persistence_type='session',
-            searchable=True,
-            style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}
-        ), 'year-field'),
-
-        _control_field(RACE_LABEL, dcc.Loading(type='dot', color='#ff0000', children=[
-            dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
-                         searchable=True,
-                         style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-        ]), 'race-field'),
-
-        _control_field(SESSION_LABEL, dcc.Loading(type='dot', color='#ff0000', children=[
-            dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
-                         searchable=True,
-                         style={'color': 'black', 'fontSize': '0.9rem', 'marginBottom': '0.75rem'}),
-        ]), 'session-field'),
-        dbc.Button([html.I(className="fas fa-history me-2"), "Latest Race",
-                    _help_tip("Loads the most recent completed race and defaults to the top two classified drivers.", 'beginner')],
-                   id='latest-race-btn', color='danger', size='sm', n_clicks=0,
-                   title='Select the most recent completed race and default to the top two drivers',
-                   className='sidebar-latest-btn',
-                   style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '0.75rem'}),
-
-        # Driver selectors.
-        _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
-        _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
         html.Div([
-            html.Div(
-                _label_with_tip(
-                    "Quick Compare",
-                    "One-click driver pairings. Top 2 uses classification order, Closest uses the tightest classified timing gap when available.",
-                    'intermediate'
+            html.Div([
+                html.Span("01", className='workflow-step'),
+                html.Span("Choose a session", className='workflow-title'),
+            ], className='workflow-heading'),
+            _control_field(YEAR_LABEL, dcc.Dropdown(
+                id='year-dropdown',
+                options=[{'label': str(y), 'value': y} for y in get_static_years()],
+                value=max(get_static_years()),
+                persistence=True, persistence_type='session',
+                searchable=True,
+                style={'color': 'black', 'fontSize': '0.9rem'}
+            ), 'year-field'),
+            _control_field(RACE_LABEL, dcc.Loading(type='dot', color='#ff0000', children=[
+                dcc.Dropdown(id='race-dropdown', persistence=True, persistence_type='session',
+                             searchable=True, style={'color': 'black', 'fontSize': '0.9rem'}),
+            ]), 'race-field'),
+            _control_field(SESSION_LABEL, dcc.Loading(type='dot', color='#ff0000', children=[
+                dcc.Dropdown(id='session-dropdown', persistence=True, persistence_type='session',
+                             searchable=True, style={'color': 'black', 'fontSize': '0.9rem'}),
+            ]), 'session-field'),
+            dbc.Button([html.I(className="fas fa-history me-2"), "Use latest race"],
+                       id='latest-race-btn', color='secondary', outline=True, size='sm', n_clicks=0,
+                       title='Choose the most recent completed race and its top two classified drivers',
+                       className='sidebar-latest-btn'),
+        ], className='workflow-section workflow-session'),
+
+        html.Div([
+            html.Div([
+                html.Span("02", className='workflow-step'),
+                html.Span("Choose drivers", className='workflow-title'),
+            ], className='workflow-heading'),
+            _driver_selector("Driver 1", 'driver1-dropdown', 'teammate1-btn'),
+            _driver_selector("Driver 2", 'driver2-dropdown', 'teammate2-btn'),
+            html.Div([
+                html.Div(
+                    _label_with_tip(
+                        "Quick picks",
+                        "Top 2 uses classification order. Closest uses the tightest classified timing gap when timing data is available."
+                    ),
+                    className='sidebar-control-label',
                 ),
-                className='sidebar-control-label',
-                style={'fontSize': '0.72rem', 'color': '#aaa', 'marginBottom': '0.25rem'}
-            ),
-            _shortcut_buttons()
-        ], className='shortcut-wrap'),
+                _shortcut_buttons()
+            ], className='shortcut-wrap'),
+        ], className='workflow-section workflow-drivers'),
 
-        dbc.Button(["Update Dashboard",
-                    _help_tip("Starts loading the selected session and updates every chart with the selected drivers.", 'beginner')],
-                   id='update-dashboard-btn', color='success', size='sm', n_clicks=0,
-                   className='sidebar-update-btn',
-                   title='Load the selected session and driver comparison',
-                   style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
-        html.Hr(className='sidebar-divider'),
-        html.H4(_label_with_tip("Session Leaderboard", "Shows the session order or best lap ranking so you can pick useful driver comparisons."), className='sidebar-leaderboard-title'),
-        dbc.Button(["Update Leaderboard",
-                    _help_tip("Refreshes the session order without changing the main comparison.", 'beginner')],
-                   id='update-leaderboard-btn', color='success', size='sm', n_clicks=0,
-                   className='sidebar-leaderboard-btn',
-                   style={'fontWeight': 'bold', 'width': '100%', 'marginTop': '5px', 'marginBottom': '10px'}),
         html.Div([
-            dcc.Loading(type='dot', color='#ff0000', children=[
-                html.Div(id='leaderboard-container')
-            ])
-        ], className='sidebar-leaderboard', style={'minHeight': '0'})
+            html.Div("03", className='workflow-step'),
+            html.Div([
+                html.Strong("Load your analysis"),
+                html.Small("Telemetry, pace, strategy, and all available session views will update.")
+            ], className='workflow-submit-copy'),
+            dbc.Button("Load analysis", id='update-dashboard-btn', color='danger', n_clicks=0,
+                       className='sidebar-update-btn',
+                       title='Load the selected session and driver comparison'),
+        ], className='workflow-submit'),
+
+        html.Details([
+            html.Summary("Optional: session leaderboard",
+                         title='View session order or best-lap ranking before choosing drivers.'),
+            html.Div([
+                dbc.Button("Load leaderboard", id='update-leaderboard-btn', color='secondary', outline=True,
+                           size='sm', n_clicks=0, className='sidebar-leaderboard-btn',
+                           title='Refresh the session order without changing the main comparison'),
+                dcc.Loading(type='dot', color='#ff0000', children=[
+                    html.Div(id='leaderboard-container')
+                ])
+            ], className='sidebar-leaderboard')
+        ], className='sidebar-optional-section')
     ], className='sidebar-controls', style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
-
-    html.Div([
-        html.Hr(className='rail-divider'),
-        dbc.Button([html.I(className="fas fa-share-alt me-2"), "Share Comparison"],
-                   id='share-btn', color='info', size='sm', n_clicks=0,
-                   title='Copy a shareable link for the current comparison',
-                   style={'width': '100%', 'fontWeight': 'bold', 'marginBottom': '10px'}),
-        html.Div([
-            html.A(html.I(className="fab fa-github fa-lg"), href="https://github.com/colecampbell34/F1Analyzer", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
-            html.A(html.I(className="fab fa-twitter fa-lg"), href=f"https://twitter.com/intent/tweet?text=Check%20out%20this%20F1%20Analysis!&url={PUBLIC_SHARE_URL_ENCODED}", target="_blank", style={'color': '#888', 'marginRight': '15px'}),
-            html.A(html.I(className="fab fa-reddit fa-lg"), href=f"https://reddit.com/submit?url={PUBLIC_SHARE_URL_ENCODED}&title=Advanced%20F1%20Telemetry%20Dashboard", target="_blank", style={'color': '#888'}),
-        ], style={'textAlign': 'center', 'paddingBottom': '5px'}),
-        html.Small("Built on FastF1 live timing data", className='source-note'),
-    ], className='sidebar-footer', style={'flex': '0 0 auto'})
 
 ], className='sidebar-panel', style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
           "display": "flex", "flexDirection": "column", "overflow": "hidden"})
@@ -342,13 +281,7 @@ telemetry_controls = html.Div([
                        style={'fontWeight': 'bold', 'width': '100%'})
         ], md=2, xs=6, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
         dbc.Col([
-            dbc.Button([
-                html.Span("Replay Focus"),
-                _help_tip(
-                    "Expands the selected-lap replay workspace without loading extra data. Use it after the telemetry tab has loaded.",
-                    'intermediate'
-                )
-            ], id='replay-focus-btn', color='danger', outline=True, size='sm', n_clicks=0,
+            dbc.Button("Replay Focus", id='replay-focus-btn', color='danger', outline=True, size='sm', n_clicks=0,
                        title='Expand the lap replay workspace',
                        style={'fontWeight': 'bold', 'width': '100%'})
         ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
@@ -368,17 +301,14 @@ mobile_companion = html.Div([
         html.Div(id='mobile-session-summary', className='mobile-session-summary',
                  children='Choose a session and comparison')
     ], className='mobile-companion-title'),
-    _mode_selector('mobile-experience-mode-control', compact=True),
     _shortcut_buttons('mobile'),
     html.Div([
         dbc.Button("Feedback", id='mobile-open-feedback-modal-btn', color='danger', size='sm', n_clicks=0,
                    title='Send feedback'),
         dbc.Button("Edit", id='mobile-edit-selection-btn', color='secondary', size='sm', n_clicks=0,
                    title='Show or hide session controls'),
-        dbc.Button("Update", id='mobile-update-dashboard-btn', color='success', size='sm', n_clicks=0,
-                   title='Load the selected comparison'),
-        dbc.Button("Share", id='mobile-share-btn', color='info', size='sm', n_clicks=0,
-                   title='Copy shareable link')
+        dbc.Button("Load", id='mobile-update-dashboard-btn', color='danger', size='sm', n_clicks=0,
+                   title='Load the selected comparison')
     ], className='mobile-action-buttons')
 ], className='mobile-companion')
 
@@ -396,14 +326,13 @@ content = html.Main([
     ], className='workspace-header'),
     html.Div([
         html.Div(id='loading-status-banner', className='loading-status-banner',
-                 children=[
-                     html.Span('Select a session and update the dashboard.'),
-                     _help_tip("This status tracks whether the selected session profile is idle, loading, cached, or failed.", 'intermediate')
-                 ],
+                 children=html.Span(
+                     'Choose a session and click Load analysis.',
+                     title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
+                 ),
                  role='status', **{'aria-live': 'polite'}),
         html.Div([
-            dbc.Button([html.I(className='fas fa-download me-1'), "Download Chart",
-                        _help_tip("Downloads the currently visible chart as a PNG image.", 'beginner')],
+            dbc.Button([html.I(className='fas fa-download me-1'), "Download Chart"],
                        id='download-active-chart-btn', color='secondary', outline=True, size='sm',
                        n_clicks=0, title='Download the active Plotly chart as a PNG'),
         ], className='export-actions'),
@@ -592,10 +521,9 @@ content = html.Main([
                                    disabled=not AI_ENABLED)
                     ], style={'marginBottom': '0.5rem'}),
                     html.Div([
-                        html.Span("AI can make mistakes. Check important info."),
-                        _help_tip(
-                            "AI answers use the currently loaded session context. If you change drivers or sessions, update the dashboard first.",
-                            'intermediate'
+                        html.Span(
+                            "AI can make mistakes. Check important info.",
+                            title="AI answers use the currently loaded session context. If you change drivers or sessions, load the analysis first."
                         )
                     ],
                              style={'fontSize': '0.75rem', 'color': '#888', 'textAlign': 'center', 'marginBottom': '0.75rem'}),
@@ -683,7 +611,7 @@ app_layout = dbc.Container([
                     )
                 ], md=7, xs=12),
                 dbc.Col([
-                    dbc.Label("Experience Rating", style={'fontSize': '0.85rem'}),
+                    dbc.Label("Dashboard rating", style={'fontSize': '0.85rem'}),
                     dbc.Select(
                         id='feedback-rating',
                         options=[
@@ -725,16 +653,6 @@ app_layout = dbc.Container([
     ], id='feedback-modal', is_open=False, size='lg', centered=True),
 
     dbc.Toast(
-        "Link copied to clipboard!",
-        id="share-toast",
-        header="Shared",
-        is_open=False,
-        dismissable=True,
-        icon="success",
-        duration=3000,
-        style={"position": "fixed", "top": 10, "right": 10, "width": 250, "zIndex": 9999},
-    ),
-    dbc.Toast(
         id="teammate-toast",
         header="Teammate Shortcut",
         is_open=False,
@@ -764,7 +682,6 @@ app_layout = dbc.Container([
        className='phone-disclaimer-modal'),
 
     dcc.Store(id='dashboard-params-store', storage_type='session'),
-    dcc.Store(id='experience-mode-store', storage_type='local', data=DEFAULT_EXPERIENCE_MODE),
     dcc.Store(id='phone-disclaimer-store', storage_type='local', data={}),
     dcc.Store(id='replay-focus-store', storage_type='memory', data=False),
     dcc.Store(id='latest-race-store', storage_type='memory'),
@@ -786,5 +703,5 @@ app_layout = dbc.Container([
     dcc.Store(id='feedback-refresh-store'),
     dcc.Download(id='feedback-download'),
     dcc.ConfirmDialog(id='error-dialog', message='')
-], id='app-root', fluid=True, className='app-root app-mode-beginner',
+], id='app-root', fluid=True, className='app-root',
    style={"padding": "0px", "height": "100vh", "overflow": "hidden"})

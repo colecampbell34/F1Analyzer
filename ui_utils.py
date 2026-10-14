@@ -4,7 +4,6 @@ from urllib.parse import parse_qs
 import flask
 from dash import html
 import dash_bootstrap_components as dbc
-from ux_helpers import get_glossary_definition
 
 def _friendly_error(e):
     """Translate cryptic FastF1/network errors to user-friendly messages."""
@@ -253,9 +252,6 @@ def _build_perf_review_panel(snapshot, jobs, cache_stats):
         ], className='g-3')
     ])
 
-
-def _glossary_tooltip_text(term):
-    return get_glossary_definition(term)
 
 def _build_leaderboard_children(session, session_name, year=None, race=None):
     import pandas as pd

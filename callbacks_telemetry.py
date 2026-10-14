@@ -7,6 +7,24 @@ from dash.exceptions import PreventUpdate
 from callbacks_shared import _active_tab_ready, _figure_cache_key, _lap_dropdown_to_mode, _timed_callback
 
 
+def _delta_progress_values(distances, values):
+    """Normalize either FastF1 or fallback delta distances to 0..1 lap progress."""
+    import numpy as np
+
+    distance_values = np.asarray(distances, dtype=float)
+    delta_values = np.asarray(values, dtype=float)
+    valid = np.isfinite(distance_values) & np.isfinite(delta_values)
+    distance_values = distance_values[valid]
+    delta_values = delta_values[valid]
+    if len(distance_values) < 2:
+        raise ValueError("Delta trace does not contain enough valid points.")
+    start = float(distance_values.min())
+    span = float(distance_values.max() - start)
+    if span <= 0:
+        raise ValueError("Delta trace does not cover a usable lap distance.")
+    return (distance_values - start) / span, delta_values
+
+
 def register_telemetry_callbacks(app):
     """Register all telemetry-related callbacks."""
 
@@ -87,6 +105,12 @@ def register_telemetry_callbacks(app):
             c1, c2 = cmp['c1'], cmp['c2']
             lap1, lap2 = cmp['lap1'], cmp['lap2']
             tel1, tel2 = cmp['tel1'], cmp['tel2']
+            # Preserve original distances for the fallback delta calculation.
+            # The replay stores normalized distance, but delta sources can be
+            # FastF1 (metres) or a fallback trace (normalized), so the client
+            # receives a separate, unambiguous progress scale below.
+            delta_tel1 = tel1.copy()
+            delta_tel2 = tel2.copy()
             
             lap1_dist_max = 0
             lap2_dist_max = 0
@@ -146,20 +170,23 @@ def register_telemetry_callbacks(app):
             delta_time, ref_tel, _ = _compute_lap_delta(
                 lap2,
                 lap1,
-                reference_tel=tel2,
-                compare_tel=tel1,
+                reference_tel=delta_tel2,
+                compare_tel=delta_tel1,
             )
             delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
             delta_vals = -pd.Series(delta_time).astype(float).to_numpy()
-            valid_delta = np.isfinite(delta_dist) & np.isfinite(delta_vals)
+            delta_progress, delta_values = _delta_progress_values(delta_dist, delta_vals)
 
             store = {
                 'track': {'x': track_x.tolist(), 'y': track_y.tolist()},
                 'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['LapTime'].total_seconds()), 'dist_max': float(lap1_dist_max)},
                 'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['LapTime'].total_seconds()), 'dist_max': float(lap2_dist_max)},
                 'delta': {
-                    'dist': delta_dist[valid_delta].tolist(),
-                    'value': delta_vals[valid_delta].tolist(),
+                    # Always use 0..1 lap progress. This works identically for
+                    # FastF1's metre-based trace and the distance-normalized
+                    # fallback trace used when car telemetry is incomplete.
+                    'progress': delta_progress.tolist(),
+                    'value': delta_values.tolist(),
                     'primary': d1,
                     'secondary': d2,
                     'reference': 'd2',

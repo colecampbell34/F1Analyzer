@@ -209,14 +209,6 @@ body,
     filter: brightness(1.1);
 }
 
-.source-note {
-    display: block;
-    margin-top: 0.65rem;
-    color: #777d84;
-    font-size: 0.62rem;
-    letter-spacing: 0.025em;
-}
-
 .content-col {
     background: rgba(9, 10, 12, 0.82);
 }
@@ -449,7 +441,6 @@ div[class*="tab-container"] {
     .product-mark,
     .product-subtitle,
     .section-heading,
-    .source-note,
     .workspace-provenance {
         display: none;
     }

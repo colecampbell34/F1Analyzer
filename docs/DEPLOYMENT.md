@@ -15,7 +15,7 @@ Set these environment variables in Vercel as appropriate:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph/share URL |
+| `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph URL |
 | `GEMINI_API_KEY` | Optional | Enables AI Analysis |
 | `FEEDBACK_ADMIN_TOKEN` | Optional | Enables feedback review endpoints |
 | `FASTF1_CACHE_DIR` | Optional | Overrides FastF1 writable cache directory |

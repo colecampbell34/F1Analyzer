@@ -64,6 +64,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             const refSeries = (miniStore.delta && miniStore.delta.reference === 'd1') ? d1 : d2;
             const tSec = getTimeAtDistance(refSeries, hoverDist);
+            const hoverProgress = Math.max(0, Math.min(1, hoverDist / Math.max(1e-6, refSeries.dist_max || 1)));
 
             const interpXY = function(series, t) {
                 const ts = series.t || [], xs = series.x || [], ys = series.y || [];
@@ -85,7 +86,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             };
             
             // Update Live Dashboard during hover (always responsive)
-            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, true, hoverDist);
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, true, hoverProgress);
 
             const p1 = interpXY(d1, tSec);
             const p2 = interpXY(d2, tSec);
@@ -190,8 +191,6 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             if (trigger.includes('play-lap-btn')) {
                 tSec = 0; lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause';
-                const dash = document.getElementById('live-telemetry-dashboard');
-                if (dash) delete dash.dataset.lastHalfSecond;
             } else if (trigger.includes('pause-resume-lap-btn')) {
                 if (intervalDisabled) { lastUpdate = now; newIntervalDisabled = false; btnText = 'Pause'; }
                 else { newIntervalDisabled = true; btnText = 'Resume'; }
@@ -203,14 +202,14 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             if (tSec >= maxLap) { tSec = maxLap; newIntervalDisabled = true; btnText = 'Pause'; }
 
-            // Update Live Dashboard (throttled during playback)
+            // Update Live Dashboard on every replay frame.
             const deltaRef = (miniStore.delta && miniStore.delta.reference === 'd1') ? miniStore.d1 : miniStore.d2;
-            const playbackDistM = interpMetric(
+            const playbackProgress = interpMetric(
                 deltaRef,
                 Math.min(tSec, deltaRef.lap_s || tSec),
                 'dist'
-            ) * (deltaRef.dist_max || 1);
-            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false, playbackDistM);
+            );
+            window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false, playbackProgress);
 
             // 1. Update Mini Map
             const p1 = interpXY(miniStore.d1, tSec);
@@ -302,15 +301,13 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             ];
         },
 
-        updateLiveDashboard: function(tSec, miniStore, hoverMode, deltaDistanceMeters) {
+        updateLiveDashboard: function(tSec, miniStore, hoverMode, deltaProgress) {
             const dash = document.getElementById('live-telemetry-dashboard');
             if (!dash) return;
             if (!miniStore || !miniStore.d1 || !miniStore.d2) {
                 dash.style.display = 'none';
-                delete dash.dataset.lastHalfSecond;
                 return;
             }
-            if (dash.style.display === 'none') delete dash.dataset.lastHalfSecond;
             dash.style.display = 'block';
 
             const binarySearch = function(arr, val) {
@@ -349,49 +346,46 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             updateDriver('d1', miniStore.d1, tSec);
             updateDriver('d2', miniStore.d2, tSec);
 
-            // Delta at distance - Throttle to update only twice per second during playback,
-            // but update every frame during hover for responsiveness.
-            const currentHalfSecond = Math.floor(tSec * 2);
-            if (dash.dataset.lastHalfSecond !== String(currentHalfSecond) || hoverMode) {
-                dash.dataset.lastHalfSecond = currentHalfSecond;
-                const getDeltaAtDistance = (targetD) => {
+            // Delta uses a 0..1 lap-progress scale so its lookup remains correct
+            // regardless of whether FastF1 or the fallback source generated it.
+            // The lookup is cheap, so update it on every replay frame and hover.
+            const getDeltaAtProgress = (targetProgress) => {
                     const delta = miniStore.delta || {};
-                    const d = delta.dist || [], values = delta.value || [];
-                    if (d.length < 2 || d.length !== values.length) return null;
-                    if (targetD <= d[0]) return values[0];
-                    if (targetD >= d[d.length - 1]) return values[values.length - 1];
-                    let low = 0, high = d.length - 1;
+                    const progress = delta.progress || [], values = delta.value || [];
+                    if (progress.length < 2 || progress.length !== values.length) return null;
+                    if (targetProgress <= progress[0]) return values[0];
+                    if (targetProgress >= progress[progress.length - 1]) return values[values.length - 1];
+                    let low = 0, high = progress.length - 1;
                     while (low <= high) {
                         const mid = (low + high) >>> 1;
-                        if (d[mid] < targetD) low = mid + 1;
-                        else if (d[mid] > targetD) high = mid - 1;
+                        if (progress[mid] < targetProgress) low = mid + 1;
+                        else if (progress[mid] > targetProgress) high = mid - 1;
                         else return values[mid];
                     }
-                    const ratio = (targetD - d[low - 1]) / Math.max(1e-6, (d[low] - d[low - 1]));
+                    const ratio = (targetProgress - progress[low - 1]) / Math.max(1e-6, (progress[low] - progress[low - 1]));
                     return values[low - 1] + ratio * (values[low] - values[low - 1]);
-                };
+            };
 
-                const d1 = miniStore.d1, d2 = miniStore.d2;
-                const primaryName = (miniStore.delta && miniStore.delta.primary) || d1.name;
-                const secondaryName = (miniStore.delta && miniStore.delta.secondary) || d2.name;
-                let targetDistance = deltaDistanceMeters;
-                if (targetDistance === null || targetDistance === undefined) {
-                    const refSeries = (miniStore.delta && miniStore.delta.reference === 'd1') ? d1 : d2;
-                    targetDistance = interpMetric(
-                        refSeries,
-                        Math.min(tSec, refSeries.lap_s || tSec),
-                        'dist'
-                    ) * (refSeries.dist_max || 1);
-                }
-                const delta = getDeltaAtDistance(targetDistance);
-                const deltaEl = document.getElementById('live-delta-value');
-                const deltaLabelEl = document.querySelector('.delta-label');
+            const d1 = miniStore.d1, d2 = miniStore.d2;
+            const primaryName = (miniStore.delta && miniStore.delta.primary) || d1.name;
+            const secondaryName = (miniStore.delta && miniStore.delta.secondary) || d2.name;
+            let targetProgress = deltaProgress;
+            if (targetProgress === null || targetProgress === undefined) {
+                const refSeries = (miniStore.delta && miniStore.delta.reference === 'd1') ? d1 : d2;
+                targetProgress = interpMetric(
+                    refSeries,
+                    Math.min(tSec, refSeries.lap_s || tSec),
+                    'dist'
+                );
+            }
+            const delta = getDeltaAtProgress(Math.max(0, Math.min(1, targetProgress)));
+            const deltaEl = document.getElementById('live-delta-value');
+            const deltaLabelEl = document.querySelector('.delta-label');
 
-                if (deltaEl && deltaLabelEl && delta !== null) {
-                    deltaLabelEl.innerText = `${primaryName || 'D1'} GAP TO ${secondaryName || 'D2'}`;
-                    deltaEl.innerText = (delta >= 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
-                    deltaEl.style.color = delta >= 0 ? '#00ff00' : '#ff4444';
-                }
+            if (deltaEl && deltaLabelEl && delta !== null) {
+                deltaLabelEl.innerText = `${primaryName || 'D1'} GAP TO ${secondaryName || 'D2'}`;
+                deltaEl.innerText = (delta >= 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
+                deltaEl.style.color = delta >= 0 ? '#00ff00' : '#ff4444';
             }
         },
 
@@ -511,20 +505,6 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             return current_index;
         },
         
-        copyToClipboard: function(n_clicks, mobile_clicks) {
-            const ctx = window.dash_clientside.callback_context || {};
-            const trigger = (ctx.triggered && ctx.triggered[0] && ctx.triggered[0].prop_id) || '';
-            if (!trigger || ((n_clicks || 0) + (mobile_clicks || 0)) === 0) return false;
-            const url = window.location.href;
-            const el = document.createElement('textarea');
-            el.value = url;
-            document.body.appendChild(el);
-            el.select();
-            document.execCommand('copy');
-            document.body.removeChild(el);
-            return true;
-        },
-
         graphIdForTab: function(activeTab) {
             const ids = {
                 'tab-telemetry': 'speed-graph',

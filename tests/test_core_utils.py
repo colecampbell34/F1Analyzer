@@ -14,6 +14,7 @@ import ai_cache
 import callbacks_shared
 import callbacks_ai
 import callbacks_tabs
+import callbacks_telemetry
 import telemetry_prep
 import ux_helpers
 import graphs
@@ -135,7 +136,15 @@ class TestUrlState(unittest.TestCase):
         self.assertEqual(parsed["d1_lap"], 12)
         self.assertEqual(parsed["trackmap_mode"], "speed")
 
-    def test_url_round_trip_includes_experience_mode(self):
+    def test_invalid_url_view_state_is_ignored(self):
+        parsed = callbacks_shared._parse_url_state("?tab=bad&d1_lap_mode=bad&d1_lap=-2&trackmap=bad&mode=bad")
+        self.assertIsNone(parsed["tab"])
+        self.assertIsNone(parsed["d1_lap_mode"])
+        self.assertIsNone(parsed["d1_lap"])
+        self.assertIsNone(parsed["trackmap_mode"])
+        self.assertNotIn("mode", parsed)
+
+    def test_url_omits_legacy_experience_mode(self):
         params = {
             "year": 2025,
             "race": "British Grand Prix",
@@ -144,16 +153,8 @@ class TestUrlState(unittest.TestCase):
             "driver2": "PIA",
         }
         search = callbacks_shared._build_url_search(params, "tab-telemetry", {"mode": "engineer"})
-        parsed = callbacks_shared._parse_url_state(search)
-        self.assertEqual(parsed["mode"], "engineer")
-
-    def test_invalid_url_view_state_is_ignored(self):
-        parsed = callbacks_shared._parse_url_state("?tab=bad&d1_lap_mode=bad&d1_lap=-2&trackmap=bad&mode=bad")
-        self.assertIsNone(parsed["tab"])
-        self.assertIsNone(parsed["d1_lap_mode"])
-        self.assertIsNone(parsed["d1_lap"])
-        self.assertIsNone(parsed["trackmap_mode"])
-        self.assertIsNone(parsed["mode"])
+        self.assertNotIn("mode=", search)
+        self.assertNotIn("mode", callbacks_shared._parse_url_state("?mode=engineer"))
 
     def test_figure_cache_key_changes_with_tab_inputs(self):
         params = {
@@ -173,14 +174,6 @@ class TestUrlState(unittest.TestCase):
 
 
 class TestUxHelpers(unittest.TestCase):
-    def test_experience_mode_normalizes_to_beginner(self):
-        self.assertEqual(ux_helpers.normalize_experience_mode("ENGINEER"), "engineer")
-        self.assertEqual(ux_helpers.normalize_experience_mode("bad"), "beginner")
-
-    def test_glossary_and_empty_state(self):
-        self.assertIn("Time gap", ux_helpers.get_glossary_definition("delta"))
-        self.assertIn("Top 2", ux_helpers.empty_state_text("Race", "beginner"))
-
     def test_comparison_shortcuts_pick_teammate_and_closest(self):
         driver_info = [
             {"abbr": "VER", "team": "Red Bull"},
@@ -749,6 +742,19 @@ class TestSharedCacheTransport(unittest.TestCase):
 
 
 class TestDeltaChartSegments(unittest.TestCase):
+    def test_live_delta_progress_normalizes_metre_and_fallback_traces(self):
+        progress, values = callbacks_telemetry._delta_progress_values(
+            [125.0, 562.5, 1000.0], [0.0, 0.18, 0.42]
+        )
+        self.assertTrue(np.allclose(progress, [0.0, 0.5, 1.0]))
+        self.assertTrue(np.allclose(values, [0.0, 0.18, 0.42]))
+
+        fallback_progress, fallback_values = callbacks_telemetry._delta_progress_values(
+            [0.0, 0.5, 1.0], [0.0, 0.18, 0.42]
+        )
+        self.assertTrue(np.allclose(fallback_progress, progress))
+        self.assertTrue(np.allclose(fallback_values, values))
+
     def test_car_trace_delta_fallback_preserves_a_usable_gap_series(self):
         points = list(range(12))
         reference = pd.DataFrame({

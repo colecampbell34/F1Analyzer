@@ -29,8 +29,6 @@ META_TAGS = [
     {"property": "og:title", "content": "F1 Analyzer — Race Intelligence"},
     {"property": "og:description", "content": "Compare Formula 1 laps, race pace, strategy, and track position using FastF1 live timing data."},
     {"property": "og:type", "content": "website"},
-    {"name": "twitter:card", "content": "summary_large_image"},
-    {"name": "twitter:site", "content": "@F1Analyzer"},
     {"name": "theme-color", "content": "#0a0b0d"}
 ]
 
