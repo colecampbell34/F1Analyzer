@@ -272,6 +272,32 @@ def get_latest_race_session_default(now=None, first_year=2018):
     return latest
 
 
+def _session_has_usable_car_telemetry(session):
+    """Return whether FastF1 loaded car-speed samples for at least one car.
+
+    ``Session.load(telemetry=True)`` can complete without raising when the F1
+    timing endpoint returns an incomplete car-data payload. Treating that as a
+    successful session load poisons the in-process cache: every selected lap
+    then appears to have no speed trace until the Vercel instance is replaced.
+    """
+    try:
+        car_data = session.car_data
+        traces = car_data.values() if hasattr(car_data, 'values') else ()
+    except Exception:
+        return False
+
+    for trace in traces:
+        try:
+            if trace is None or 'Speed' not in trace.columns:
+                continue
+            speeds = pd.to_numeric(trace['Speed'], errors='coerce')
+            if int(speeds.notna().sum()) >= 6:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
 def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """LRU-cached session loader with selective streams and telemetry retries.
@@ -302,18 +328,38 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
     with _GRANULAR_LOAD_LOCK:
         if telemetry:
             failures = []
-            for attempt in range(TELEMETRY_LOAD_ATTEMPTS):
-                session = _new_session()
-                try:
-                    return _load(session, include_telemetry=True)
-                except Exception as exc:
-                    failures.append(exc)
-                    logging.warning(
-                        "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
-                        attempt + 1, TELEMETRY_LOAD_ATTEMPTS, year, race, session_name, exc,
-                    )
-                    if attempt + 1 < TELEMETRY_LOAD_ATTEMPTS:
-                        time.sleep(0.15 * (attempt + 1))
+            cache_renewed = False
+            try:
+                for attempt in range(TELEMETRY_LOAD_ATTEMPTS):
+                    if attempt:
+                        # FastF1 can cache a syntactically valid but empty car
+                        # data response. On the retry, bypass both cache stages
+                        # so a new Session does not simply consume that payload
+                        # again. The cache is restored below after this one
+                        # recovery attempt.
+                        fastf1.Cache.enable_cache(_CACHE_DIR, force_renew=True)
+                        cache_renewed = True
+                    session = _new_session()
+                    try:
+                        loaded = _load(session, include_telemetry=True)
+                        if not _session_has_usable_car_telemetry(loaded):
+                            raise RuntimeError(
+                                'FastF1 completed the session load but returned no usable car-speed data.'
+                            )
+                        return loaded
+                    except Exception as exc:
+                        failures.append(exc)
+                        logging.warning(
+                            "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
+                            attempt + 1, TELEMETRY_LOAD_ATTEMPTS, year, race, session_name, exc,
+                        )
+                        if attempt + 1 < TELEMETRY_LOAD_ATTEMPTS:
+                            time.sleep(0.15 * (attempt + 1))
+            finally:
+                if cache_renewed:
+                    # Return later requests to normal cached operation. The
+                    # successfully renewed response remains on disk.
+                    fastf1.Cache.enable_cache(_CACHE_DIR)
             raise RuntimeError(
                 "FastF1 could not load telemetry after "
                 f"{TELEMETRY_LOAD_ATTEMPTS} attempt(s)."

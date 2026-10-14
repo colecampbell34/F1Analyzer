@@ -828,6 +828,41 @@ class TestPreloadJobs(unittest.TestCase):
             data._SESSION_PRELOAD_JOBS.clear()
         with data._DIRECT_PROFILE_LOCK:
             data._DIRECT_PROFILE_FUTURES.clear()
+        data._load_session_granular_cached.cache_clear()
+
+    def tearDown(self):
+        data._load_session_granular_cached.cache_clear()
+
+    def test_telemetry_load_retries_when_fastf1_returns_an_empty_car_data_feed(self):
+        empty_session = MagicMock()
+        empty_session.car_data = {}
+        recovered_session = MagicMock()
+        recovered_session.car_data = {
+            '1': pd.DataFrame({'Speed': [100.0] * 6}),
+        }
+
+        with (
+            patch.object(data, '_ensure_cache_ready'),
+            patch('fastf1.get_session', side_effect=[empty_session, recovered_session]) as get_session,
+            patch('fastf1.Cache.enable_cache') as enable_cache,
+            patch.object(data.time, 'sleep'),
+        ):
+            loaded = data._load_session_granular_cached(
+                2025, 'British Grand Prix', 'Race', laps=True, telemetry=True
+            )
+
+        self.assertIs(loaded, recovered_session)
+        self.assertEqual(get_session.call_count, 2)
+        empty_session.load.assert_called_once_with(
+            laps=True, telemetry=True, weather=False, messages=False
+        )
+        recovered_session.load.assert_called_once_with(
+            laps=True, telemetry=True, weather=False, messages=False
+        )
+        enable_cache.assert_has_calls([
+            unittest.mock.call(data._CACHE_DIR, force_renew=True),
+            unittest.mock.call(data._CACHE_DIR),
+        ])
 
     def test_direct_profile_singleflight_dedupes_concurrent_telemetry_callbacks(self):
         entered = threading.Event()
