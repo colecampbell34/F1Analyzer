@@ -14,7 +14,8 @@ metadata provider additive instead of forcing a rewrite.
 ```text
 Dash control
   -> callback module
-  -> data.py selects the smallest FastF1 load profile
+  -> telemetry_prep.py checks a shared prepared-trace cache
+  -> data.py selects the smallest FastF1 load profile on a cache miss
   -> telemetry_prep.py / graphs_*.py transform it
   -> Plotly figure and browser-side replay state
 ```
@@ -22,6 +23,12 @@ Dash control
 The browser stores rendered-figure fingerprints and replay payloads. The
 Python process stores bounded LRU session objects. This keeps repeated tab
 switches quick without serialising large FastF1 objects to the browser.
+
+When `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are configured,
+`shared_cache.py` also stores bounded, compressed selected-lap trace payloads.
+It uses a short distributed lock to reduce duplicate FastF1 cold loads across
+Vercel instances. Redis is optional and non-authoritative: a miss, timeout, or
+outage falls back to the normal FastF1 path.
 
 ## Module boundaries
 

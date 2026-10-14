@@ -76,7 +76,7 @@ def _telemetry_delta_fallback(reference_tel, compare_tel):
         frame['TimeSeconds'] = pd.to_timedelta(frame['Time'], errors='coerce').dt.total_seconds()
         frame = frame.replace([np.inf, -np.inf], np.nan).dropna().sort_values('Distance')
         frame = frame.drop_duplicates('Distance', keep='first')
-        if len(frame) < 12 or frame['Distance'].iloc[-1] <= frame['Distance'].iloc[0]:
+        if len(frame) < 6 or frame['Distance'].iloc[-1] <= frame['Distance'].iloc[0]:
             raise ValueError("Distance/time trace is too short for delta calculation.")
         frame['Distance'] -= frame['Distance'].iloc[0]
         frame['TimeSeconds'] -= frame['TimeSeconds'].iloc[0]

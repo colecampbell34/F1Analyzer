@@ -131,8 +131,11 @@ def register_telemetry_callbacks(app):
                     'dist': tel['Distance'].to_numpy(dtype=float)[::step].tolist(),
                     't': tel['Time'].to_numpy(dtype=float)[::step].tolist(),
                     'speed': tel['Speed'].to_numpy(dtype=float)[::step].tolist(),
-                    'gear': tel['nGear'].to_numpy(dtype=int)[::step].tolist(),
-                    'rpm': tel['RPM'].to_numpy(dtype=int)[::step].tolist()
+                    # Some older FastF1 traces have valid position/speed data
+                    # but no gear or RPM channel. Preserve playback instead of
+                    # failing the entire telemetry panel for those laps.
+                    'gear': tel['nGear'].fillna(0).to_numpy(dtype=int)[::step].tolist(),
+                    'rpm': tel['RPM'].fillna(0).to_numpy(dtype=int)[::step].tolist()
                 }
 
             d1_data = _sample_for_playback(tel1)

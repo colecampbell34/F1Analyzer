@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import unittest
@@ -22,6 +23,7 @@ import graphs_race
 import graphs_telemetry
 import graphs_trackmap
 import runtime
+import shared_cache
 from flask import Flask
 
 
@@ -430,6 +432,120 @@ class TestTelemetryPrepCache(unittest.TestCase):
         self.assertEqual(telemetry.call_count, 2)
         self.assertEqual(again["tel1"].loc[0, "Distance"], 0.0)
         self.assertEqual(dropped["tel1"]["Distance"].tolist(), [0.0, 10.0])
+
+
+class TestTelemetryTraceFallbacks(unittest.TestCase):
+    @staticmethod
+    def _core_trace(points=8):
+        return pd.DataFrame({
+            'Time': pd.to_timedelta(range(points), unit='s'),
+            'Distance': [float(point * 10) for point in range(points)],
+            'Speed': [180.0 + point for point in range(points)],
+        })
+
+    def test_car_data_recovers_when_merged_trace_has_no_speed_channel(self):
+        lap = MagicMock()
+        merged = MagicMock()
+        merged.add_distance.return_value = self._core_trace().drop(columns=['Speed'])
+        car = MagicMock()
+        car.add_distance.return_value = self._core_trace()
+        lap.get_telemetry.return_value = merged
+        lap.get_car_data.return_value = car
+
+        trace = telemetry_prep._telemetry_with_distance(lap)
+
+        lap.get_car_data.assert_called_once()
+        self.assertEqual(len(trace), 8)
+        self.assertTrue(trace['Throttle'].isna().all())
+        self.assertTrue(trace['Brake'].isna().all())
+        self.assertTrue(trace['nGear'].isna().all())
+
+    def test_speed_trace_survives_missing_optional_channels(self):
+        lap = MagicMock()
+        merged = MagicMock()
+        merged.add_distance.return_value = self._core_trace()
+        lap.get_telemetry.return_value = merged
+
+        trace = telemetry_prep._telemetry_with_distance(lap)
+
+        lap.get_car_data.assert_not_called()
+        self.assertEqual(len(trace), 8)
+        self.assertIn('RPM', trace.columns)
+
+
+class TestSharedTelemetryPayload(unittest.TestCase):
+    def test_shared_payload_skips_a_second_fastf1_load(self):
+        trace = pd.DataFrame({
+            'Time': pd.to_timedelta(range(8), unit='s'),
+            'Distance': [float(point * 10) for point in range(8)],
+            'Speed': [180.0 + point for point in range(8)],
+            'Throttle': [50.0] * 8,
+            'Brake': [0.0] * 8,
+            'nGear': [5.0] * 8,
+        })
+        payload = {
+            'session': MagicMock(),
+            'd1': 'NOR',
+            'd2': 'PIA',
+            'lbl1': 'NOR (P1)',
+            'lbl2': 'PIA (P2)',
+            'c1': '#F47600',
+            'c2': '#F47600',
+            'lap1': pd.Series({'LapTime': pd.Timedelta(seconds=90)}),
+            'lap2': pd.Series({'LapTime': pd.Timedelta(seconds=91)}),
+            'tel1': trace,
+            'tel2': trace,
+        }
+        wire = telemetry_prep._payload_to_shared_wire(payload)
+        args = (2025, 'British Grand Prix', 'Race', 'NOR', 'PIA', 'fastest', 'fastest', None, None)
+
+        with (
+            patch('shared_cache.is_configured', return_value=True),
+            patch('shared_cache.get_json', return_value=wire),
+            patch.object(telemetry_prep, '_prepare_selected_lap_comparison_cached') as local_load,
+        ):
+            loaded = telemetry_prep._load_selected_lap_payload(args)
+
+        local_load.assert_not_called()
+        self.assertIsNone(loaded['session'])
+        self.assertEqual(loaded['lap1']['LapTime'], pd.Timedelta(seconds=90))
+        self.assertEqual(len(loaded['tel1']), len(trace))
+
+
+class TestSharedCacheTransport(unittest.TestCase):
+    def setUp(self):
+        shared_cache.reset_for_tests()
+
+    def test_upstash_rest_round_trip_uses_compressed_json(self):
+        encoded = shared_cache._encode({'answer': 42})
+        response_set = MagicMock()
+        response_set.read.return_value = b'{"result":"OK"}'
+        response_set.__enter__.return_value = response_set
+        response_get = MagicMock()
+        response_get.read.return_value = (
+            ('{"result":' + repr(encoded) + '}').replace("'", '"').encode('utf-8')
+        )
+        response_get.__enter__.return_value = response_get
+
+        with (
+            patch.dict(os.environ, {
+                'UPSTASH_REDIS_REST_URL': 'https://cache.example.test',
+                'UPSTASH_REDIS_REST_TOKEN': 'test-token',
+            }, clear=False),
+            patch('shared_cache.urllib.request.urlopen', side_effect=[response_set, response_get]) as urlopen,
+        ):
+            self.assertTrue(shared_cache.set_json('test:key', {'answer': 42}, 60))
+            self.assertEqual(shared_cache.get_json('test:key'), {'answer': 42})
+
+        set_request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(json.loads(set_request.data.decode('utf-8'))[:2], ['SET', 'test:key'])
+
+    def test_vercel_kv_environment_names_enable_the_cache(self):
+        with patch.dict(os.environ, {
+            'KV_REST_API_URL': 'https://cache.example.test',
+            'KV_REST_API_TOKEN': 'test-token',
+        }, clear=True):
+            self.assertTrue(shared_cache.is_configured())
 
 
 class TestDeltaChartSegments(unittest.TestCase):

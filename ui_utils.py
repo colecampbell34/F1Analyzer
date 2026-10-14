@@ -29,6 +29,8 @@ def _friendly_error(e):
         )
     if 'after' in lower_msg and 'telemetry' in lower_msg and 'attempt' in lower_msg:
         return "FastF1 could not retrieve telemetry after retrying. Please try the session again shortly."
+    if 'no usable speed trace' in lower_msg:
+        return "This lap has no usable speed trace in the published timing data. Try the driver's Fastest lap."
     if 'selected lap' in lower_msg and 'telemetry' in lower_msg:
         return "That lap does not have a complete telemetry trace. Try the driver's Fastest lap."
     if 'telemetry data is not available' in lower_msg or 'telemetry' in lower_msg:

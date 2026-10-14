@@ -90,6 +90,9 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 - `FEEDBACK_DIR` - Optional feedback storage directory. Defaults to `feedback/` locally and `/tmp/feedback` on Vercel.
 - `PUBLIC_BASE_URL` - Optional production URL for Open Graph metadata and social share links.
 - `ENABLE_VERCEL_ANALYTICS=1` - Opts into Vercel Web Analytics and Speed Insights scripts. They are disabled by default to keep the first frontend load lighter.
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN` - Optional shared Redis cache for prepared selected-lap traces on Vercel; these are the names provided by the Vercel Upstash integration. Direct Upstash connections may instead use `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`. The aliases `F1_ANALYZER_REDIS_REST_URL` and `F1_ANALYZER_REDIS_REST_TOKEN` are also supported.
+- `F1_ANALYZER_SHARED_CACHE_ENABLED=0` - Explicitly disables the shared cache, even when Redis credentials are configured.
+- `SHARED_TELEMETRY_CURRENT_TTL_SECONDS` / `SHARED_TELEMETRY_HISTORICAL_TTL_SECONDS` - Optional cache TTLs. Defaults are 6 hours for the current season and 30 days for older seasons.
 
 ## Runtime Data
 
@@ -100,6 +103,16 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 These directories are runtime artifacts and should not be committed. On Vercel,
 they are ephemeral and instance-local. They reduce repeat work within a warm
 function but are not durable storage or global cache/rate-limit state.
+
+### Optional shared telemetry cache
+
+Connect an Upstash Redis database from the Vercel Marketplace, which injects
+`KV_REST_API_URL` and writable `KV_REST_API_TOKEN` into the project. The
+app then shares compressed, validated two-driver lap traces between Vercel
+instances. It never stores FastF1's raw filesystem cache, credentials, or
+user data. Redis failures are non-fatal: the app falls back to FastF1 and its
+in-process cache automatically. Cache diagnostics appear in the protected
+`/api/perf` response.
 
 ## Testing
 

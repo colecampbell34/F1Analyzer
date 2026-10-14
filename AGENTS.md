@@ -67,6 +67,9 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   A car-data trace is an acceptable fallback for speed, throttle, brake, and
   gear analysis when position samples are incomplete; track maps and other
   position-dependent views must instead explain that limitation clearly.
+- `shared_cache.py` may cache only bounded, JSON-safe derived telemetry
+  payloads. Never serialize FastF1 session objects, pickle data, or cache
+  credentials; a shared-cache miss or outage must fall back to FastF1.
 
 ## Dash and frontend rules
 
