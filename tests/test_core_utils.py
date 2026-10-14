@@ -472,6 +472,50 @@ class TestTelemetryTraceFallbacks(unittest.TestCase):
         self.assertEqual(len(trace), 8)
         self.assertIn('RPM', trace.columns)
 
+    def test_fastest_mode_uses_next_fastest_lap_when_the_nominal_best_has_no_trace(self):
+        class DriverLaps(pd.DataFrame):
+            @property
+            def _constructor(self):
+                return DriverLaps
+
+            def pick_drivers(self, _driver):
+                return self
+
+        laps = DriverLaps([
+            {'LapNumber': 12, 'LapTime': pd.Timedelta(seconds=89.5)},
+            {'LapNumber': 13, 'LapTime': pd.Timedelta(seconds=89.8)},
+        ])
+        session = MagicMock()
+        session.laps = laps
+        selected = laps.iloc[0]
+        trace = self._core_trace()
+
+        def get_trace(lap, **_kwargs):
+            if int(lap['LapNumber']) == 12:
+                raise ValueError('No usable speed trace is available for this selected lap.')
+            return trace
+
+        with patch.object(telemetry_prep, '_telemetry_with_distance', side_effect=get_trace):
+            lap, actual_trace, used_fallback = telemetry_prep._usable_lap_and_trace(
+                session, 'NOR', selected, 'fastest', None
+            )
+
+        self.assertTrue(used_fallback)
+        self.assertEqual(int(lap['LapNumber']), 13)
+        self.assertIs(actual_trace, trace)
+
+    def test_specific_lap_never_substitutes_another_trace(self):
+        session = MagicMock()
+        selected = pd.Series({'LapNumber': 12, 'LapTime': pd.Timedelta(seconds=89.5)})
+
+        with patch.object(
+            telemetry_prep,
+            '_telemetry_with_distance',
+            side_effect=ValueError('No usable speed trace is available for this selected lap.'),
+        ):
+            with self.assertRaisesRegex(ValueError, 'No usable speed trace'):
+                telemetry_prep._usable_lap_and_trace(session, 'NOR', selected, 'specific', 12)
+
 
 class TestSharedTelemetryPayload(unittest.TestCase):
     def test_shared_payload_skips_a_second_fastf1_load(self):

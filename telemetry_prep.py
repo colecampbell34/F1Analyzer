@@ -230,6 +230,71 @@ def _normalize_lap_number(value):
     return int(value)
 
 
+def _lap_number(lap):
+    """Return a comparable lap number when FastF1 supplied one."""
+    value = lap.get('LapNumber') if hasattr(lap, 'get') else None
+    try:
+        return int(value) if pd.notna(value) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _telemetry_fallback_attempts():
+    try:
+        value = int(os.getenv('TELEMETRY_LAP_FALLBACK_ATTEMPTS', '8'))
+    except ValueError:
+        value = 8
+    return max(1, min(20, value))
+
+
+def _usable_lap_and_trace(session, driver, selected_lap, mode, selected_lap_num):
+    """Return the selected trace, or another fast lap when Fastest has no data.
+
+    FastF1 can occasionally report a valid LapTime for the nominal fastest lap
+    while its car trace is absent or truncated.  The default Fastest option is
+    an intent ("show the best representative lap"), not a demand for that one
+    unavailable sample, so try the next fastest valid lap before failing. A
+    user-selected numbered lap never changes silently.
+    """
+    try:
+        return selected_lap, _telemetry_with_distance(selected_lap, drop_xy_time=False, session=session), False
+    except ValueError as initial_error:
+        if str(mode or 'fastest') != 'fastest':
+            raise initial_error
+
+    selected_number = _lap_number(selected_lap)
+    try:
+        driver_laps = session.laps.pick_drivers(driver)
+        candidates = driver_laps.dropna(subset=['LapTime']).sort_values('LapTime')
+    except Exception:
+        raise initial_error
+
+    attempts = 0
+    for _, candidate in candidates.iterrows():
+        if selected_number is not None and _lap_number(candidate) == selected_number:
+            continue
+        attempts += 1
+        if attempts > _telemetry_fallback_attempts():
+            break
+        try:
+            trace = _telemetry_with_distance(candidate, drop_xy_time=False, session=session)
+        except ValueError:
+            continue
+        return candidate, trace, True
+
+    raise initial_error
+
+
+def _label_with_trace_lap(label, lap, used_fallback):
+    """Disclose a Fastest-mode substitution in graph titles and map labels."""
+    if not used_fallback:
+        return label
+    lap_number = _lap_number(lap)
+    if lap_number is None:
+        return f'{label} · telemetry fallback'
+    return f'{label} · telemetry L{lap_number}'
+
+
 def _shared_cache_wait_seconds():
     try:
         value = float(os.getenv('SHARED_TELEMETRY_LOCK_WAIT_SECONDS', '12'))
@@ -320,8 +385,14 @@ def _prepare_selected_lap_comparison_cached(
     if not _has_valid_lap(lap2, pd):
         raise ValueError(f"{d2} did not set a valid lap.")
 
-    tel1 = _telemetry_with_distance(lap1, drop_xy_time=False, session=session)
-    tel2 = _telemetry_with_distance(lap2, drop_xy_time=False, session=session)
+    lap1, tel1, d1_fallback = _usable_lap_and_trace(
+        session, d1, lap1, d1_mode, d1_lap_num
+    )
+    lap2, tel2, d2_fallback = _usable_lap_and_trace(
+        session, d2, lap2, d2_mode, d2_lap_num
+    )
+    lbl1 = _label_with_trace_lap(lbl1, lap1, d1_fallback)
+    lbl2 = _label_with_trace_lap(lbl2, lap2, d2_fallback)
 
     return {
         'session': session,
