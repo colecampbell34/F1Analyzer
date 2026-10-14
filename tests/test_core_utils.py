@@ -504,6 +504,39 @@ class TestTelemetryTraceFallbacks(unittest.TestCase):
         self.assertEqual(int(lap['LapNumber']), 13)
         self.assertIs(actual_trace, trace)
 
+    def test_fastest_mode_preserves_the_original_error_when_no_fallback_trace_exists(self):
+        """A failed fallback must not replace the useful trace error.
+
+        ``except ValueError as exc`` variables are cleared by Python after the
+        exception handler. This guards the failure mode where a fastest-lap
+        fallback exhausted every candidate and then raised ``UnboundLocalError``
+        instead of the original data-availability message.
+        """
+        class DriverLaps(pd.DataFrame):
+            @property
+            def _constructor(self):
+                return DriverLaps
+
+            def pick_drivers(self, _driver):
+                return self
+
+        laps = DriverLaps([
+            {'LapNumber': 12, 'LapTime': pd.Timedelta(seconds=89.5)},
+            {'LapNumber': 13, 'LapTime': pd.Timedelta(seconds=89.8)},
+        ])
+        session = MagicMock()
+        session.laps = laps
+
+        with patch.object(
+            telemetry_prep,
+            '_telemetry_with_distance',
+            side_effect=ValueError('No usable speed trace is available for this selected lap.'),
+        ):
+            with self.assertRaisesRegex(ValueError, 'No usable speed trace'):
+                telemetry_prep._usable_lap_and_trace(
+                    session, 'NOR', laps.iloc[0], 'fastest', None
+                )
+
     def test_specific_lap_never_substitutes_another_trace(self):
         session = MagicMock()
         selected = pd.Series({'LapNumber': 12, 'LapTime': pd.Timedelta(seconds=89.5)})

@@ -256,9 +256,14 @@ def _usable_lap_and_trace(session, driver, selected_lap, mode, selected_lap_num)
     unavailable sample, so try the next fastest valid lap before failing. A
     user-selected numbered lap never changes silently.
     """
+    initial_error = None
     try:
         return selected_lap, _telemetry_with_distance(selected_lap, drop_xy_time=False, session=session), False
-    except ValueError as initial_error:
+    except ValueError as exc:
+        # Python clears the name bound by ``except ... as exc`` after the
+        # block. Keep the original error in a normal local so it can be
+        # returned if no alternate telemetry-bearing lap exists.
+        initial_error = exc
         if str(mode or 'fastest') != 'fastest':
             raise initial_error
 

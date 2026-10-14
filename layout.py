@@ -183,7 +183,7 @@ sidebar = html.Div([
             html.Div("F1", className='product-mark', **{'aria-hidden': 'true'}),
             html.Div([
                 html.H2("Analyzer", className="product-name"),
-                html.P("Telemetry · pace · strategy", className='product-subtitle'),
+                html.P("Telemetry · Pace · Strategy", className='product-subtitle'),
             ]),
         ], className='product-lockup'),
         html.Div([
