@@ -200,7 +200,6 @@ sidebar = html.Div([
             html.Div("03", className='workflow-step'),
             html.Div([
                 html.Strong("Load your analysis"),
-                html.Small("Telemetry, pace, strategy, and all available session views will update.")
             ], className='workflow-submit-copy'),
             dbc.Button("Load analysis", id='update-dashboard-btn', color='danger', n_clicks=0,
                        className='sidebar-update-btn',

@@ -26,7 +26,7 @@ META_TAGS = [
     {"name": "apple-mobile-web-app-capable", "content": "yes"},
     {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
     {"name": "description", "content": "A technical Formula 1 analysis desk for telemetry, race pace, track position, and strategy."},
-    {"property": "og:title", "content": "F1 Analyzer — Race Intelligence"},
+    {"property": "og:title", "content": "F1 Analyzer"},
     {"property": "og:description", "content": "Compare Formula 1 laps, race pace, strategy, and track position using FastF1 live timing data."},
     {"property": "og:type", "content": "website"},
     {"name": "theme-color", "content": "#0a0b0d"}
