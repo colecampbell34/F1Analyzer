@@ -1,0 +1,66 @@
+# Render deployment
+
+## When Render makes sense for FastF1
+
+The Dash application is supported on Vercel. This repository enables Vercel
+Fluid Compute and a 300-second Python-function limit, so a Vercel deployment
+is the first option to validate.
+
+Render is an alternative if you deliberately prefer a single long-lived
+Gunicorn process. While it is awake, that process can reuse FastF1's local
+cache across requests and can use the app's background preload workflow.
+
+Render runs this application as one long-lived Gunicorn process while the
+service is awake. That lets FastF1 complete a cold car-data download, reuse
+its local cache for later requests, and use the app's background preload
+workflow. The supplied [`render.yaml`](../render.yaml) uses one worker so a
+large FastF1 session is not duplicated in memory.
+
+Free Render services sleep after 15 minutes without inbound traffic and their
+filesystem is erased when they restart or redeploy. This is acceptable for a
+hobby deployment: the first request after a wake can be slow, while shared
+Redis keeps prepared two-driver telemetry traces available across processes.
+
+## Deploy
+
+1. Push the repository, including `render.yaml`, to the branch you want to
+   deploy.
+2. In Render, choose **New > Blueprint** and select the repository. Confirm
+   the `f1-analyzer` service, then create it on the **Free** plan.
+3. Open the service's **Environment** page and set the variables below. Trigger
+   a manual deploy after adding them.
+4. When the service is live, open `https://YOUR-SERVICE.onrender.com/healthz`.
+   It should return JSON with `status: "ok"` and `runtime: "local"`.
+5. Set `PUBLIC_BASE_URL` to the new `https://YOUR-SERVICE.onrender.com` URL
+   (or your custom domain) and redeploy once more.
+
+## Environment variables
+
+| Variable | Required | Value / purpose |
+| --- | --- | --- |
+| `PUBLIC_BASE_URL` | Recommended | The Render service URL, without a trailing slash. |
+| `KV_REST_API_URL` | Recommended | Existing Vercel/Upstash REST URL. |
+| `KV_REST_API_TOKEN` | Recommended | Existing writable Vercel/Upstash REST token. |
+| `GEMINI_API_KEY` | Optional | Enables AI Analysis. |
+| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects the feedback/performance-admin endpoints. |
+| `ENABLE_BACKGROUND_PRELOAD` | Set by blueprint | Keep as `1` for the persistent service. |
+
+Do not set `VERCEL`, `FASTF1_CACHE_DIR`, `AI_CACHE_DIR`, or `FEEDBACK_DIR` on
+Render unless you have a specific reason. The app chooses suitable local paths
+automatically. Do not copy `KV_REST_API_READ_ONLY_TOKEN`: the cache needs the
+writable `KV_REST_API_TOKEN`.
+
+## Verification
+
+After deployment, select a known finished event such as **2025 Australian
+Grand Prix — Qualifying**, choose **NOR** and **PIA**, then open **Telemetry**.
+The first cold load can take a little while; a repeat load should be much
+faster. `/warmup` can be opened after the service wakes to start non-critical
+cache initialization, but it does not replace loading an actual session.
+
+## Choosing one canonical host
+
+Use one host as the public production URL. Hosting the same live app on both
+Vercel and Render splits their local FastF1 caches and makes investigations
+harder. If you move to Render after validating it, set `PUBLIC_BASE_URL` to its
+URL; otherwise leave the Vercel URL as canonical.

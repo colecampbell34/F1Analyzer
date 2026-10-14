@@ -110,6 +110,18 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   exclude `assets/`: Flask serves the root service worker and Dash needs the
   custom assets.
 
+## Persistent-host profile
+
+- For a persistent host such as Render, run one threaded Gunicorn worker with
+  a generous request timeout. FastF1 sessions are large and multiple worker
+  processes duplicate their memory/cache footprint.
+- `render.yaml` is the supported Render blueprint. Keep its health check on
+  `/healthz`, its worker count at one unless memory is explicitly re-evaluated,
+  and Redis credentials external to the repository.
+- Render is an optional persistent-host alternative. Keep Vercel's Fluid
+  Compute configuration and 300-second telemetry budget working; do not
+  describe Vercel as unsupported without an evidence-backed platform failure.
+
 ## Secrets and safety
 
 - Never commit `.env`, API keys, admin tokens, feedback, FastF1 cache data, or

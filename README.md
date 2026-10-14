@@ -136,7 +136,7 @@ RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 python -m pytest 
 Example Gunicorn command:
 
 ```bash
-gunicorn app:server --bind 0.0.0.0:5000 --timeout 300 --workers 2 --threads 4 --worker-class gthread
+gunicorn app:server --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --threads 4 --worker-class gthread
 ```
 
 The app exposes:
@@ -159,6 +159,17 @@ First loads on a cold function can still take time while FastF1 rebuilds cache
 data. Vercel functions use direct, on-demand loads rather than background
 preload threads; `/warmup` reports that behavior explicitly. Review
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) before deploying.
+
+### Render (optional persistent-host alternative)
+
+Vercel is a supported deployment target for this app. The included
+[`vercel.json`](vercel.json) explicitly enables Fluid Compute and gives the
+Python function a 300-second telemetry-load budget. The repository also
+includes [`render.yaml`](render.yaml) for a free Render web service when you
+prefer one long-lived Gunicorn process and its local FastF1 cache while the
+service is awake. See [`docs/RENDER.md`](docs/RENDER.md) for its setup and
+tradeoffs. Either host can use the same writable Upstash Redis variables:
+`KV_REST_API_URL` and `KV_REST_API_TOKEN`.
 
 ---
 

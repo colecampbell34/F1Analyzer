@@ -7,8 +7,9 @@ The app deploys as one Flask WSGI Vercel Function:
 - entrypoint: root `app.py`
 - root rewrite: none (Vercel's Flask integration preserves the requested path)
 - deployment Python: 3.12 (`.python-version`)
-- function timeout: 60 seconds, compatible with the conservative Vercel plan
-  limit while first FastF1 loads remain bounded
+- Fluid Compute: explicitly enabled for this deployment
+- function timeout: 300 seconds, the current Hobby-plan maximum with Fluid
+  Compute
 
 Set these environment variables in Vercel as appropriate:
 

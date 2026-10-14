@@ -1,8 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "fluid": true,
   "functions": {
     "app.py": {
-      "maxDuration": 60,
+      "maxDuration": 300,
       "excludeFiles": "{tests/**,__pycache__/**,**/*.pyc,.DS_Store,.env,.cursor/**,.idea/**,.junie/**,f1_cache/**,ai_cache/**,feedback/**}"
     }
   },
