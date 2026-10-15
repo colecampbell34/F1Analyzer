@@ -101,6 +101,23 @@ _COLOR_FALLBACK_PALETTE = (
 # otherwise merge visually (for example Ferrari/Audi or the blue teams).
 _COMPARISON_SECONDARY_COLORS = ('#FFD166', '#B46CFF', '#00D7B6')
 
+# Vercel's filesystem is ephemeral and F1's archive occasionally refuses
+# cloud-provider IP ranges.  These are deliberately *derived* lap records,
+# not FastF1 cache files or Session objects.  A successful local FastF1 load
+# can seed them into the configured shared cache for a serverless instance.
+_SHARED_LAP_CACHE_SCHEMA_VERSION = 1
+_SHARED_LAP_CACHE_COLUMNS = (
+    'DriverNumber', 'Driver', 'Team', 'LapNumber', 'LapTime', 'Time',
+    'LapStartTime', 'PitInTime', 'PitOutTime', 'Stint', 'Compound',
+    'TyreLife', 'FreshTyre', 'TrackStatus', 'IsAccurate', 'Position',
+    'SpeedI1', 'SpeedI2', 'SpeedFL', 'SpeedST', 'Sector1Time',
+    'Sector2Time', 'Sector3Time', 'FastF1Generated',
+)
+_SHARED_LAP_TIME_COLUMNS = {
+    'LapTime', 'Time', 'LapStartTime', 'PitInTime', 'PitOutTime',
+    'Sector1Time', 'Sector2Time', 'Sector3Time',
+}
+
 
 
 # --- SESSION TYPE HELPERS ---
@@ -394,6 +411,85 @@ def _openf1_fallback_enabled():
     }
 
 
+def _shared_lap_cache_key(year, race, session_name):
+    source = f'{int(year)}|{str(race)}|{str(session_name)}'.encode('utf-8')
+    digest = hashlib.sha256(source).hexdigest()
+    return f'f1-analyzer:fastf1-laps:v{_SHARED_LAP_CACHE_SCHEMA_VERSION}:{digest}'
+
+
+def _lap_value_to_wire(column, value):
+    if pd.isna(value):
+        return None
+    if column in _SHARED_LAP_TIME_COLUMNS:
+        seconds = pd.to_timedelta(value, errors='coerce').total_seconds()
+        return None if pd.isna(seconds) else float(seconds)
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    try:
+        return value.item()
+    except (AttributeError, ValueError):
+        return str(value)
+
+
+def _store_shared_lap_payload(session, year, race, session_name):
+    """Store bounded, derived FastF1 laps for serverless archive recovery."""
+    try:
+        laps = session.laps
+        if not _session_has_lap_data(session) or len(laps) > 4000:
+            return False
+        columns = [column for column in _SHARED_LAP_CACHE_COLUMNS if column in laps.columns]
+        if not {'DriverNumber', 'LapNumber'}.issubset(columns):
+            return False
+        rows = [
+            {column: _lap_value_to_wire(column, row[column]) for column in columns}
+            for _, row in laps.loc[:, columns].iterrows()
+        ]
+        from shared_cache import set_json
+        return set_json(
+            _shared_lap_cache_key(year, race, session_name),
+            {'schema': _SHARED_LAP_CACHE_SCHEMA_VERSION, 'columns': columns, 'rows': rows},
+            31_536_000,
+        )
+    except Exception as exc:
+        logging.warning('shared_fastf1_laps_store_failed year=%s race=%s session=%s cause_type=%s',
+                        year, race, session_name, type(exc).__name__)
+        return False
+
+
+def _restore_shared_lap_payload(session, year, race, session_name):
+    """Attach a previously validated FastF1 lap payload to a partial Session."""
+    if not is_serverless():
+        return None
+    try:
+        from shared_cache import get_json
+        payload = get_json(_shared_lap_cache_key(year, race, session_name))
+        if not isinstance(payload, dict) or payload.get('schema') != _SHARED_LAP_CACHE_SCHEMA_VERSION:
+            return None
+        columns, rows = payload.get('columns'), payload.get('rows')
+        if not isinstance(columns, list) or not isinstance(rows, list) or not rows:
+            return None
+        if not {'DriverNumber', 'LapNumber'}.issubset(columns) or len(rows) > 4000:
+            return None
+        laps = pd.DataFrame(rows, columns=columns)
+        for column in _SHARED_LAP_TIME_COLUMNS.intersection(laps.columns):
+            laps[column] = pd.to_timedelta(laps[column], unit='s', errors='coerce')
+        for column in ('LapNumber', 'Stint', 'TyreLife', 'Position', 'SpeedI1', 'SpeedI2', 'SpeedFL', 'SpeedST'):
+            if column in laps.columns:
+                laps[column] = pd.to_numeric(laps[column], errors='coerce')
+        from fastf1.core import Laps
+        session._laps = Laps(laps, session=session, _force_default_cols=True)
+        if not _session_has_lap_data(session):
+            return None
+        session._fastf1_laps_from_shared_cache = True
+        logging.warning('shared_fastf1_laps_restored year=%s race=%s session=%s',
+                        year, race, session_name)
+        return session
+    except Exception as exc:
+        logging.warning('shared_fastf1_laps_restore_failed year=%s race=%s session=%s cause_type=%s',
+                        year, race, session_name, type(exc).__name__)
+        return None
+
+
 @lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
 def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
     """LRU-cached session loader with selective streams and telemetry retries.
@@ -458,6 +554,7 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                             raise RuntimeError(
                                 'FastF1 completed the session load but returned no usable car-speed data.'
                             )
+                        _store_shared_lap_payload(loaded, year, race, session_name)
                         return loaded
                     except Exception as exc:
                         failures.append(exc)
@@ -491,6 +588,15 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                     # successfully renewed response remains on disk.
                     fastf1.Cache.enable_cache(_CACHE_DIR)
             root_cause = failures[-1]
+            restored_laps = _restore_shared_lap_payload(
+                last_loaded_session, year, race, session_name,
+            ) if last_loaded_session is not None else None
+            if restored_laps is not None:
+                # Car data remains unavailable from the blocked archive. The
+                # existing selected-lap shared trace cache can satisfy a
+                # warmed comparison without another FastF1 request.
+                restored_laps._fastf1_telemetry_unavailable = True
+                return restored_laps
             if _openf1_fallback_enabled() and _session_has_lap_data(last_loaded_session):
                 # Do not discard FastF1's trustworthy event/lap metadata when
                 # only its car stream is empty. telemetry_prep will ask OpenF1
@@ -528,7 +634,10 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
             loaded = _load(session, include_telemetry=False)
             if laps:
                 _require_requested_lap_data(loaded)
-            return _set_missing_optional_streams(loaded, weather=weather, messages=messages)
+            loaded = _set_missing_optional_streams(loaded, weather=weather, messages=messages)
+            if laps:
+                _store_shared_lap_payload(loaded, year, race, session_name)
+            return loaded
         except Exception as exc:
             logging.warning(
                 "Session profile load failed (laps=%s weather=%s messages=%s) for %s %s %s: %s",
@@ -548,9 +657,11 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                         "lap_payload_recovered_after_cache_renewal year=%s race=%s session=%s",
                         year, race, session_name,
                     )
-                    return _set_missing_optional_streams(
+                    renewed_loaded = _set_missing_optional_streams(
                         renewed_loaded, weather=weather, messages=messages,
                     )
+                    _store_shared_lap_payload(renewed_loaded, year, race, session_name)
+                    return renewed_loaded
                 except Exception as renewed_exc:
                     logging.warning(
                         "lap_payload_recovery_failed year=%s race=%s session=%s cause_type=%s",
@@ -576,6 +687,11 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                 return fallback
             except Exception as fallback_exc:
                 if laps:
+                    restored_laps = _restore_shared_lap_payload(session, year, race, session_name)
+                    if restored_laps is not None:
+                        return _set_missing_optional_streams(
+                            restored_laps, weather=weather, messages=messages,
+                        )
                     raise RuntimeError(
                         'No lap data was loaded for this session. FastF1 returned only partial session metadata.'
                     ) from fallback_exc

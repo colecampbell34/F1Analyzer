@@ -119,6 +119,18 @@ user data. Redis failures are non-fatal: the app falls back to FastF1 and its
 in-process cache automatically. Cache diagnostics appear in the protected
 `/api/perf` response.
 
+If the official F1 archive blocks the Vercel network but works locally, seed
+the affected FastF1 session and selected comparison from the local runtime:
+
+```bash
+vercel env pull .env.local
+set -a; source .env.local; set +a
+python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race VER NOR
+```
+
+This sends only bounded FastF1-derived laps and the requested comparison
+traces to the existing Vercel KV cache; it never uploads FastF1 cache files.
+
 ## Testing
 
 Run the current test suite with:

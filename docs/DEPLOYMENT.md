@@ -49,6 +49,21 @@ session objects or copy FastF1's local cache directory. A short Redis lock
 limits duplicate cold loads; a timeout or Redis outage falls back to direct
 FastF1 loading without making a dashboard request fail.
 
+When the official archive accepts a developer machine but blocks Vercel's
+egress network, seed the affected session from that machine after pulling the
+same Vercel KV environment:
+
+```bash
+vercel env pull .env.local
+set -a; source .env.local; set +a
+python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race VER NOR
+```
+
+The warmer loads FastF1 normally, then stores only a bounded derived lap
+payload and the selected two-driver traces. Serverless requests restore those
+validated laps before reporting an archive failure; raw FastF1 cache files and
+Session objects are never uploaded.
+
 Default retention is 6 hours for the current season and 30 days for historical
 seasons. Override it with `SHARED_TELEMETRY_CURRENT_TTL_SECONDS` and
 `SHARED_TELEMETRY_HISTORICAL_TTL_SECONDS` when needed. Check the protected
