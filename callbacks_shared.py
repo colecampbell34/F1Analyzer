@@ -11,15 +11,13 @@ import dash
 MAX_AI_HISTORY = 20
 
 VALID_TABS = {
-    'tab-telemetry', 'tab-trackmap', 'tab-strategy',
-    'tab-race', 'tab-gridpace', 'tab-ai'
+    'tab-trackmap', 'tab-telemetry', 'tab-strategy', 'tab-racepace', 'tab-ai'
 }
 ANALYSIS_VIEW_OPTIONS = (
-    {'label': 'Telemetry', 'value': 'tab-telemetry'},
     {'label': 'Track map', 'value': 'tab-trackmap'},
+    {'label': 'Telemetry', 'value': 'tab-telemetry'},
     {'label': 'Strategy', 'value': 'tab-strategy'},
-    {'label': 'Race', 'value': 'tab-race'},
-    {'label': 'Grid pace', 'value': 'tab-gridpace'},
+    {'label': 'Race & pace', 'value': 'tab-racepace'},
     {'label': 'AI analysis', 'value': 'tab-ai'},
 )
 VALID_LAP_MODES = {'fastest', 'specific'}
@@ -137,6 +135,18 @@ def _parse_url_state(url_search):
         except (TypeError, ValueError):
             state[key] = None
 
+    for key in ('tm_d1_lap_mode', 'tm_d2_lap_mode'):
+        value = (query_params.get(key) or [None])[0]
+        state[key] = value if value in VALID_LAP_MODES else None
+
+    for key in ('tm_d1_lap', 'tm_d2_lap'):
+        raw_lap = (query_params.get(key) or [None])[0]
+        try:
+            lap_num = int(raw_lap) if raw_lap not in (None, '') else None
+            state[key] = lap_num if lap_num and lap_num > 0 else None
+        except (TypeError, ValueError):
+            state[key] = None
+
     trackmap_mode = (query_params.get('trackmap') or [None])[0]
     state['trackmap_mode'] = trackmap_mode if trackmap_mode in VALID_TRACKMAP_MODES else None
 
@@ -158,6 +168,12 @@ def _build_url_search(params, active_tab, ui_state=None):
         if ui_state.get(key) == 'specific':
             query[key] = 'specific'
     for key in ('d1_lap', 'd2_lap'):
+        if ui_state.get(key):
+            query[key] = int(ui_state[key])
+    for key in ('tm_d1_lap_mode', 'tm_d2_lap_mode'):
+        if ui_state.get(key) == 'specific':
+            query[key] = 'specific'
+    for key in ('tm_d1_lap', 'tm_d2_lap'):
         if ui_state.get(key):
             query[key] = int(ui_state[key])
     if ui_state.get('trackmap_mode') in VALID_TRACKMAP_MODES:

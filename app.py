@@ -7,7 +7,7 @@ from callbacks import register_callbacks
 from flask_compress import Compress
 import threading
 import atexit
-from flask import jsonify, redirect, request, send_from_directory
+from flask import jsonify, request, send_from_directory
 from runtime import is_serverless, storage_scope
 
 # Set global log level to WARNING
@@ -197,14 +197,6 @@ def warmup():
     }), 200
 
 
-@server.route('/m')
-@server.route('/m/')
-def mobile_entry():
-    """Canonicalize the former mobile route to the single app URL."""
-    suffix = f"?{request.query_string.decode('utf-8')}" if request.query_string else ""
-    return redirect(f"/{suffix}", code=308)
-
-
 @server.route('/service-worker.js')
 def service_worker():
     """Serve the PWA service worker from the root scope."""
@@ -308,7 +300,7 @@ def api_perf():
     from perf_monitor import get_perf_snapshot
     from ui_utils import _feedback_admin_authorized
 
-    if not _feedback_admin_authorized(request.query_string.decode('utf-8')):
+    if not _feedback_admin_authorized():
         return jsonify({'error': 'admin token required'}), 403
     return jsonify({
         'perf': get_perf_snapshot(),
@@ -327,4 +319,4 @@ dash_app.layout = app_layout
 register_callbacks(dash_app)
 
 if __name__ == '__main__':
-    dash_app.run(host='0.0.0.0', port=8000)
+    dash_app.run(host='0.0.0.0', port=8080)

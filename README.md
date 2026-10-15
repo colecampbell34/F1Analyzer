@@ -16,9 +16,9 @@ like a generic dashboard.
 ## Key Features
 
 - Latest Race shortcut that selects the most recent completed race and defaults to the top two drivers.
-- Telemetry traces for speed, throttle, braking, gears, delta, mini-map playback, and G-force.
+- Telemetry traces for speed, throttle, braking, gears, delta, smooth browser-side mini-map replay, and a live G-force monitor.
 - Track maps for dominance, braking, and speed overlays.
-- Strategy, race gap, pit stop, tyre degradation, and grid pace views.
+- Compact tyre-stint plans, degradation, and strategy-call context alongside race gaps and representative grid pace.
 - AI analysis with session-specific telemetry, weather, messages, and lap context.
 - Bookmarkable URLs that preserve session, drivers, active tab, lap mode, lap numbers, and track-map mode.
 - Feedback capture with optional admin review and CSV export.
@@ -54,17 +54,19 @@ it cannot replace FastF1 for the product's core telemetry analysis.
 - `layout.py` - Sidebar, tabs, modals, stores, and page structure.
 - `callbacks.py` - Core dropdowns, URL sync, latest-race defaults, summary/status callbacks.
 - `callbacks_telemetry.py` - Telemetry chart, mini-map, G-force, and playback callbacks.
-- `callbacks_tabs.py` - Track map, strategy, race, and grid pace callbacks.
+- `callbacks_tabs.py` - Track map, strategy, and combined Race & Pace callbacks.
 - `callbacks_ai.py` - AI context loading, question handling, and history callbacks.
 - `callbacks_feedback.py` - Feedback modal, inbox, and CSV callbacks.
 - `data.py` - FastF1 loading, caching, preloading, pruning, and schedule helpers.
 - `telemetry_prep.py` - Shared selected-lap telemetry preparation.
+- `telemetry_dynamics.py` - Deterministic estimated-G helpers used by the Telemetry sidecar.
+- `strategy_insights.py` - Deterministic stint and tyre-service summaries for Strategy and Race & Pace.
 - `graph_shared.py` - Shared graph config, colors, error figures, and graph helpers.
 - `graphs.py` - Feature-specific Plotly figure builders.
 - `ai_utils.py` - Gemini prompt construction and session context building.
 - `ai_cache.py` - AI response cache and per-user rate limiting.
 - `ui_utils.py` - UI formatting helpers, summaries, leaderboard, and feedback rendering.
-- `assets/race-intelligence.css` - Product visual system, loaded after compatibility CSS.
+- `assets/race-intelligence.css` - Product visual system, loaded after base CSS.
 - `docs/ARCHITECTURE.md` - Module boundaries, request flow, and storage model.
 - `docs/DEPLOYMENT.md` - Vercel configuration and release smoke checks.
 - `AGENTS.md` - Contributor rules, workflow, and guardrails for future agents.
@@ -145,7 +147,6 @@ The app exposes:
 
 - `/health` and `/healthz` for cheap liveness checks.
 - `/warmup` to start background runtime initialization and schedule cache warming.
-- `/m` redirects to `/`; the app now uses one canonical URL with responsive layout.
 
 ### Vercel
 

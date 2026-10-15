@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timezone
-from urllib.parse import parse_qs
 import flask
 from dash import html
 import dash_bootstrap_components as dbc
@@ -48,13 +47,12 @@ def _tab_label(tab_value):
         'tab-telemetry': 'Telemetry',
         'tab-trackmap': 'Track Map',
         'tab-strategy': 'Strategy',
-        'tab-race': 'Race',
-        'tab-gridpace': 'Grid Pace',
+        'tab-racepace': 'Race & Pace',
         'tab-ai': 'AI Analysis'
     }
     return labels.get(tab_value, 'Unknown')
 
-def _feedback_admin_authorized(url_search):
+def _feedback_admin_authorized():
     token = os.getenv('FEEDBACK_ADMIN_TOKEN')
     if not token:
         return False
@@ -68,10 +66,7 @@ def _feedback_admin_authorized(url_search):
     if supplied_cookie == token:
         return True
 
-    # Backward-compatibility fallback for existing workflows.
-    query_params = parse_qs((url_search or '').lstrip('?'))
-    supplied = (query_params.get('feedback_admin') or [''])[0]
-    return supplied == token
+    return False
 
 def _format_feedback_time(timestamp):
     if not timestamp:
@@ -157,8 +152,7 @@ def _build_feedback_review_panel(entries):
     return html.Div([
         html.H5("Feedback Inbox", style={'marginTop': '0.5rem'}),
         html.P(
-            "Newest submissions are shown here. Add "
-            "?feedback_admin=YOUR_TOKEN to the app URL to unlock this panel.",
+            "Newest submissions are shown here. Use an authorized browser session to unlock this panel.",
             style={'color': '#888', 'fontSize': '0.85rem'}
         ),
         summary_cards,

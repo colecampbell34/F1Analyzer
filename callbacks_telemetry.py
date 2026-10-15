@@ -296,61 +296,11 @@ def register_telemetry_callbacks(app):
             return dash.no_update, dash.no_update, dash.no_update
 
         import numpy as np
-        import pandas as pd
         import plotly.graph_objects as go
         from graph_shared import _error_figure
         from telemetry_prep import prepare_selected_lap_comparison
+        from telemetry_dynamics import calculate_g_series
         from ui_utils import _friendly_error
-
-        def calculate_g_series(tel):
-            # Return (t, dist, lat_g, long_g) arrays.
-            t = tel['Time'].dt.total_seconds()
-            t_sec = t.to_numpy(dtype=float)
-            if len(t_sec) < 5:
-                return t_sec, tel['Distance'].to_numpy(dtype=float), np.zeros(len(t_sec)), np.zeros(len(t_sec))
-            for idx in range(1, len(t_sec)):
-                if not np.isfinite(t_sec[idx]) or t_sec[idx] <= t_sec[idx - 1]:
-                    t_sec[idx] = t_sec[idx - 1] + 1e-3
-
-            def smooth(values, window=11):
-                series = (
-                    pd.Series(values)
-                    .replace([np.inf, -np.inf], np.nan)
-                    .interpolate(limit_direction='both')
-                    .ffill()
-                    .bfill()
-                )
-                if series.isna().all():
-                    return np.zeros(len(series), dtype=float)
-                return (
-                    series
-                    .rolling(window=window, center=True, min_periods=1)
-                    .median()
-                    .rolling(window=window, center=True, min_periods=1)
-                    .mean()
-                    .to_numpy(dtype=float)
-                )
-
-            v_ms = smooth(tel['Speed'].to_numpy(dtype=float) / 3.6, window=9)
-            x = smooth(tel['X'].to_numpy(dtype=float), window=7)
-            y = smooth(tel['Y'].to_numpy(dtype=float), window=7)
-
-            accel_ms2 = np.gradient(v_ms, t_sec, edge_order=1)
-            long_g = smooth(accel_ms2 * 0.1019, window=13)
-
-            dx = np.gradient(x, t_sec, edge_order=1)
-            dy = np.gradient(y, t_sec, edge_order=1)
-            heading = np.unwrap(np.arctan2(dy, dx))
-            yaw_rate = np.gradient(heading, t_sec, edge_order=1)
-            lat_g = smooth((v_ms * yaw_rate) * 0.1019, window=13)
-
-            # Ignore occasional telemetry timestamp/position spikes that otherwise make
-            # the marker jump around the friction circle.
-            lat_g = np.clip(lat_g, -5.5, 5.5)
-            long_g = np.clip(long_g, -5.5, 5.5)
-
-            dist = tel['Distance'].to_numpy(dtype=float)
-            return t_sec, dist, lat_g, long_g
 
         with _timed_callback('update_gg_base', year=params['year'], race=params['race'], session=params['session_type']):
             try:

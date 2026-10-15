@@ -6,7 +6,6 @@ import logging
 import hashlib
 import re
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import timezone
 from functools import lru_cache
 import pandas as pd
 from static_schedule import (
@@ -59,7 +58,6 @@ SESSION_CACHE_MAXSIZE = _env_int('SESSION_CACHE_MAXSIZE', 6, minimum=2, maximum=
 SESSION_SUMMARY_CACHE_MAXSIZE = _env_int('SESSION_SUMMARY_CACHE_MAXSIZE', 16, minimum=4, maximum=48)
 TELEMETRY_LOAD_ATTEMPTS = _env_int('TELEMETRY_LOAD_ATTEMPTS', 2, minimum=1, maximum=3)
 EVENT_SCHEDULE_CACHE_MAXSIZE = 20
-EVENT_SESSIONS_CACHE_MAXSIZE = 64
 
 TEAM_COLOR_FALLBACKS = {
     # Current/recent canonical and feed-specific names.
@@ -239,27 +237,6 @@ def get_event_schedule_cached(year):
     _ensure_cache_ready()
     import fastf1
     return fastf1.get_event_schedule(year, include_testing=False)
-
-
-@lru_cache(maxsize=EVENT_SESSIONS_CACHE_MAXSIZE)
-def get_event_sessions_cached(year, race):
-    """Return static session names for a specific event."""
-    return get_static_sessions(year, race)
-
-
-def _coerce_utc_timestamp(value):
-    """Return a timezone-aware UTC Timestamp or None for missing/unparseable values."""
-    if value is None or pd.isna(value):
-        return None
-    try:
-        ts = pd.Timestamp(value)
-        if pd.isna(ts):
-            return None
-        if ts.tzinfo is None:
-            return ts.tz_localize(timezone.utc)
-        return ts.tz_convert(timezone.utc)
-    except Exception:
-        return None
 
 
 def get_latest_race_session_default(now=None, first_year=2018):
@@ -785,7 +762,7 @@ def get_preload_kwargs_for_tab(active_tab):
     kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
     if active_tab in ('tab-telemetry', 'tab-trackmap'):
         kwargs['telemetry'] = True
-    elif active_tab in ('tab-strategy', 'tab-gridpace'):
+    elif active_tab in ('tab-strategy', 'tab-racepace'):
         kwargs['weather'] = True
     elif active_tab == 'tab-ai':
         kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
@@ -1097,8 +1074,3 @@ def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
                 pass
         if lock_handle is not None:
             lock_handle.close()
-
-
-def clear_old_cache(max_size_gb=2.0):
-    """Backward-compatible cache pruning entry point."""
-    maybe_prune_cache(max_size_gb=max_size_gb, min_interval_seconds=0)

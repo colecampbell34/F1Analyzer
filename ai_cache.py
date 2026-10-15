@@ -131,9 +131,6 @@ def get_cached_response(session_context, question):
         if isinstance(item, dict):
             logging.info("[ai_cache] hit key=%s", key[:10])
             return item.get('response')
-        if isinstance(item, str):
-            logging.info("[ai_cache] hit legacy key=%s", key[:10])
-            return item
         logging.info("[ai_cache] miss key=%s", key[:10])
         return None
 

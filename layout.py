@@ -283,9 +283,19 @@ telemetry_controls = html.Div([
                        style={'fontWeight': 'bold', 'width': '100%'})
         ], md=2, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
         dbc.Col([
+            dbc.Checklist(
+                id='mini-map-follow-toggle',
+                options=[{'label': ' Follow cars', 'value': 'follow'}],
+                value=['follow'],
+                inline=True,
+                switch=True,
+                style={'color': '#aaa', 'fontSize': '0.78rem', 'whiteSpace': 'nowrap'},
+            )
+        ], md=2, xs=6, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'}),
+        dbc.Col([
             html.Div("Lap Time: 0.00s / 0.00s", id='lap-playback-time-label',
                      style={'color': '#aaa', 'fontSize': '0.82rem', 'width': '100%'})
-        ], md=4, xs=12, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'})
+        ], md=2, xs=6, style={'display': 'flex', 'alignItems': 'center', 'marginTop': '0.35rem'})
     ])
 ], className='telemetry-controls-panel',
    style={'padding': '0.5rem 1rem', 'backgroundColor': '#1a1a1a', 'borderRadius': '6px',
@@ -322,7 +332,7 @@ content = html.Main([
                 dcc.Dropdown(
                     id='main-tabs',
                     options=list(ANALYSIS_VIEW_OPTIONS),
-                    value='tab-telemetry',
+                    value='tab-trackmap',
                     clearable=False,
                     searchable=False,
                     className='analysis-view-selector',
@@ -334,10 +344,9 @@ content = html.Main([
     # as a prominent strip above every chart.
     html.Div(
         id='loading-status-banner',
-        className='loading-status-banner',
+        className='loading-status-banner sr-only',
         children=html.Span('Choose a session and click Load analysis.'),
         role='status',
-        style={'display': 'none'},
         **{'aria-live': 'polite'},
     ),
     html.Div([
@@ -350,7 +359,8 @@ content = html.Main([
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
     html.Div(id='plot-resize-sentinel', style={'display': 'none'}),
 
-    dcc.Tabs(id='analysis-view-panels', value='tab-telemetry', parent_className='analysis-view-panels', children=[
+    dcc.Tabs(id='analysis-view-panels', value='tab-trackmap', parent_className='analysis-view-panels', children=[
+
         dcc.Tab(id='tab-telemetry-control', label=_tab_label(
             'Telemetry',
             "Telemetry compares two selected laps using speed, gap, throttle/brake, gear, track position, and G-force. Use Replay Focus to watch the lap evolve.",
@@ -420,6 +430,38 @@ content = html.Main([
             'beginner'
         ), value='tab-trackmap', children=[
             html.Div([
+                html.Div([
+                    dbc.Label(
+                        _label_with_tip(
+                            "Track Map — Driver 1 Lap",
+                            "This selection applies only to Track Map and does not change the Telemetry lap.",
+                            'intermediate'
+                        ),
+                        style={"fontSize": "0.76rem", "color": "#aaa", "marginBottom": "0.2rem"}
+                    ),
+                    dcc.Dropdown(
+                        id='trackmap-d1-lap-dropdown',
+                        options=[{'label': 'Fastest', 'value': 'fastest'}],
+                        value='fastest', clearable=False, searchable=False,
+                        style={'color': 'black', 'fontSize': '0.82rem', 'minWidth': '150px'}
+                    ),
+                ], style={'minWidth': '150px'}),
+                html.Div([
+                    dbc.Label(
+                        _label_with_tip(
+                            "Track Map — Driver 2 Lap",
+                            "This selection applies only to Track Map and does not change the Telemetry lap.",
+                            'intermediate'
+                        ),
+                        style={"fontSize": "0.76rem", "color": "#aaa", "marginBottom": "0.2rem"}
+                    ),
+                    dcc.Dropdown(
+                        id='trackmap-d2-lap-dropdown',
+                        options=[{'label': 'Fastest', 'value': 'fastest'}],
+                        value='fastest', clearable=False, searchable=False,
+                        style={'color': 'black', 'fontSize': '0.82rem', 'minWidth': '150px'}
+                    ),
+                ], style={'minWidth': '150px'}),
                 dbc.Label(
                     _label_with_tip(
                         "Overlay Mode:",
@@ -474,6 +516,7 @@ content = html.Main([
             "Strategy focuses on tyre stints and degradation. It works best for Race and Sprint sessions where pit stops and tyre ageing matter.",
             'intermediate'
         ), value='tab-strategy', children=[
+            html.Div(id='strategy-stint-overview', className='strategy-stint-overview'),
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('strategy-graph', TAB_HEIGHTS['strategy_top'])
             ]),
@@ -482,26 +525,20 @@ content = html.Main([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(id='tab-race-control', label=_tab_label(
-            'Race',
-            "Race view explains gaps and pit stops over the event. Safety Cars, VSCs, and traffic can make raw gaps misleading.",
+        dcc.Tab(id='tab-racepace-control', label=_tab_label(
+            'Race & Pace',
+            "Race & Pace combines the selected drivers' race gap and position with field-wide representative pace. Pit decisions are summarized as context rather than a standalone stop-time chart.",
             'intermediate'
-        ), value='tab-race', children=[
+        ), value='tab-racepace', children=[
+            html.Div([
+                html.Div(id='race-session-summary', className='race-session-summary'),
+                html.Div(id='race-strategy-impact', className='race-strategy-impact'),
+            ], className='racepace-summary-row'),
             dcc.Loading(type='dot', color='#ff0000', children=[
                 _empty_state('race-gaps-graph', TAB_HEIGHTS['race_top'])
             ]),
             dcc.Loading(type='dot', color='#ff0000', children=[
-                _empty_state('pit-stops-graph', TAB_HEIGHTS['race_bot'])
-            ])
-        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
-
-        dcc.Tab(id='tab-gridpace-control', label=_tab_label(
-            'Grid Pace',
-            "Grid Pace compares the whole field using representative pace. It is useful when you want context beyond the two selected drivers.",
-            'beginner'
-        ), value='tab-gridpace', children=[
-            dcc.Loading(type='dot', color='#ff0000', children=[
-                _empty_state('grid-pace-graph', TAB_HEIGHTS['single'])
+                _empty_state('grid-pace-graph', TAB_HEIGHTS['race_bot'])
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
@@ -577,7 +614,12 @@ content = html.Main([
                 dcc.Store(id='ai-history-index-store', storage_type='session', data=0)
             ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
-    ])
+    ]),
+    html.Div([
+        html.Div('Preparing analysis', id='view-loading-title', className='view-loading-title'),
+        html.Div('Loading the data this view needs…', id='view-loading-detail', className='view-loading-detail'),
+        html.Div([html.Span(), html.Span(), html.Span()], className='view-loading-skeleton', **{'aria-hidden': 'true'}),
+    ], id='view-loading-overlay', className='view-loading-overlay', role='status', **{'aria-live': 'polite'}),
 ], className='analysis-workspace')
 
 
@@ -697,7 +739,6 @@ app_layout = dbc.Container([
     dcc.Store(id='trackmap-cache-key-store', storage_type='memory'),
     dcc.Store(id='strategy-cache-key-store', storage_type='memory'),
     dcc.Store(id='race-cache-key-store', storage_type='memory'),
-    dcc.Store(id='gridpace-cache-key-store', storage_type='memory'),
     dcc.Store(id='preload-status-store', storage_type='memory'),
     dcc.Store(id='active-tab-preload-store', storage_type='memory'),
     dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),

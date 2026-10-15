@@ -1,106 +1,13 @@
-"""Race, strategy, degradation, and pit-stop graph builders."""
-import re
+"""Race, strategy, degradation, and race-gap graph builders."""
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from data import get_pit_stop_data, get_single_driver_color, get_track_status_events
+from data import get_track_status_events
 from graph_shared import COMPOUND_COLORS, _collapse_lap_ranges
 from graphs_common import _add_driver_legend_entries
 from ui_utils import _apply_base_layout
-
-
-def _normalized_driver_key(value):
-    """Normalize driver identity strings across FastF1 and Ergast feeds."""
-    if value is None:
-        return ''
-    try:
-        if pd.isna(value):
-            return ''
-    except (TypeError, ValueError):
-        pass
-    return re.sub(r'[^a-z0-9]+', '', str(value).lower())
-
-
-def _pit_driver_lookup(session):
-    """Return normalized driver identifiers mapped to FastF1 abbreviations."""
-    results = getattr(session, 'results', None)
-    if results is None or getattr(results, 'empty', True):
-        return {}
-
-    lookup = {}
-    for _, row in results.iterrows():
-        abbr = row.get('Abbreviation')
-        if not isinstance(abbr, str) or len(abbr) != 3:
-            continue
-
-        candidates = [
-            abbr,
-            row.get('DriverId'),
-            row.get('BroadcastName'),
-            row.get('FullName'),
-            row.get('FirstName'),
-            row.get('LastName'),
-            f"{row.get('FirstName', '')} {row.get('LastName', '')}",
-        ]
-        for candidate in candidates:
-            key = _normalized_driver_key(candidate)
-            if key:
-                lookup[key] = abbr
-    return lookup
-
-
-def _resolve_pit_driver_code(stop, session):
-    """Resolve a pit-stop feed row to the session's driver abbreviation."""
-    lookup = _pit_driver_lookup(session)
-    for field in ('driverCode', 'driverId', 'driverUrl'):
-        value = stop.get(field)
-        key = _normalized_driver_key(value)
-        if key in lookup:
-            return lookup[key]
-
-    code = stop.get('driverCode')
-    if isinstance(code, str) and len(code.strip()) == 3:
-        return code.strip().upper()
-
-    driver_id = _normalized_driver_key(stop.get('driverId'))
-    if driver_id:
-        return driver_id[:3].upper()
-    return None
-
-
-def _is_truthy_fastf1_value(value):
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    return str(value).strip().lower() in ('1', 'true', 'yes')
-
-
-def _is_actual_pit_stop_lap(current_lap, next_lap):
-    """Return True for pit entries that include a real stop, not just a transit."""
-    try:
-        current_stint = pd.to_numeric(pd.Series([current_lap.get('Stint')]), errors='coerce').iloc[0]
-        next_stint = pd.to_numeric(pd.Series([next_lap.get('Stint')]), errors='coerce').iloc[0]
-        if pd.notna(current_stint) and pd.notna(next_stint) and float(next_stint) > float(current_stint):
-            return True
-    except Exception:
-        pass
-
-    if _is_truthy_fastf1_value(next_lap.get('FreshTyre')):
-        return True
-
-    current_compound = current_lap.get('Compound')
-    next_compound = next_lap.get('Compound')
-    if (
-        isinstance(current_compound, str)
-        and isinstance(next_compound, str)
-        and current_compound.strip()
-        and next_compound.strip()
-        and current_compound != next_compound
-    ):
-        return True
-
-    return False
 
 
 def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
@@ -254,8 +161,6 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     fig.update_yaxes(title_text="Temp (°C)", row=2, col=1)
 
     return fig
-
-
 def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Fuel-corrected tyre degradation analysis per stint, side-by-side."""
     from plotly.subplots import make_subplots
@@ -332,6 +237,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     from plotly.subplots import make_subplots
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         row_heights=[0.7, 0.3])
+    last_lap = 1.0
 
     try:
         laps1 = session.laps.pick_drivers(driver1).sort_values('LapNumber').dropna(subset=['Time'])
@@ -369,32 +275,40 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         grid1, grid2 = None, None
         if getattr(session, 'results', None) is not None and not session.results.empty:
             res1 = session.results[session.results['Abbreviation'] == driver1]
-            if not res1.empty: grid1 = res1.iloc[0].get('GridPosition')
+            if not res1.empty:
+                grid1 = pd.to_numeric(res1.iloc[0].get('GridPosition'), errors='coerce')
             res2 = session.results[session.results['Abbreviation'] == driver2]
-            if not res2.empty: grid2 = res2.iloc[0].get('GridPosition')
+            if not res2.empty:
+                grid2 = pd.to_numeric(res2.iloc[0].get('GridPosition'), errors='coerce')
+
+        last_lap = float(merged['LapNumber'].max())
 
         if 'Pos1' in merged.columns:
             x_vals = merged['LapNumber'].tolist()
             y_vals = merged['Pos1'].astype(float).tolist()
-            if grid1 is not None and grid1 > 0:
+            if pd.notna(grid1) and grid1 > 0:
                 x_vals = [0] + x_vals
                 y_vals = [float(grid1)] + y_vals
             
             fig.add_trace(go.Scatter(
-                x=x_vals, y=y_vals, mode='lines',
-                name=f'{lbl1} Pos', line=dict(color=c1, width=2), showlegend=False
+                x=x_vals, y=y_vals, mode='lines+markers',
+                name=f'{lbl1} Pos', line=dict(color=c1, width=2),
+                marker=dict(color=c1, size=5), showlegend=False,
+                hovertemplate='Grid / lap %{x}<br>Position: P%{y}<extra></extra>',
             ), row=2, col=1)
 
         if 'Pos2' in merged.columns:
             x_vals = merged['LapNumber'].tolist()
             y_vals = merged['Pos2'].astype(float).tolist()
-            if grid2 is not None and grid2 > 0:
+            if pd.notna(grid2) and grid2 > 0:
                 x_vals = [0] + x_vals
                 y_vals = [float(grid2)] + y_vals
 
             fig.add_trace(go.Scatter(
-                x=x_vals, y=y_vals, mode='lines',
-                name=f'{lbl2} Pos', line=dict(color=c2, width=2), showlegend=False
+                x=x_vals, y=y_vals, mode='lines+markers',
+                name=f'{lbl2} Pos', line=dict(color=c2, width=2),
+                marker=dict(color=c2, size=5), showlegend=False,
+                hovertemplate='Grid / lap %{x}<br>Position: P%{y}<extra></extra>',
             ), row=2, col=1)
 
         for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
@@ -424,144 +338,6 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     fig.update_yaxes(title_text='Gap (seconds)', row=1, col=1)
     fig.update_yaxes(title_text='Position', row=2, col=1, autorange='reversed',
                      tickvals=list(range(1, 21)))
-    fig.update_xaxes(title_text='Lap Number', row=2, col=1)
-
-    return fig
-
-
-def _build_pit_stops_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Builds a pit stop duration comparison chart for all drivers."""
-    pit_data = []
-    title = 'Pit Stop Durations (Pit lane time)'
-    hover_label = 'Stop Time'
-
-    session_name = getattr(session, 'name', '')
-    max_lap = 999
-    try:
-        if not session.laps.empty:
-            max_lap = int(session.laps['LapNumber'].max())
-    except Exception:
-        pass
-
-    try:
-        # Only use official Ergast data for the main Race; Sprints use the robust fallback below
-        if session_name == 'Race':
-            pit_stops = get_pit_stop_data(session.event.year, session.event.RoundNumber)
-        else:
-            pit_stops = pd.DataFrame()
-    except Exception:
-        pit_stops = pd.DataFrame()
-
-    if pit_stops is not None and not pit_stops.empty:
-        if 'duration' in pit_stops.columns:
-            pit_stops = pit_stops.copy()
-            pit_stops['duration_seconds'] = pit_stops['duration'].apply(
-                lambda x: x.total_seconds() if pd.notna(x) else None
-            )
-            valid = pit_stops[
-                pit_stops['lap'].notna()
-                & pit_stops['duration_seconds'].notna()
-                & (pit_stops['lap'].astype(int) <= max_lap)
-                & (pit_stops['duration_seconds'] > 0)
-                & (pit_stops['duration_seconds'] < 120)
-            ].copy()
-            if not valid.empty:
-                valid['driver_code'] = valid.apply(lambda r: _resolve_pit_driver_code(r, session), axis=1)
-                valid = valid[valid['driver_code'].astype(str).str.len() == 3]
-                for stop in valid.to_dict('records'):
-                    drv = stop['driver_code']
-                    color = get_single_driver_color(drv, session)
-                    pit_data.append({
-                        'driver': drv,
-                        'lap': int(stop['lap']),
-                        'duration': float(stop['duration_seconds']),
-                        'color': color,
-                        'highlight': drv in [driver1, driver2]
-                    })
-
-    if not pit_data:
-        title = 'Pit Stop Durations (Time Spent in Pit Lane)'
-        hover_label = 'Pit Lane Time'
-
-        all_drivers = []
-        if getattr(session, 'results', None) is not None and not session.results.empty:
-            all_drivers = [d for d in session.results['Abbreviation'].dropna().tolist()
-                           if isinstance(d, str) and len(d) == 3]
-
-        for drv in all_drivers:
-            try:
-                drv_laps = session.laps.pick_drivers(drv).sort_values('LapNumber')
-                pit_in = drv_laps[drv_laps['PitInTime'].notna()][['LapNumber', 'PitInTime']]
-                if pit_in.empty:
-                    continue
-                laps_by_number = drv_laps.set_index('LapNumber', drop=False)
-                color = get_single_driver_color(drv, session)
-                for lap_num, pit_in_time in pit_in.itertuples(index=False):
-                    next_lap_number = lap_num + 1
-                    if next_lap_number not in laps_by_number.index:
-                        continue
-                    current_lap = laps_by_number.loc[lap_num]
-                    next_lap = laps_by_number.loc[next_lap_number]
-                    if isinstance(current_lap, pd.DataFrame):
-                        current_lap = current_lap.iloc[0]
-                    if isinstance(next_lap, pd.DataFrame):
-                        next_lap = next_lap.iloc[0]
-                    if not _is_actual_pit_stop_lap(current_lap, next_lap):
-                        continue
-                    pit_out_time = next_lap.get('PitOutTime')
-                    if pd.notna(pit_out_time):
-                        duration = (pit_out_time - pit_in_time).total_seconds()
-                        if 10 < duration < 120:
-                            pit_data.append({
-                                'driver': drv,
-                                'lap': int(lap_num),
-                                'duration': duration,
-                                'color': color,
-                                'highlight': drv in [driver1, driver2]
-                            })
-            except Exception:
-                continue
-
-    if not pit_data:
-        fig = go.Figure()
-        fig.add_annotation(text="No pit stop data available", showarrow=False,
-                           font=dict(size=18), xref="paper", yref="paper", x=0.5, y=0.5)
-        _apply_base_layout(fig, hovermode='closest')
-        return fig
-
-    pit_data.sort(key=lambda x: x['duration'])
-
-    x_labels = [f"{p['driver']} L{p['lap']}" for p in pit_data]
-    y_values = [p['duration'] for p in pit_data]
-    colors = [p['color'] for p in pit_data]
-    border_widths = [3 if p['highlight'] else 0 for p in pit_data]
-    border_colors = ['white' if p['highlight'] else p['color'] for p in pit_data]
-    text_labels = [f"{p['duration']:.1f}s" for p in pit_data]
-    hover_texts = [f"{p['driver']} - Lap {p['lap']}<br>{hover_label}: {p['duration']:.1f}s" for p in pit_data]
-
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=x_labels,
-        y=y_values,
-        marker_color=colors,
-        marker_line_width=border_widths,
-        marker_line_color=border_colors,
-        text=text_labels,
-        textposition='auto',
-        showlegend=False,
-        hovertext=hover_texts,
-        hoverinfo='text'
-    ))
-
-    _apply_base_layout(
-        fig,
-        title=title,
-        hovermode='closest',
-        yaxis_title='Duration (s)',
-        xaxis_title='Driver & Lap',
-        margin=dict(l=40, r=40, t=60, b=80),
-        xaxis_tickangle=-45,
-        uirevision='pitstops'
-    )
+    fig.update_xaxes(title_text='Lap Number', range=[0, last_lap + 0.5], row=2, col=1)
 
     return fig

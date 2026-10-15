@@ -1,3 +1,367 @@
+/*
+ * Replay deliberately lives outside Dash's callback/render cycle.  Dash still
+ * supplies the bounded telemetry payload and owns the controls, but animation
+ * frames only mutate the already-mounted Plotly traces.  Returning figures on
+ * every 20ms interval made the map feel stop-and-go on otherwise capable
+ * machines.
+ */
+(function() {
+    const state = {
+        running: false,
+        frameId: null,
+        miniStore: null,
+        ggStore: null,
+        t: 0,
+        total: 0,
+        lastFrame: null,
+        lastAuxiliaryFrame: 0,
+        lastLabelFrame: 0,
+        lastMapUpdate: 0,
+        lastCameraUpdate: 0,
+        camera: null,
+        trackBounds: null
+    };
+
+    const plotly = function() {
+        return window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null);
+    };
+    const plot = function(id) {
+        const container = document.getElementById(id);
+        return container ? (container.querySelector('.js-plotly-plot') || container) : null;
+    };
+    const binarySearch = function(values, target) {
+        let low = 0;
+        let high = values.length - 1;
+        while (low <= high) {
+            const middle = (low + high) >>> 1;
+            if (values[middle] < target) low = middle + 1;
+            else if (values[middle] > target) high = middle - 1;
+            else return middle;
+        }
+        return low;
+    };
+    const interpolate = function(series, time, metric) {
+        const times = series.t || [];
+        const values = series[metric] || [];
+        if (!times.length || times.length !== values.length) return 0;
+        if (time <= times[0]) return values[0];
+        if (time >= times[times.length - 1]) return values[times.length - 1];
+        const index = binarySearch(times, time);
+        const start = times[index - 1];
+        const end = times[index];
+        const ratio = (time - start) / Math.max(1e-6, end - start);
+        return values[index - 1] + ratio * (values[index] - values[index - 1]);
+    };
+    const positionAt = function(series, time) {
+        return [interpolate(series, time, 'x'), interpolate(series, time, 'y')];
+    };
+    const updateText = function() {
+        const timeLabel = document.getElementById('lap-playback-time-label');
+        const pauseButton = document.getElementById('pause-resume-lap-btn');
+        if (timeLabel) timeLabel.textContent = `Lap Time: ${state.t.toFixed(2)}s / ${state.total.toFixed(2)}s`;
+        if (pauseButton) pauseButton.textContent = state.running ? 'Pause' : (state.t >= state.total ? 'Replay' : 'Resume');
+    };
+    const shouldFollowCars = function() {
+        const toggle = document.querySelector('#mini-map-follow-toggle input[type="checkbox"]');
+        return !toggle || Boolean(toggle.checked);
+    };
+    const updateMapCamera = function(pObj, mini, first, second, now) {
+        const track = state.miniStore && state.miniStore.track;
+        if (!track || !track.x || !track.y || !track.x.length || !track.y.length) return;
+        if (!state.trackBounds) {
+            const minX = Math.min.apply(null, track.x);
+            const maxX = Math.max.apply(null, track.x);
+            const minY = Math.min.apply(null, track.y);
+            const maxY = Math.max.apply(null, track.y);
+            state.trackBounds = {
+                x0: minX, x1: maxX,
+                y0: minY, y1: maxY,
+                span: Math.max(maxX - minX, maxY - minY, 1)
+            };
+        }
+        const fullSpan = state.trackBounds.span;
+        const full = state.trackBounds;
+        let target = full;
+        if (shouldFollowCars()) {
+            const gap = Math.hypot(first[0] - second[0], first[1] - second[1]);
+            // A tight camera is most useful when both cars are close. As they
+            // separate, deliberately ease back toward the whole circuit.
+            const scale = gap > fullSpan * 0.42
+                ? fullSpan
+                : Math.min(fullSpan, Math.max(fullSpan * 0.16, gap * 3.4, 120));
+            const centerX = (first[0] + second[0]) / 2;
+            const centerY = (first[1] + second[1]) / 2;
+            target = {
+                x0: centerX - scale / 2,
+                x1: centerX + scale / 2,
+                y0: centerY - scale / 2,
+                y1: centerY + scale / 2
+            };
+        }
+        if (!state.camera) state.camera = target;
+        else {
+            // Use elapsed time rather than a fixed amount so the camera has
+            // the same glide on fast and slower displays.
+            const elapsed = Math.max(1, now - state.lastCameraUpdate);
+            const ease = 1 - Math.exp(-elapsed / 185);
+            ['x0', 'x1', 'y0', 'y1'].forEach(function(key) {
+                state.camera[key] += (target[key] - state.camera[key]) * ease;
+            });
+        }
+        state.lastCameraUpdate = now;
+        pObj.relayout(mini, {
+            'xaxis.range': [state.camera.x0, state.camera.x1],
+            'yaxis.range': [state.camera.y0, state.camera.y1]
+        });
+    };
+    const updateMap = function(pObj, now) {
+        const mini = plot('mini-track-map');
+        if (!mini || !mini.data || !state.miniStore) return;
+        // Plotly queues expensive redraws. A capped, consistent 30fps avoids
+        // queue buildup that made both markers and camera appear stop-and-go.
+        if (now - state.lastMapUpdate < 33) return;
+        state.lastMapUpdate = now;
+        const p1 = positionAt(state.miniStore.d1, state.t);
+        const p2 = positionAt(state.miniStore.d2, state.t);
+        pObj.restyle(mini, {
+            x: [[p1[0]], [p2[0]]],
+            y: [[p1[1]], [p2[1]]],
+            hovertemplate: [
+                `<b>${state.miniStore.d1.name}</b><br>t=${state.t.toFixed(2)}s<extra></extra>`,
+                `<b>${state.miniStore.d2.name}</b><br>t=${state.t.toFixed(2)}s<extra></extra>`
+            ]
+        }, [1, 2]);
+        updateMapCamera(pObj, mini, p1, p2, now);
+    };
+    const updateGG = function(pObj) {
+        const diagram = plot('gg-diagram');
+        if (!diagram || !diagram.data || !state.ggStore) return;
+        const getDriverState = function(key) {
+            const series = state.ggStore[key];
+            if (!series || !series.t || series.t.length < 2) return null;
+            const index = Math.min(series.t.length - 1, binarySearch(series.t, state.t));
+            const start = Math.max(0, index - 16);
+            const lat = interpolate(series, state.t, 'lat');
+            const longitudinal = interpolate(series, state.t, 'long');
+            return {
+                lat: lat,
+                longitudinal: longitudinal,
+                trailLat: series.lat.slice(start, index + 1).concat([lat]),
+                trailLong: series.long.slice(start, index + 1).concat([longitudinal]),
+                name: series.driver || key
+            };
+        };
+        const first = getDriverState('d1');
+        const second = getDriverState('d2');
+        const xs = [];
+        const ys = [];
+        const labels = [];
+        [first, second].forEach(function(driver) {
+            if (!driver) {
+                xs.push([null], [null], [null]);
+                ys.push([null], [null], [null]);
+                labels.push(null, null, null);
+                return;
+            }
+            xs.push([0, driver.lat], driver.trailLat, [driver.lat]);
+            ys.push([0, driver.longitudinal], driver.trailLong, [driver.longitudinal]);
+            labels.push(null, null, `<b>${driver.name}</b><br>Lat: ${driver.lat.toFixed(2)}G<br>Long: ${driver.longitudinal.toFixed(2)}G<extra></extra>`);
+        });
+        pObj.restyle(diagram, {x: xs, y: ys, hovertemplate: labels}, [7, 8, 9, 10, 11, 12]);
+    };
+    const updateSpeedCursor = function(pObj) {
+        const graph = plot('speed-graph');
+        if (!graph || !graph.layout || !state.miniStore) return;
+        const delta = state.miniStore.delta || {};
+        const reference = delta.reference === 'd1' ? state.miniStore.d1 : state.miniStore.d2;
+        const distance = interpolate(reference, Math.min(state.t, reference.lap_s || state.t), 'dist') * (reference.dist_max || 1);
+        const shapes = (graph.layout.shapes || []).map(function(shape) {
+            return shape.name === 'playback-cursor' ? {...shape, x0: distance, x1: distance} : shape;
+        });
+        if (!shapes.some(function(shape) { return shape.name === 'playback-cursor'; })) {
+            shapes.push({type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: distance, x1: distance, y0: 0, y1: 1, line: {color: '#bbbbbb', width: 1.5, dash: 'dot'}});
+        }
+        pObj.relayout(graph, {shapes: shapes});
+    };
+    const draw = function(now) {
+        if (!state.running || !state.miniStore) return;
+        if (state.lastFrame === null) state.lastFrame = now;
+        state.t = Math.min(state.total, state.t + Math.max(0, now - state.lastFrame) / 1000);
+        state.lastFrame = now;
+        const pObj = plotly();
+        if (pObj) {
+            updateMap(pObj, now);
+            // Secondary plots are still responsive, but do not need to compete
+            // with position animation for every display frame.
+            if (now - state.lastAuxiliaryFrame >= 66) {
+                updateGG(pObj);
+                updateSpeedCursor(pObj);
+                const ref = (state.miniStore.delta || {}).reference === 'd1' ? state.miniStore.d1 : state.miniStore.d2;
+                const progress = interpolate(ref, Math.min(state.t, ref.lap_s || state.t), 'dist');
+                if (window.dash_clientside && window.dash_clientside.clientside) {
+                    window.dash_clientside.clientside.updateLiveDashboard(state.t, state.miniStore, false, progress);
+                }
+                state.lastAuxiliaryFrame = now;
+            }
+        }
+        if (now - state.lastLabelFrame >= 90 || state.t >= state.total) {
+            updateText();
+            state.lastLabelFrame = now;
+        }
+        if (state.t >= state.total) {
+            state.running = false;
+            state.frameId = null;
+            updateText();
+            return;
+        }
+        state.frameId = window.requestAnimationFrame(draw);
+    };
+    const play = function(miniStore, ggStore, restart) {
+        if (!miniStore || !miniStore.d1 || !miniStore.d2) return false;
+        state.miniStore = miniStore;
+        state.ggStore = ggStore || {};
+        state.total = Math.max(
+            miniStore.d1.lap_s || (miniStore.d1.t || []).slice(-1)[0] || 0,
+            miniStore.d2.lap_s || (miniStore.d2.t || []).slice(-1)[0] || 0
+        );
+        if (!state.total) return false;
+        if (restart || state.t >= state.total) state.t = 0;
+        state.running = true;
+        state.lastFrame = null;
+        state.lastAuxiliaryFrame = 0;
+        state.lastLabelFrame = 0;
+        state.lastMapUpdate = 0;
+        state.lastCameraUpdate = 0;
+        state.camera = null;
+        state.trackBounds = null;
+        if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
+        updateText();
+        state.frameId = window.requestAnimationFrame(draw);
+        return true;
+    };
+    window.f1AnalyzerPlayback = {
+        isRunning: function() { return state.running; },
+        start: function(miniStore, ggStore) { return play(miniStore, ggStore, true); },
+        toggle: function(miniStore, ggStore) {
+            if (state.running) {
+                state.running = false;
+                if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
+                state.frameId = null;
+                updateText();
+                return true;
+            }
+            return play(miniStore || state.miniStore, ggStore || state.ggStore, false);
+        },
+        stop: function() {
+            state.running = false;
+            if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
+            state.frameId = null;
+            updateText();
+        }
+    };
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden && state.running) state.lastFrame = null;
+    });
+})();
+
+(function() {
+    const state = {activeTab: null, visible: false};
+    const labels = {
+        'tab-telemetry': 'Preparing telemetry',
+        'tab-trackmap': 'Preparing track map',
+        'tab-strategy': 'Preparing strategy analysis',
+        'tab-racepace': 'Preparing race and pace',
+        'tab-ai': 'Preparing AI context'
+    };
+    const activePlotForTab = function(tab) {
+        return {
+            'tab-telemetry': 'speed-graph',
+            'tab-trackmap': '2d-dominance-graph',
+            'tab-strategy': 'strategy-graph',
+            'tab-racepace': 'race-gaps-graph'
+        }[tab];
+    };
+    const overlay = function() { return document.getElementById('view-loading-overlay'); };
+    const setCopy = function(tab, status) {
+        const title = document.getElementById('view-loading-title');
+        const detail = document.getElementById('view-loading-detail');
+        if (title) title.textContent = labels[tab] || 'Preparing analysis';
+        if (!detail) return;
+        const profile = status && status.profile ? `${status.profile} data` : 'data';
+        if (status && status.status === 'queued') detail.textContent = `Queued: loading ${profile} for this view…`;
+        else if (status && status.status === 'loading') detail.textContent = `Loading ${profile}; the analysis will appear here automatically…`;
+        else if (status && status.status === 'direct') detail.textContent = `Loading ${profile} for this view…`;
+        else detail.textContent = 'Loading the data this view needs…';
+    };
+    const isViewReady = function(tab) {
+        if (tab === 'tab-ai') return Boolean(document.getElementById('ai-question-input'));
+        const graphId = activePlotForTab(tab);
+        if (!graphId) return true;
+        const container = document.getElementById(graphId);
+        const graph = container && (container.querySelector('.js-plotly-plot') || container);
+        if (!graph) return false;
+        if (container && container.getAttribute('data-dash-is-loading') === 'true') return false;
+        if (graph.data && graph.data.length) return true;
+        // Error/not-applicable figures intentionally have no traces. They are
+        // still a completed response, unlike the untouched "Choose a session"
+        // placeholder.
+        const annotations = (graph.layout && graph.layout.annotations) || [];
+        return annotations.some(function(annotation) {
+            return annotation.text && !String(annotation.text).includes('Choose a session');
+        });
+    };
+    const show = function(tab, status) {
+        state.activeTab = tab;
+        state.visible = true;
+        const node = overlay();
+        if (node) node.classList.add('is-visible');
+        const root = document.getElementById('app-root');
+        if (root) root.classList.add('view-is-loading');
+        setCopy(tab, status);
+    };
+    const hide = function() {
+        state.visible = false;
+        const node = overlay();
+        if (node) node.classList.remove('is-visible');
+        const root = document.getElementById('app-root');
+        if (root) root.classList.remove('view-is-loading');
+    };
+    const check = function() {
+        if (state.visible && isViewReady(state.activeTab)) hide();
+    };
+    window.f1AnalyzerViewLoading = {
+        sync: function(tab, status) {
+            const changedView = state.activeTab !== tab;
+            const loading = status && ['queued', 'loading', 'direct'].includes(status.status);
+            // Before a comparison is requested there is nothing to wait for.
+            // Leaving the overlay up here obscures the helpful empty state and
+            // makes the dashboard look as though it has stalled.
+            if (!status || status.status === 'idle' || status.status === 'error') {
+                state.activeTab = tab;
+                hide();
+                return;
+            }
+            if (changedView || loading) show(tab, status);
+            else if (status && status.status === 'ready') {
+                setCopy(tab, status);
+                window.requestAnimationFrame(check);
+            }
+        },
+        check: check,
+        hide: hide
+    };
+    if (window.MutationObserver) {
+        const observe = function() {
+            if (!document.body) return;
+            new MutationObserver(function() {
+                window.requestAnimationFrame(check);
+            }).observe(document.body, {childList: true, subtree: true});
+        };
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observe, {once: true});
+        else observe();
+    }
+})();
+
 window.dash_clientside = Object.assign({}, window.dash_clientside, {
     clientside: {
         hexToRgba: function(hex, opacity) {
@@ -31,7 +395,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
         updateMiniMap: function(hoverData, miniStore, fig, playbackDisabled) {
             const dash = document.getElementById('live-telemetry-dashboard');
-            if (playbackDisabled === false) return window.dash_clientside.no_update;
+            if (playbackDisabled === false || (window.f1AnalyzerPlayback && window.f1AnalyzerPlayback.isRunning())) {
+                return window.dash_clientside.no_update;
+            }
             if (!hoverData || !miniStore || !fig || !hoverData.points || hoverData.points.length === 0) {
                 if (dash) dash.style.display = 'none';
                 return window.dash_clientside.no_update;
@@ -92,6 +458,24 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const p2 = interpXY(d2, tSec);
             if (!p1 || !p2) return window.dash_clientside.no_update;
 
+            // Keep hover light as well: Plotly can move the two mounted marker
+            // traces without Dash serialising a fresh mini-map figure.
+            let mountedMiniMap = document.getElementById('mini-track-map');
+            const hoverPlotly = (window.Plotly || (typeof Plotly !== 'undefined' ? Plotly : null));
+            if (mountedMiniMap && hoverPlotly) {
+                if (!mountedMiniMap.data) mountedMiniMap = mountedMiniMap.querySelector('.js-plotly-plot') || mountedMiniMap;
+                if (mountedMiniMap && mountedMiniMap.data) {
+                    hoverPlotly.restyle(mountedMiniMap, {
+                        x: [[p1[0]], [p2[0]]], y: [[p1[1]], [p2[1]]],
+                        hovertemplate: [
+                            `<b>${d1.name || 'Driver 1'}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`,
+                            `<b>${d2.name || 'Driver 2'}</b><br>t=${tSec.toFixed(2)}s<extra></extra>`
+                        ]
+                    }, [1, 2]);
+                    return window.dash_clientside.no_update;
+                }
+            }
+
             const baseData = (fig.data || []).filter(
                 tr => !(tr && (tr.meta === 'hover' || tr.meta === 'playback-marker' || tr.meta === 'driver-marker'))
             );
@@ -138,6 +522,17 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
         handlePlaybackAnimation: function(playClicks, toggleClicks, nIntervals, miniStore, ggStore, miniFig, ggFig, speedFig, intervalDisabled, playbackStore) {
             if (!miniStore || !miniStore.d1 || !miniStore.d2) {
                 return [window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update, true, 0, 'Pause', 'Lap Time: 0.00s / 0.00s', {'t': 0, 'total': 0, 'lastUpdate': 0}];
+            }
+            const playbackTrigger = window.dash_clientside.callback_context.triggered[0].prop_id;
+            if (window.f1AnalyzerPlayback) {
+                if (playbackTrigger.includes('lap-playback-interval')) return window.dash_clientside.no_update;
+                if (playbackTrigger.includes('play-lap-btn')) window.f1AnalyzerPlayback.start(miniStore, ggStore);
+                else if (playbackTrigger.includes('pause-resume-lap-btn')) window.f1AnalyzerPlayback.toggle(miniStore, ggStore);
+                return [
+                    window.dash_clientside.no_update, window.dash_clientside.no_update, window.dash_clientside.no_update,
+                    true, 0, window.dash_clientside.no_update, window.dash_clientside.no_update,
+                    window.dash_clientside.no_update
+                ];
             }
             
             const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
@@ -390,7 +785,7 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
         },
 
         updateGGHover: function(hoverData, ggStore, fig, playbackDisabled) {
-            if (playbackDisabled === false) return window.dash_clientside.no_update;
+            if (playbackDisabled === false || (window.f1AnalyzerPlayback && window.f1AnalyzerPlayback.isRunning())) return window.dash_clientside.no_update;
             if (!hoverData || !ggStore || !fig || !hoverData.points) return window.dash_clientside.no_update;
             const hoverDist = hoverData.points[0].x;
             if (hoverDist === null || hoverDist === undefined) return window.dash_clientside.no_update;
@@ -510,13 +905,18 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 'tab-telemetry': 'speed-graph',
                 'tab-trackmap': '2d-dominance-graph',
                 'tab-strategy': 'strategy-graph',
-                'tab-race': 'race-gaps-graph',
-                'tab-gridpace': 'grid-pace-graph'
+                'tab-racepace': 'race-gaps-graph'
             };
             return ids[activeTab] || null;
         },
 
-        resizeVisiblePlots: function(activeTab, speedFigure) {
+        resizeVisiblePlots: function(activeTab, speedFigure, preloadStatus) {
+            if (window.f1AnalyzerViewLoading) {
+                window.f1AnalyzerViewLoading.sync(activeTab, preloadStatus);
+            }
+            if (activeTab !== 'tab-telemetry' && window.f1AnalyzerPlayback) {
+                window.f1AnalyzerPlayback.stop();
+            }
             if (window.f1AnalyzerSchedulePlotResize) {
                 window.f1AnalyzerSchedulePlotResize();
             }
@@ -577,7 +977,6 @@ if ('serviceWorker' in navigator) {
         'strategy-graph',
         'deg-graph',
         'race-gaps-graph',
-        'pit-stops-graph',
         'grid-pace-graph'
     ];
 

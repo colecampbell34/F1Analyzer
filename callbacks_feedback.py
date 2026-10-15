@@ -97,18 +97,17 @@ def register_feedback_callbacks(app):
          Output('feedback-review-controls', 'style'),
          Output('perf-review-panel', 'children'),
          Output('perf-review-controls', 'style')],
-        [Input('url', 'search'),
-         Input('feedback-refresh-store', 'data'),
+        [Input('feedback-refresh-store', 'data'),
          Input('refresh-feedback-review-btn', 'n_clicks'),
          Input('refresh-perf-review-btn', 'n_clicks')]
     )
-    def update_feedback_review_panel(url_search, refresh_data, refresh_clicks, perf_clicks):
+    def update_feedback_review_panel(refresh_data, refresh_clicks, perf_clicks):
         from data import get_cache_stats, get_preload_registry_snapshot
         from feedback import load_feedback_entries
         from perf_monitor import get_perf_snapshot
         from ui_utils import _feedback_admin_authorized, _build_feedback_review_panel, _build_perf_review_panel
 
-        if not _feedback_admin_authorized(url_search):
+        if not _feedback_admin_authorized():
             return [], {'display': 'none'}, [], {'display': 'none'}
         control_style = {
             'display': 'flex',
@@ -125,15 +124,14 @@ def register_feedback_callbacks(app):
     @app.callback(
         Output('feedback-download', 'data'),
         Input('download-feedback-btn', 'n_clicks'),
-        State('url', 'search'),
         prevent_initial_call=True
     )
-    def download_feedback_csv(n_clicks, url_search):
+    def download_feedback_csv(n_clicks):
         from feedback import load_feedback_entries
         from ui_utils import _feedback_admin_authorized
         import pandas as pd
 
-        if not n_clicks or not _feedback_admin_authorized(url_search):
+        if not n_clicks or not _feedback_admin_authorized():
             raise PreventUpdate
 
         entries = load_feedback_entries()

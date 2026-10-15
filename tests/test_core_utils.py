@@ -16,6 +16,8 @@ import callbacks_ai
 import callbacks_tabs
 import callbacks_telemetry
 import telemetry_prep
+import telemetry_dynamics
+import strategy_insights
 import ux_helpers
 import graphs
 import graph_shared
@@ -92,16 +94,6 @@ class TestFeedbackAdminAuth(unittest.TestCase):
     def setUp(self):
         self.flask_app = Flask(__name__)
 
-    def test_authorized_via_query_param(self):
-        with patch.dict(os.environ, {"FEEDBACK_ADMIN_TOKEN": "secret"}, clear=False):
-            with self.flask_app.test_request_context("/?feedback_admin=secret"):
-                with patch.object(ui_utils.flask, "request") as req:
-                    req.headers = MagicMock()
-                    req.cookies = MagicMock()
-                    req.headers.get.return_value = ""
-                    req.cookies.get.return_value = ""
-                    self.assertTrue(ui_utils._feedback_admin_authorized("?feedback_admin=secret"))
-
     def test_authorized_via_header(self):
         with patch.dict(os.environ, {"FEEDBACK_ADMIN_TOKEN": "secret"}, clear=False):
             with self.flask_app.test_request_context("/"):
@@ -110,7 +102,7 @@ class TestFeedbackAdminAuth(unittest.TestCase):
                     req.cookies = MagicMock()
                     req.headers.get.return_value = "secret"
                     req.cookies.get.return_value = ""
-                    self.assertTrue(ui_utils._feedback_admin_authorized(""))
+                    self.assertTrue(ui_utils._feedback_admin_authorized())
 
 
 class TestUrlState(unittest.TestCase):
@@ -126,6 +118,10 @@ class TestUrlState(unittest.TestCase):
             "d1_lap_mode": "specific",
             "d1_lap": 12,
             "d2_lap_mode": "fastest",
+            "tm_d1_lap_mode": "specific",
+            "tm_d1_lap": 14,
+            "tm_d2_lap_mode": "specific",
+            "tm_d2_lap": 15,
             "trackmap_mode": "speed",
         })
         parsed = callbacks_shared._parse_url_state(search)
@@ -134,6 +130,9 @@ class TestUrlState(unittest.TestCase):
         self.assertEqual(parsed["session_type"], "Race")
         self.assertEqual(parsed["d1_lap_mode"], "specific")
         self.assertEqual(parsed["d1_lap"], 12)
+        self.assertEqual(parsed["tm_d1_lap_mode"], "specific")
+        self.assertEqual(parsed["tm_d1_lap"], 14)
+        self.assertEqual(parsed["tm_d2_lap"], 15)
         self.assertEqual(parsed["trackmap_mode"], "speed")
 
     def test_invalid_url_view_state_is_ignored(self):
@@ -143,18 +142,6 @@ class TestUrlState(unittest.TestCase):
         self.assertIsNone(parsed["d1_lap"])
         self.assertIsNone(parsed["trackmap_mode"])
         self.assertNotIn("mode", parsed)
-
-    def test_url_omits_legacy_experience_mode(self):
-        params = {
-            "year": 2025,
-            "race": "British Grand Prix",
-            "session_type": "Race",
-            "driver1": "NOR",
-            "driver2": "PIA",
-        }
-        search = callbacks_shared._build_url_search(params, "tab-telemetry", {"mode": "engineer"})
-        self.assertNotIn("mode=", search)
-        self.assertNotIn("mode", callbacks_shared._parse_url_state("?mode=engineer"))
 
     def test_figure_cache_key_changes_with_tab_inputs(self):
         params = {
@@ -216,6 +203,93 @@ class TestGraphModules(unittest.TestCase):
         self.assertEqual(len(raw2), 7)
         self.assertEqual(norm1, [50.0] * 7)
         self.assertEqual(norm2, [50.0] * 7)
+
+    def test_race_position_trace_starts_at_the_grid(self):
+        class Laps(pd.DataFrame):
+            @property
+            def _constructor(self):
+                return Laps
+
+            def pick_drivers(self, driver):
+                return Laps(self[self['Driver'] == driver])
+
+        session = MagicMock()
+        session.laps = Laps([
+            {'Driver': 'VER', 'LapNumber': 1, 'Time': pd.Timedelta(seconds=90), 'Position': 3},
+            {'Driver': 'VER', 'LapNumber': 2, 'Time': pd.Timedelta(seconds=180), 'Position': 2},
+            {'Driver': 'NOR', 'LapNumber': 1, 'Time': pd.Timedelta(seconds=91), 'Position': 5},
+            {'Driver': 'NOR', 'LapNumber': 2, 'Time': pd.Timedelta(seconds=182), 'Position': 4},
+        ])
+        session.results = pd.DataFrame([
+            {'Abbreviation': 'VER', 'GridPosition': 6},
+            {'Abbreviation': 'NOR', 'GridPosition': 2},
+        ])
+
+        with patch.object(graphs_race, 'get_track_status_events', return_value=([], [], [])):
+            figure = graphs_race._build_race_gaps_fig(
+                session, 'VER', 'NOR', 'VER', 'NOR', '#4781D7', '#F47600',
+            )
+
+        self.assertEqual(list(figure.data[1].x)[0], 0)
+        self.assertEqual(list(figure.data[1].y)[0], 6.0)
+        self.assertEqual(list(figure.data[2].x)[0], 0)
+        self.assertEqual(list(figure.data[2].y)[0], 2.0)
+
+
+class TestStrategyInsights(unittest.TestCase):
+    class _Laps:
+        def __init__(self, frame):
+            self.frame = frame
+
+        def pick_drivers(self, driver):
+            return self.frame[self.frame['Driver'] == driver]
+
+    def test_stints_and_pit_impacts_are_compact_and_factual(self):
+        session = MagicMock()
+        session.laps = self._Laps(pd.DataFrame([
+            {'Driver': 'VER', 'LapNumber': 1, 'Stint': 1, 'Compound': 'SOFT', 'Position': 4, 'FreshTyre': True},
+            {'Driver': 'VER', 'LapNumber': 2, 'Stint': 1, 'Compound': 'SOFT', 'Position': 4, 'FreshTyre': True},
+            {'Driver': 'VER', 'LapNumber': 3, 'Stint': 2, 'Compound': 'MEDIUM', 'Position': 6, 'FreshTyre': True},
+            {'Driver': 'VER', 'LapNumber': 4, 'Stint': 2, 'Compound': 'MEDIUM', 'Position': 5, 'FreshTyre': True},
+        ]))
+
+        self.assertEqual(strategy_insights.build_driver_stints(session, 'VER'), [
+            {'compound': 'SOFT', 'stint': 1.0, 'start_lap': 1, 'end_lap': 2},
+            {'compound': 'MEDIUM', 'stint': 2.0, 'start_lap': 3, 'end_lap': 4},
+        ])
+        self.assertEqual(strategy_insights.build_driver_pit_impacts(session, 'VER'), [{
+            'pit_lap': 2,
+            'from_compound': 'SOFT',
+            'to_compound': 'MEDIUM',
+            'position_before': 4,
+            'position_after': 6,
+        }])
+
+
+class TestTelemetryGForce(unittest.TestCase):
+    def test_dynamics_estimate_normalizes_time_and_returns_finite_summary(self):
+        samples = np.arange(20, dtype=float)
+        telemetry = pd.DataFrame({
+            'Time': pd.to_timedelta(samples + 12, unit='s'),
+            'Distance': samples * 15,
+            'Speed': 160 + samples * 2,
+            'X': 100 * np.cos(samples / 8),
+            'Y': 100 * np.sin(samples / 8),
+        })
+
+        times, distances, lateral, longitudinal = telemetry_dynamics.calculate_g_series(telemetry)
+        self.assertAlmostEqual(times[0], 0.0)
+        self.assertEqual(len(distances), len(telemetry))
+        self.assertTrue(np.isfinite(lateral).all())
+        self.assertTrue(np.isfinite(longitudinal).all())
+
+    def test_replay_uses_browser_animation_loop(self):
+        with open('assets/scripts.js', encoding='utf-8') as script_file:
+            script = script_file.read()
+
+        self.assertIn('requestAnimationFrame(draw)', script)
+        self.assertIn('window.f1AnalyzerPlayback', script)
+        self.assertIn('Plotly can move the two mounted marker', script)
 
 
 class TestAiLapContext(unittest.TestCase):
@@ -362,8 +436,9 @@ class TestLapSelection(unittest.TestCase):
         )
         input_ids = [dependency.component_id for dependency in trackmap_callback["inputs"]]
 
-        self.assertIn("d1-lap-dropdown", input_ids)
-        self.assertIn("d2-lap-dropdown", input_ids)
+        self.assertIn("trackmap-d1-lap-dropdown", input_ids)
+        self.assertIn("trackmap-d2-lap-dropdown", input_ids)
+        self.assertNotIn("d1-lap-dropdown", input_ids)
 
         params = {
             "year": 2025,
@@ -831,81 +906,6 @@ class TestDeltaChartSegments(unittest.TestCase):
         self.assertNotIn(10.0, behind_x[~np.isnan(behind_y)].tolist())
 
 
-class TestPitStops(unittest.TestCase):
-    def test_pit_driver_id_maps_to_session_abbreviation(self):
-        session = MagicMock()
-        session.results = pd.DataFrame([
-            {
-                "Abbreviation": "VER",
-                "FirstName": "Max",
-                "LastName": "Verstappen",
-                "FullName": "Max Verstappen",
-            }
-        ])
-
-        code = graphs._resolve_pit_driver_code({"driverId": "max_verstappen", "driverCode": None}, session)
-
-        self.assertEqual(code, "VER")
-
-    def test_pit_stop_fallback_excludes_transits_without_tyre_stop(self):
-        class PickableLaps(pd.DataFrame):
-            @property
-            def _constructor(self):
-                return PickableLaps
-
-            def pick_drivers(self, driver):
-                return PickableLaps(self[self["Driver"] == driver])
-
-        session = MagicMock()
-        session.name = "Sprint"
-        session.results = pd.DataFrame([
-            {"Abbreviation": "VER", "TeamName": "Red Bull", "TeamColor": "4781D7"},
-            {"Abbreviation": "PER", "TeamName": "Red Bull", "TeamColor": "4781D7"},
-        ])
-        session.laps = PickableLaps([
-            {
-                "Driver": "VER",
-                "LapNumber": 10,
-                "PitInTime": pd.Timedelta(seconds=600),
-                "PitOutTime": pd.NaT,
-                "Stint": 1,
-                "Compound": "MEDIUM",
-                "FreshTyre": False,
-            },
-            {
-                "Driver": "VER",
-                "LapNumber": 11,
-                "PitInTime": pd.NaT,
-                "PitOutTime": pd.Timedelta(seconds=625),
-                "Stint": 2,
-                "Compound": "HARD",
-                "FreshTyre": True,
-            },
-            {
-                "Driver": "PER",
-                "LapNumber": 5,
-                "PitInTime": pd.Timedelta(seconds=300),
-                "PitOutTime": pd.NaT,
-                "Stint": 1,
-                "Compound": "MEDIUM",
-                "FreshTyre": False,
-            },
-            {
-                "Driver": "PER",
-                "LapNumber": 6,
-                "PitInTime": pd.NaT,
-                "PitOutTime": pd.Timedelta(seconds=323),
-                "Stint": 1,
-                "Compound": "MEDIUM",
-                "FreshTyre": False,
-            },
-        ])
-
-        fig = graphs._build_pit_stops_fig(session, "VER", "PER", "VER", "PER", "#4781D7", "#4781D7")
-
-        self.assertEqual(list(fig.data[0].x), ["VER L10"])
-
-
 class TestLatestRaceDefault(unittest.TestCase):
     def test_latest_race_default_uses_latest_past_race(self):
         expected = {
@@ -920,6 +920,15 @@ class TestLatestRaceDefault(unittest.TestCase):
 
 
 class TestPreloadJobs(unittest.TestCase):
+    def test_tab_profiles_match_their_data_requirements(self):
+        trackmap = data.get_preload_kwargs_for_tab('tab-trackmap')
+        racepace = data.get_preload_kwargs_for_tab('tab-racepace')
+
+        self.assertTrue(trackmap['telemetry'])
+        self.assertFalse(trackmap['weather'])
+        self.assertFalse(racepace['telemetry'])
+        self.assertTrue(racepace['weather'])
+
     def setUp(self):
         with data._SESSION_PRELOAD_LOCK:
             data._SESSION_PRELOAD_FUTURES.clear()

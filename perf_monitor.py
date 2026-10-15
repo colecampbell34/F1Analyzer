@@ -75,10 +75,3 @@ def get_perf_snapshot():
         "recent_session_events": list(reversed(session_events[-20:])),
         "generated_at": time.time(),
     }
-
-
-def reset_perf_snapshot():
-    """Clear rolling performance state. Intended for tests only."""
-    with _LOCK:
-        _CALLBACK_TIMINGS.clear()
-        _SESSION_EVENTS.clear()

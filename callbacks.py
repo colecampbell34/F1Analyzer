@@ -43,7 +43,8 @@ def _register_core_callbacks(app):
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='resizeVisiblePlots'),
         Output('plot-resize-sentinel', 'children'),
-        [Input('main-tabs', 'value'), Input('speed-graph', 'figure')]
+        [Input('main-tabs', 'value'), Input('speed-graph', 'figure'),
+         Input('preload-status-store', 'data')]
     )
 
     app.clientside_callback(
@@ -165,7 +166,7 @@ def _register_core_callbacks(app):
         Input('main-tabs', 'value')
     )
     def render_selected_analysis_view(active_tab):
-        return active_tab or 'tab-telemetry'
+        return active_tab or 'tab-trackmap'
 
     @app.callback(
         Output('trackmap-mode', 'value'),
@@ -484,10 +485,12 @@ def _register_core_callbacks(app):
 
         with _timed_callback('update_leaderboard', year=y, race=r, session=s):
             try:
-                from data import load_session_summary
+                from data import load_session_with_preload
                 from ui_utils import _build_leaderboard_children
 
-                session = load_session_summary(y, r, s, include_laps=True)
+                # The optional rail only needs lap metadata; keep it lighter
+                # than the active analysis view's telemetry profile.
+                session = load_session_with_preload(y, r, s, laps=True, telemetry=False)
                 return _build_leaderboard_children(session, s, year=y, race=r)
             except Exception as e:
                 from ui_utils import _friendly_error
@@ -629,7 +632,7 @@ def _register_core_callbacks(app):
                     "Choose a session and click Load analysis.",
                     title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
                 ),
-                "loading-status-banner status-idle",
+                "loading-status-banner sr-only status-idle",
                 {'status': 'idle'},
                 True
             )
@@ -646,13 +649,13 @@ def _register_core_callbacks(app):
         elif state == 'error':
             text = f"Could not load {profile} data: {status.get('error') or 'unknown error'}"
         elif state == 'direct':
-            text = f"Ready to load {profile} data for {session_label}."
+            text = f"Loading {profile} data for {session_label}…"
         else:
             text = f"Ready to load {profile} data for {session_label}."
         return html.Span(
             text,
             title='This status tracks whether the selected session profile is idle, loading, cached, or failed.'
-        ), f"loading-status-banner status-{state}", status, state not in ('queued', 'loading')
+        ), f"loading-status-banner sr-only status-{state}", status, state not in ('queued', 'loading')
 
     @app.callback(
         Output('graph-summary', 'children'),
@@ -666,8 +669,7 @@ def _register_core_callbacks(app):
             'tab-telemetry': 'telemetry',
             'tab-trackmap': 'track map',
             'tab-strategy': 'strategy',
-            'tab-race': 'race analysis',
-            'tab-gridpace': 'grid pace',
+            'tab-racepace': 'race and pace',
             'tab-ai': 'AI analysis',
         }.get(active_tab, 'analysis')
         return (
@@ -689,20 +691,30 @@ def _register_core_callbacks(app):
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
+         Input('trackmap-d1-lap-dropdown', 'value'), Input('trackmap-d2-lap-dropdown', 'value'),
          Input('trackmap-mode', 'value')],
         State('url', 'search'),
         prevent_initial_call=True
     )
-    def sync_url_with_dashboard(params, active_tab, d1_lap_value, d2_lap_value, trackmap_mode, current_search):
+    def sync_url_with_dashboard(
+        params, active_tab, d1_lap_value, d2_lap_value,
+        tm_d1_lap_value, tm_d2_lap_value, trackmap_mode, current_search,
+    ):
         if not params:
             raise PreventUpdate
         d1_specific = d1_lap_value not in (None, '', 'fastest')
         d2_specific = d2_lap_value not in (None, '', 'fastest')
+        tm_d1_specific = tm_d1_lap_value not in (None, '', 'fastest')
+        tm_d2_specific = tm_d2_lap_value not in (None, '', 'fastest')
         new_search = _build_url_search(params, active_tab, {
             'd1_lap_mode': 'specific' if d1_specific else 'fastest',
             'd2_lap_mode': 'specific' if d2_specific else 'fastest',
             'd1_lap': d1_lap_value if d1_specific else None,
             'd2_lap': d2_lap_value if d2_specific else None,
+            'tm_d1_lap_mode': 'specific' if tm_d1_specific else 'fastest',
+            'tm_d2_lap_mode': 'specific' if tm_d2_specific else 'fastest',
+            'tm_d1_lap': tm_d1_lap_value if tm_d1_specific else None,
+            'tm_d2_lap': tm_d2_lap_value if tm_d2_specific else None,
             'trackmap_mode': trackmap_mode,
         })
         if new_search == (current_search or ''):
@@ -713,13 +725,11 @@ def _register_core_callbacks(app):
     def update_tab_availability(session_type):
         if not session_type:
             return analysis_view_options()
-        from data import is_qualifying, is_practice, is_race
+        from data import is_qualifying, is_practice
 
         disabled_views = set()
         if is_qualifying(session_type) or is_practice(session_type):
             disabled_views.add('tab-strategy')
-        if not is_race(session_type):
-            disabled_views.add('tab-race')
         return analysis_view_options(disabled_views)
 
     @app.callback(
@@ -730,32 +740,43 @@ def _register_core_callbacks(app):
     def move_from_unavailable_tab(session_type, active_tab):
         if not session_type:
             raise PreventUpdate
-        from data import is_qualifying, is_practice, is_race
+        from data import is_qualifying, is_practice
 
         if active_tab == 'tab-strategy' and (is_qualifying(session_type) or is_practice(session_type)):
-            return 'tab-telemetry'
-        if active_tab == 'tab-race' and not is_race(session_type):
-            return 'tab-telemetry'
+            return 'tab-trackmap'
         raise PreventUpdate
 
     @app.callback(
         [Output('d1-lap-dropdown', 'options'), Output('d1-lap-dropdown', 'value'),
-         Output('d2-lap-dropdown', 'options'), Output('d2-lap-dropdown', 'value')],
+         Output('d2-lap-dropdown', 'options'), Output('d2-lap-dropdown', 'value'),
+         Output('trackmap-d1-lap-dropdown', 'options'), Output('trackmap-d1-lap-dropdown', 'value'),
+         Output('trackmap-d2-lap-dropdown', 'options'), Output('trackmap-d2-lap-dropdown', 'value')],
         [Input('dashboard-params-store', 'data')],
         [State('d1-lap-dropdown', 'value'), State('d2-lap-dropdown', 'value'),
+         State('trackmap-d1-lap-dropdown', 'value'), State('trackmap-d2-lap-dropdown', 'value'),
          State('url', 'search')]
     )
-    def update_lap_dropdown_options(params, current_d1_lap, current_d2_lap, url_search):
+    def update_lap_dropdown_options(
+        params, current_d1_lap, current_d2_lap,
+        current_tm_d1_lap, current_tm_d2_lap, url_search,
+    ):
         if not params:
             default_options = [{'label': 'Fastest', 'value': 'fastest'}]
-            return default_options, 'fastest', default_options, 'fastest'
+            return (
+                default_options, 'fastest', default_options, 'fastest',
+                default_options, 'fastest', default_options, 'fastest',
+            )
 
         year, race, session_type = params['year'], params['race'], params['session_type']
 
         try:
-            from data import load_session_summary
+            from data import load_session_with_preload
 
-            session = load_session_summary(year, race, session_type, include_laps=True)
+            # The active view preload owns this profile, so lap controls should
+            # join it rather than begin another identical session request.
+            session = load_session_with_preload(
+                year, race, session_type, laps=True, telemetry=True, weather=False, messages=False,
+            )
 
             def _options_for_driver(driver):
                 options = [{'label': 'Fastest', 'value': 'fastest'}]
@@ -800,10 +821,17 @@ def _register_core_callbacks(app):
                 _valid_value(current_d1_lap, d1_options, _url_value('d1')),
                 d2_options,
                 _valid_value(current_d2_lap, d2_options, _url_value('d2')),
+                d1_options,
+                _valid_value(current_tm_d1_lap, d1_options, _url_value('tm_d1')),
+                d2_options,
+                _valid_value(current_tm_d2_lap, d2_options, _url_value('tm_d2')),
             )
         except Exception:
             default_options = [{'label': 'Fastest', 'value': 'fastest'}]
-            return default_options, 'fastest', default_options, 'fastest'
+            return (
+                default_options, 'fastest', default_options, 'fastest',
+                default_options, 'fastest', default_options, 'fastest',
+            )
 
     app.clientside_callback(
         ClientsideFunction(namespace='clientside', function_name='downloadActiveChart'),

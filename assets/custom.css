@@ -368,8 +368,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
 
     #strategy-graph,
     #deg-graph,
-    #race-gaps-graph,
-    #pit-stops-graph {
+    #race-gaps-graph {
         height: min(46vh, 420px) !important;
     }
 
@@ -408,7 +407,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
 /*
    Race Intelligence system
    ------------------------
-   A restrained, editorial treatment layered after the legacy styles while the
+   A restrained, editorial treatment layered after the base styles while the
    dashboard keeps its stable Dash component IDs.  The visual language is
    intentionally functional: graphite surfaces, hairline rules, compact type,
    and a single signal-red action colour.

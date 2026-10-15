@@ -491,6 +491,10 @@ def _prepare_selected_lap_comparison_cached(
         'lap2': lap2,
         'tel1': tel1,
         'tel2': tel2,
+        # Keep official circuit markers with local payloads as well as shared
+        # cache payloads. Track Map and Dynamics use the same evidence rather
+        # than falling back to an inferred speed dip on local requests.
+        'circuit_corners': _circuit_corners_to_shared_wire(session),
     }
 
 
