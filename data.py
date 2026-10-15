@@ -284,6 +284,40 @@ def _session_has_lap_data(session):
         return False
 
 
+def _set_missing_optional_streams(session, weather=False, messages=False):
+    """Give soft-failed FastF1 optional streams a safe empty representation.
+
+    FastF1 deliberately swallows errors from some upstream endpoints. In that
+    case ``Session.load(weather=True)`` returns normally, but accessing
+    ``session.weather_data`` later raises ``DataNotLoadedError``. Charts should
+    still render their timing-based analysis when weather or race-control data
+    is unavailable, so normalize those optional streams at the loading
+    boundary rather than leaving a partially initialized session in the cache.
+    """
+    if weather:
+        try:
+            session.weather_data
+        except Exception:
+            session._weather_data = pd.DataFrame()
+            session._weather_unavailable = True
+    if messages:
+        try:
+            session.race_control_messages
+        except Exception:
+            session._race_control_messages = pd.DataFrame()
+            session._messages_unavailable = True
+    return session
+
+
+def _require_requested_lap_data(session):
+    """Reject a silently partial FastF1 session before it reaches a chart."""
+    if not _session_has_lap_data(session):
+        raise RuntimeError(
+            'No lap data was loaded for this session. FastF1 returned only partial session metadata.'
+        )
+    return session
+
+
 def _openf1_fallback_enabled():
     """Return whether the selected-lap OpenF1 fallback may be used."""
     return str(os.getenv('OPENF1_FALLBACK_ENABLED', '1')).lower() not in {
@@ -346,6 +380,9 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                     try:
                         loaded = _load(session, include_telemetry=True)
                         last_loaded_session = loaded
+                        if laps:
+                            _require_requested_lap_data(loaded)
+                        _set_missing_optional_streams(loaded, weather=weather, messages=messages)
                         if not _session_has_usable_car_telemetry(loaded):
                             raise RuntimeError(
                                 'FastF1 completed the session load but returned no usable car-speed data.'
@@ -398,7 +435,10 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
 
         session = _new_session()
         try:
-            return _load(session, include_telemetry=False)
+            loaded = _load(session, include_telemetry=False)
+            if laps:
+                _require_requested_lap_data(loaded)
+            return _set_missing_optional_streams(loaded, weather=weather, messages=messages)
         except Exception as exc:
             logging.warning(
                 "Session profile load failed (laps=%s weather=%s messages=%s) for %s %s %s: %s",
@@ -410,10 +450,20 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
             fallback = _new_session()
             try:
                 fallback.load(laps=bool(laps), telemetry=False, weather=False, messages=False)
+                if laps:
+                    _require_requested_lap_data(fallback)
                 if weather:
+                    fallback._weather_data = pd.DataFrame()
                     fallback._weather_unavailable = True
+                if messages:
+                    fallback._race_control_messages = pd.DataFrame()
+                    fallback._messages_unavailable = True
                 return fallback
-            except Exception:
+            except Exception as fallback_exc:
+                if laps:
+                    raise RuntimeError(
+                        'No lap data was loaded for this session. FastF1 returned only partial session metadata.'
+                    ) from fallback_exc
                 metadata = _new_session()
                 metadata.load(laps=False, telemetry=False, weather=False, messages=False)
                 metadata._laps_unavailable = True

@@ -943,10 +943,16 @@ class TestPreloadJobs(unittest.TestCase):
     def test_telemetry_load_retries_when_fastf1_returns_an_empty_car_data_feed(self):
         empty_session = MagicMock()
         empty_session.car_data = {}
+        empty_session.laps = pd.DataFrame([
+            {'DriverNumber': '1', 'LapNumber': 4},
+        ])
         recovered_session = MagicMock()
         recovered_session.car_data = {
             '1': pd.DataFrame({'Speed': [100.0] * 6}),
         }
+        recovered_session.laps = pd.DataFrame([
+            {'DriverNumber': '1', 'LapNumber': 4},
+        ])
 
         with (
             patch.object(data, '_ensure_cache_ready'),
@@ -992,6 +998,45 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertTrue(loaded._fastf1_telemetry_unavailable)
         self.assertEqual(get_session.call_count, 1)
         enable_cache.assert_not_called()
+
+    def test_partial_lap_session_is_rejected_before_reaching_a_chart(self):
+        partial_session = MagicMock()
+        partial_session.laps = pd.DataFrame()
+
+        with (
+            patch.object(data, '_ensure_cache_ready'),
+            patch('fastf1.get_session', return_value=partial_session),
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'No lap data was loaded'):
+                data._load_session_granular_cached(
+                    2025, 'British Grand Prix', 'Race', laps=True, telemetry=False,
+                )
+
+    def test_missing_optional_weather_becomes_an_empty_stream(self):
+        class SessionWithoutWeather:
+            laps = pd.DataFrame([{'DriverNumber': '1', 'LapNumber': 4}])
+
+            def load(self, **_kwargs):
+                return None
+
+            @property
+            def weather_data(self):
+                if not hasattr(self, '_weather_data'):
+                    raise RuntimeError('weather has not been loaded')
+                return self._weather_data
+
+        session = SessionWithoutWeather()
+        with (
+            patch.object(data, '_ensure_cache_ready'),
+            patch('fastf1.get_session', return_value=session),
+        ):
+            loaded = data._load_session_granular_cached(
+                2025, 'British Grand Prix', 'Race', laps=True, telemetry=False, weather=True,
+            )
+
+        self.assertIs(loaded, session)
+        self.assertTrue(loaded._weather_unavailable)
+        self.assertTrue(loaded.weather_data.empty)
 
     def test_direct_profile_singleflight_dedupes_concurrent_telemetry_callbacks(self):
         entered = threading.Event()
@@ -1229,6 +1274,7 @@ class TestRobustErrorHandling(unittest.TestCase):
     def test_friendly_error_translates_telemetry_and_date_errors(self):
         e1 = KeyError("None of [Index(['Date'], dtype='object')] are in the columns")
         e2 = ValueError("telemetry data is not available")
+        e3 = RuntimeError("The data you are trying to access has not been loaded yet. See `Session.load`")
         
         self.assertEqual(
             ui_utils._friendly_error(e1),
@@ -1237,6 +1283,11 @@ class TestRobustErrorHandling(unittest.TestCase):
         self.assertEqual(
             ui_utils._friendly_error(e2),
             "Telemetry data is not available or is incomplete for this session from the F1 live timing feed."
+        )
+        self.assertEqual(
+            ui_utils._friendly_error(e3),
+            "FastF1 returned incomplete session data. Please retry in a few minutes; "
+            "the upstream timing feed may still be syncing."
         )
 
     def test_clean_pace_laps_with_missing_columns(self):

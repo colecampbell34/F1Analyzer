@@ -3,10 +3,11 @@
 dash>=3.0,<5
 dash-bootstrap-components>=2.0,<3
 plotly>=6.0,<7
-# Pin the release tested against the production telemetry sessions. FastF1
-# updates independently of this app, so a broad 3.x range made deployments
-# change behavior without a source change here.
-fastf1==3.8.3
+# Pin the known-good release used by the local app. FastF1 3.8.3 can complete
+# ``Session.load`` while leaving required streams unset, which breaks deployed
+# callbacks with ``DataNotLoadedError``. A broad 3.x range would let that
+# regression return without a source change here.
+fastf1==3.8.1
 pandas>=2.2,<3
 numpy>=1.26,<3
 scipy>=1.12,<2

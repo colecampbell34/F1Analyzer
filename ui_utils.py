@@ -8,8 +8,15 @@ def _friendly_error(e):
     """Translate cryptic FastF1/network errors to user-friendly messages."""
     msg = str(e)
     lower_msg = msg.lower()
-    if 'data has not been loaded' in lower_msg or 'session does not exist' in lower_msg:
-        return "This session is not live in FastF1 yet. If the weekend has not started or the data feed is still syncing, try again shortly."
+    if (
+        'data has not been loaded' in lower_msg
+        or ('has not been loaded' in lower_msg and 'session.load' in lower_msg)
+        or 'session does not exist' in lower_msg
+    ):
+        return (
+            "FastF1 returned incomplete session data. Please retry in a few minutes; "
+            "the upstream timing feed may still be syncing."
+        )
     if '404' in msg:
         return "This session's data is not available yet. It may not have started, or FastF1 has not published it yet."
     if '503' in msg or '502' in msg or 'Connection' in lower_msg:
