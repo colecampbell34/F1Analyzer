@@ -5,6 +5,7 @@ import time
 import logging
 import hashlib
 import re
+import colorsys
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import lru_cache
 import pandas as pd
@@ -96,6 +97,10 @@ _COLOR_FALLBACK_PALETTE = (
     '#B46CFF', '#FFD166'
 )
 
+# A small high-contrast palette used only when the two compared teams would
+# otherwise merge visually (for example Ferrari/Audi or the blue teams).
+_COMPARISON_SECONDARY_COLORS = ('#FFD166', '#B46CFF', '#00D7B6')
+
 
 
 # --- SESSION TYPE HELPERS ---
@@ -128,6 +133,70 @@ def _normalize_color_value(value):
     if len(color) != 6 or not all(ch in '0123456789abcdefABCDEF' for ch in color):
         return None
     return f"#{color.upper()}"
+
+
+def _hex_to_rgb(color):
+    """Return an RGB tuple for a normalized CSS hex color, or None."""
+    normalized = _normalize_color_value(color)
+    if not normalized:
+        return None
+    return tuple(int(normalized[index:index + 2], 16) for index in (1, 3, 5))
+
+
+def _colors_are_visually_similar(first, second):
+    """Return whether two team colors need separating in a two-driver plot."""
+    first_rgb, second_rgb = _hex_to_rgb(first), _hex_to_rgb(second)
+    if not first_rgb or not second_rgb:
+        return first == second
+    if first_rgb == second_rgb:
+        return True
+
+    first_hsv = colorsys.rgb_to_hsv(*(channel / 255 for channel in first_rgb))
+    second_hsv = colorsys.rgb_to_hsv(*(channel / 255 for channel in second_rgb))
+    hue_gap = abs(first_hsv[0] - second_hsv[0])
+    hue_gap = min(hue_gap, 1 - hue_gap)
+
+    # Near-identical hue families are hard to distinguish as overlapping thin
+    # traces even when one is modestly lighter or more saturated.
+    return (
+        hue_gap <= (28 / 360)
+        and abs(first_hsv[1] - second_hsv[1]) <= 0.48
+        and abs(first_hsv[2] - second_hsv[2]) <= 0.42
+    )
+
+
+def _distinct_comparison_colors(primary, secondary):
+    """Keep team colors unless the selected pair is visually ambiguous."""
+    if not _colors_are_visually_similar(primary, secondary):
+        return primary, secondary
+    for candidate in _COMPARISON_SECONDARY_COLORS:
+        if not _colors_are_visually_similar(primary, candidate):
+            return primary, candidate
+    return primary, '#FFFFFF'
+
+
+def distinct_plot_colors(colors):
+    """Return plot colors with later near-duplicates moved to signal colors.
+
+    This is for multi-driver charts, where several team colors can belong to
+    the same red or blue family. The earliest color remains canonical and each
+    ambiguous later trace receives the first available contrasting color.
+    """
+    resolved = []
+    candidates = _COMPARISON_SECONDARY_COLORS + _COLOR_FALLBACK_PALETTE + ('#FFFFFF',)
+    for color in colors:
+        if not any(_colors_are_visually_similar(color, existing) for existing in resolved):
+            resolved.append(color)
+            continue
+        replacement = next(
+            (
+                candidate for candidate in candidates
+                if not any(_colors_are_visually_similar(candidate, existing) for existing in resolved)
+            ),
+            '#FFFFFF',
+        )
+        resolved.append(replacement)
+    return resolved
 
 
 def _team_color_key(team_name):
@@ -356,6 +425,7 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
         if telemetry:
             failures = []
             cache_renewed = False
+            lap_cache_recovery_attempted = False
             last_loaded_session = None
             # On Vercel, an empty FastF1 car stream has repeatedly been a
             # deterministic egress/content problem rather than a one-off
@@ -367,7 +437,8 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                 else TELEMETRY_LOAD_ATTEMPTS
             )
             try:
-                for attempt in range(attempt_count):
+                attempt = 0
+                while attempt < attempt_count:
                     if attempt:
                         # FastF1 can cache a syntactically valid but empty car
                         # data response. On the retry, bypass both cache stages
@@ -394,8 +465,26 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                             "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
                             attempt + 1, attempt_count, year, race, session_name, exc,
                         )
+                        # Missing laps are distinct from the serverless
+                        # car-stream condition handled by the OpenF1 fallback:
+                        # without laps there is no selected-lap metadata to
+                        # preserve. FastF1 can cache a valid-looking but empty
+                        # timing response, so renew it once even on Vercel.
+                        if (
+                            laps
+                            and not lap_cache_recovery_attempted
+                            and last_loaded_session is not None
+                            and not _session_has_lap_data(last_loaded_session)
+                        ):
+                            lap_cache_recovery_attempted = True
+                            attempt_count = max(attempt_count, attempt + 2)
+                            logging.warning(
+                                "lap_payload_empty_retrying_with_renewed_cache year=%s race=%s session=%s",
+                                year, race, session_name,
+                            )
                         if attempt + 1 < attempt_count:
                             time.sleep(0.15 * (attempt + 1))
+                        attempt += 1
             finally:
                 if cache_renewed:
                     # Return later requests to normal cached operation. The
@@ -434,6 +523,7 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
             ) from root_cause
 
         session = _new_session()
+        cache_renewed = False
         try:
             loaded = _load(session, include_telemetry=False)
             if laps:
@@ -444,6 +534,31 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
                 "Session profile load failed (laps=%s weather=%s messages=%s) for %s %s %s: %s",
                 laps, weather, messages, year, race, session_name, exc,
             )
+            # A cached empty timing stream is recoverable. Renew it once
+            # before surfacing a data-unavailable message, particularly on a
+            # fresh Vercel instance where FastF1's local cache is ephemeral.
+            if laps and not _session_has_lap_data(session):
+                try:
+                    fastf1.Cache.enable_cache(_CACHE_DIR, force_renew=True)
+                    cache_renewed = True
+                    renewed_session = _new_session()
+                    renewed_loaded = _load(renewed_session, include_telemetry=False)
+                    _require_requested_lap_data(renewed_loaded)
+                    logging.warning(
+                        "lap_payload_recovered_after_cache_renewal year=%s race=%s session=%s",
+                        year, race, session_name,
+                    )
+                    return _set_missing_optional_streams(
+                        renewed_loaded, weather=weather, messages=messages,
+                    )
+                except Exception as renewed_exc:
+                    logging.warning(
+                        "lap_payload_recovery_failed year=%s race=%s session=%s cause_type=%s",
+                        year, race, session_name, type(renewed_exc).__name__,
+                    )
+                finally:
+                    if cache_renewed:
+                        fastf1.Cache.enable_cache(_CACHE_DIR)
             # Non-telemetry tabs can still offer useful metadata if ancillary
             # data feeds fail. This fallback is deliberately not used for
             # telemetry requests above.
@@ -1019,9 +1134,10 @@ def _compute_labels_colors(year, race, session_type, d1, d2):
     """
     session = load_session_summary(year, race, session_type, include_laps=False)
 
-    c1, c2 = resolve_driver_color(d1, session), resolve_driver_color(d2, session)
-    if c1.lower() == c2.lower():
-        c2 = '#ffffff' if c1.lower() != '#ffffff' else '#ffff00'
+    c1, c2 = _distinct_comparison_colors(
+        resolve_driver_color(d1, session),
+        resolve_driver_color(d2, session),
+    )
     try:
         if session.results is not None and not session.results.empty:
             res1 = session.results[session.results['Abbreviation'] == d1]

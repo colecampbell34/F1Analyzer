@@ -841,3 +841,93 @@ div[class*="tab-container"] {
         grid-template-columns: 1fr;
     }
 }
+
+/* Keep optional session context discoverable without competing with the main
+   comparison action. */
+.sidebar-leaderboard-hint {
+    margin: 0.15rem 0 0.55rem;
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    line-height: 1.35;
+}
+
+.sidebar-leaderboard-btn {
+    min-height: 36px;
+    border-color: var(--line-strong) !important;
+    color: #fff !important;
+}
+
+.sidebar-leaderboard-btn:hover,
+.sidebar-leaderboard-btn:focus-visible {
+    border-color: var(--f1-red) !important;
+    background: rgba(227, 44, 49, 0.12) !important;
+}
+
+/* Desktop selection rail: keep the toggle centered on the divider so the
+   workspace can expand without losing the current selection. */
+.sidebar-collapse-btn {
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .sidebar-col {
+        position: relative;
+        transition: flex-basis 0.18s ease, width 0.18s ease;
+    }
+
+    .sidebar-collapse-btn {
+        /* Fixed positioning keeps the rail control above Plotly and the
+           workspace instead of letting either column clip it. */
+        position: fixed;
+        z-index: 3000;
+        top: 50%;
+        left: 278px;
+        right: auto;
+        display: grid;
+        width: 38px;
+        height: 72px;
+        padding: 0;
+        place-items: center;
+        transform: translateY(-50%);
+        border: 1px solid #ff6267;
+        border-radius: 0 5px 5px 0;
+        background: var(--f1-red);
+        box-shadow: 0 3px 16px rgba(0, 0, 0, 0.48);
+        color: #fff;
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+        cursor: pointer;
+    }
+
+    .sidebar-collapse-btn:hover,
+    .sidebar-collapse-btn:focus-visible {
+        border-color: #fff;
+        background: var(--f1-red-deep);
+        outline: none;
+    }
+
+    .sidebar-collapsed .sidebar-col {
+        flex: 0 0 0 !important;
+        width: 0 !important;
+        max-width: 0 !important;
+        border-right: 0 !important;
+        overflow: visible !important;
+    }
+
+    .sidebar-collapsed .sidebar-panel {
+        padding: 0 !important;
+        overflow: visible !important;
+    }
+
+    .sidebar-collapsed .sidebar-panel > :not(.sidebar-collapse-btn) {
+        visibility: hidden;
+        pointer-events: none;
+    }
+
+    .sidebar-collapsed .sidebar-collapse-btn {
+        left: 0;
+        right: auto;
+    }
+
+}

@@ -61,9 +61,10 @@ def _register_core_callbacks(app):
          Input('dashboard-params-store', 'data'),
          Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
          Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
-         Input('driver2-dropdown', 'value'), Input('mobile-setup-open-store', 'data')]
+         Input('driver2-dropdown', 'value'), Input('mobile-setup-open-store', 'data'),
+         Input('sidebar-collapsed-store', 'data')]
     )
-    def update_app_root_class(replay_focus, params, year, race, session_type, driver1, driver2, mobile_setup_open):
+    def update_app_root_class(replay_focus, params, year, race, session_type, driver1, driver2, mobile_setup_open, sidebar_collapsed):
         classes = ['app-root']
         if mobile_setup_open:
             classes.append('mobile-setup-open')
@@ -84,7 +85,22 @@ def _register_core_callbacks(app):
             classes.append('mobile-flow-loaded' if loaded_matches_selection else 'mobile-flow-ready mobile-flow-dirty')
         if replay_focus:
             classes.append('replay-focus-active')
+        if sidebar_collapsed:
+            classes.append('sidebar-collapsed')
         return ' '.join(classes)
+
+    @app.callback(
+        [Output('sidebar-collapsed-store', 'data'),
+         Output('sidebar-collapse-btn', 'children')],
+        Input('sidebar-collapse-btn', 'n_clicks'),
+        State('sidebar-collapsed-store', 'data'),
+        prevent_initial_call=True,
+    )
+    def toggle_sidebar(n_clicks, collapsed):
+        if not n_clicks:
+            raise PreventUpdate
+        next_collapsed = not bool(collapsed)
+        return next_collapsed, ('›' if next_collapsed else '‹')
 
     @app.callback(
         Output('mobile-setup-open-store', 'data'),
@@ -199,9 +215,9 @@ def _register_core_callbacks(app):
     @app.callback(
         [Output('race-dropdown', 'options'), Output('race-dropdown', 'value')],
         [Input('year-dropdown', 'value'), Input('latest-race-store', 'data')],
-        State('url', 'search')
+        [State('url', 'search'), State('race-dropdown', 'value')]
     )
-    def update_races(year, latest_race, url_search):
+    def update_races(year, latest_race, url_search, persisted_race):
         if not year:
             return [], None
 
@@ -226,6 +242,9 @@ def _register_core_callbacks(app):
             if url_state.get('race') and url_state['race'] in race_names:
                 return options, url_state['race']
 
+            if persisted_race in race_names:
+                return options, persisted_race
+
             return options, None
         except Exception as e:
             logging.error(f"Race Loading Error: {e}")
@@ -234,9 +253,9 @@ def _register_core_callbacks(app):
     @app.callback(
         [Output('session-dropdown', 'options'), Output('session-dropdown', 'value')],
         [Input('race-dropdown', 'value'), Input('latest-race-store', 'data')],
-        [State('year-dropdown', 'value'), State('url', 'search')]
+        [State('year-dropdown', 'value'), State('url', 'search'), State('session-dropdown', 'value')]
     )
-    def update_sessions(race, latest_race, year, url_search):
+    def update_sessions(race, latest_race, year, url_search, persisted_session):
         if not race or not year:
             return [], None
 
@@ -258,8 +277,11 @@ def _register_core_callbacks(app):
             ):
                 return options, latest_race['session_type']
 
-            if url_state.get('session') and url_state['session'] in sessions:
-                return options, url_state['session']
+            if url_state.get('session_type') and url_state['session_type'] in sessions:
+                return options, url_state['session_type']
+
+            if persisted_session in sessions:
+                return options, persisted_session
 
             return options, None
         except Exception as e:
@@ -271,9 +293,10 @@ def _register_core_callbacks(app):
          Output('driver2-dropdown', 'options'), Output('driver2-dropdown', 'value')],
         [Input('session-dropdown', 'value')],
         [State('year-dropdown', 'value'), State('race-dropdown', 'value'),
-         State('url', 'search')]
+         State('url', 'search'), State('driver1-dropdown', 'value'),
+         State('driver2-dropdown', 'value')]
     )
-    def update_drivers(session_type, year, race, url_search):
+    def update_drivers(session_type, year, race, url_search, persisted_d1, persisted_d2):
         if not session_type or not year or not race:
             return [], None, [], None
 
@@ -292,20 +315,26 @@ def _register_core_callbacks(app):
             ]
             abbrs = [d['abbr'] for d in driver_info]
 
-            # Logic: Only use URL drivers if the session matches the URL.
-            # If the user has changed the session dropdown, url_state['session_type'] 
-            # will still be the old one (or None), so we trigger the Top 2 default.
-            if session_type == url_state.get('session_type'):
-                d1_val = url_state.get('driver1')
-                d2_val = url_state.get('driver2')
-                
-                # Validation
-                if d1_val not in abbrs: d1_val = abbrs[0] if abbrs else None
-                if d2_val not in abbrs: d2_val = abbrs[1] if len(abbrs) > 1 else None
-            else:
-                # Session changed or no URL match -> Top 2
-                d1_val = abbrs[0] if abbrs else None
-                d2_val = abbrs[1] if len(abbrs) > 1 else None
+            # Only a complete matching URL may supply a driver. A partial or
+            # stale query string must not replace persisted drivers with Top 2
+            # during browser hydration.
+            url_matches_current_session = (
+                url_state.get('year') == int(year)
+                and url_state.get('race') == race
+                and url_state.get('session_type') == session_type
+            )
+            url_d1 = url_state.get('driver1') if url_matches_current_session else None
+            url_d2 = url_state.get('driver2') if url_matches_current_session else None
+            d1_val = (
+                url_d1 if url_d1 in abbrs
+                else persisted_d1 if persisted_d1 in abbrs
+                else (abbrs[0] if abbrs else None)
+            )
+            d2_val = (
+                url_d2 if url_d2 in abbrs
+                else persisted_d2 if persisted_d2 in abbrs
+                else (abbrs[1] if len(abbrs) > 1 else None)
+            )
 
             return options, d1_val, options, d2_val
         except Exception as e:
@@ -690,6 +719,9 @@ def _register_core_callbacks(app):
     @app.callback(
         Output('url', 'search', allow_duplicate=True),
         [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+         Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
+         Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
+         Input('driver2-dropdown', 'value'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('trackmap-d1-lap-dropdown', 'value'), Input('trackmap-d2-lap-dropdown', 'value'),
          Input('trackmap-mode', 'value')],
@@ -697,16 +729,28 @@ def _register_core_callbacks(app):
         prevent_initial_call=True
     )
     def sync_url_with_dashboard(
-        params, active_tab, d1_lap_value, d2_lap_value,
+        params, active_tab, year, race, session_type, driver1, driver2,
+        d1_lap_value, d2_lap_value,
         tm_d1_lap_value, tm_d2_lap_value, trackmap_mode, current_search,
     ):
-        if not params:
+        selected_params = (
+            {
+                'year': year,
+                'race': race,
+                'session_type': session_type,
+                'driver1': driver1,
+                'driver2': driver2,
+            }
+            if all([year, race, session_type, driver1, driver2])
+            else params
+        )
+        if not selected_params:
             raise PreventUpdate
         d1_specific = d1_lap_value not in (None, '', 'fastest')
         d2_specific = d2_lap_value not in (None, '', 'fastest')
         tm_d1_specific = tm_d1_lap_value not in (None, '', 'fastest')
         tm_d2_specific = tm_d2_lap_value not in (None, '', 'fastest')
-        new_search = _build_url_search(params, active_tab, {
+        new_search = _build_url_search(selected_params, active_tab, {
             'd1_lap_mode': 'specific' if d1_specific else 'fastest',
             'd2_lap_mode': 'specific' if d2_specific else 'fastest',
             'd1_lap': d1_lap_value if d1_specific else None,

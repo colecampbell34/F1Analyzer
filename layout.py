@@ -207,19 +207,30 @@ sidebar = html.Div([
         ], className='workflow-submit'),
 
         html.Details([
-            html.Summary("Optional: session leaderboard",
+            html.Summary("Session leaderboard",
                          title='View session order or best-lap ranking before choosing drivers.'),
             html.Div([
-                dbc.Button("Load leaderboard", id='update-leaderboard-btn', color='secondary', outline=True,
+                html.Div("Check the classified order or best-lap ranking before loading a comparison.",
+                         className='sidebar-leaderboard-hint'),
+                dbc.Button([html.I(className="fas fa-list-ol me-2"), "Load session leaderboard"],
+                           id='update-leaderboard-btn', color='secondary', outline=True,
                            size='sm', n_clicks=0, className='sidebar-leaderboard-btn',
                            title='Refresh the session order without changing the main comparison'),
                 dcc.Loading(type='dot', color='#ff0000', children=[
                     html.Div(id='leaderboard-container')
                 ])
             ], className='sidebar-leaderboard')
-        ], className='sidebar-optional-section')
+        ], className='sidebar-optional-section', open=True)
     ], className='sidebar-controls', style={'flex': '1 1 auto', 'overflowY': 'auto', 'paddingRight': '5px', 'marginBottom': '1rem'}),
 
+    html.Button(
+        "‹",
+        id='sidebar-collapse-btn',
+        className='sidebar-collapse-btn',
+        n_clicks=0,
+        title='Collapse or expand the selection panel',
+        **{'aria-label': 'Collapse or expand the selection panel'},
+    ),
 ], className='sidebar-panel', style={"padding": "1rem", "backgroundColor": "#111111", "height": "100vh",
           "display": "flex", "flexDirection": "column", "overflow": "hidden"})
 
@@ -742,6 +753,7 @@ app_layout = dbc.Container([
     dcc.Store(id='preload-status-store', storage_type='memory'),
     dcc.Store(id='active-tab-preload-store', storage_type='memory'),
     dcc.Store(id='mobile-setup-open-store', storage_type='memory', data=False),
+    dcc.Store(id='sidebar-collapsed-store', storage_type='local', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
     dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=True),
     dcc.Store(id='feedback-refresh-store'),

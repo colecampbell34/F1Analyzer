@@ -12,6 +12,7 @@ import data
 import ui_utils
 import ai_cache
 import callbacks_shared
+import callbacks
 import callbacks_ai
 import callbacks_tabs
 import callbacks_telemetry
@@ -74,6 +75,29 @@ class TestTeamColorFallbacks(unittest.TestCase):
         info = data.get_driver_info(session)
 
         self.assertEqual([driver["color"] for driver in info], ["#4781D7", "#F47600"])
+
+    def test_comparison_colors_separate_near_identical_team_hues(self):
+        self.assertEqual(
+            data._distinct_comparison_colors('#F50537', '#ED1131'),
+            ('#F50537', '#FFD166'),
+        )
+        self.assertEqual(
+            data._distinct_comparison_colors('#00A1E8', '#6C98FF'),
+            ('#00A1E8', '#FFD166'),
+        )
+
+    def test_comparison_colors_preserve_distinct_team_hues(self):
+        self.assertEqual(
+            data._distinct_comparison_colors('#F47600', '#00D7B6'),
+            ('#F47600', '#00D7B6'),
+        )
+
+    def test_multi_driver_plot_colors_separate_repeated_hue_families(self):
+        colors = data.distinct_plot_colors(['#4781D7', '#6C98FF', '#00A1E8'])
+
+        self.assertEqual(colors[0], '#4781D7')
+        self.assertEqual(colors[1], '#FFD166')
+        self.assertEqual(colors[2], '#B46CFF')
 
 
 class TestAiCache(unittest.TestCase):
@@ -158,6 +182,91 @@ class TestUrlState(unittest.TestCase):
 
         self.assertNotEqual(base, changed_mode)
         self.assertNotEqual(base, changed_driver)
+
+
+class TestSelectionPersistence(unittest.TestCase):
+    class FakeDashApp:
+        def __init__(self):
+            self.callbacks = []
+
+        def callback(self, outputs, inputs=None, *args, **kwargs):
+            def decorator(func):
+                self.callbacks.append({
+                    'outputs': outputs,
+                    'inputs': inputs,
+                    'args': args,
+                    'kwargs': kwargs,
+                    'func': func,
+                })
+                return func
+            return decorator
+
+        def clientside_callback(self, *_args, **_kwargs):
+            return None
+
+    def setUp(self):
+        self.app = self.FakeDashApp()
+        callbacks._register_core_callbacks(self.app)
+
+    def _callback_for_output(self, component_id):
+        for callback in self.app.callbacks:
+            outputs = callback['outputs']
+            dependencies = outputs if isinstance(outputs, (list, tuple)) else [outputs]
+            if any(output.component_id == component_id for output in dependencies):
+                return callback['func']
+        self.fail(f'No callback produces {component_id}')
+
+    def test_refresh_keeps_valid_race_session_and_driver_values(self):
+        update_races = self._callback_for_output('race-dropdown')
+        update_sessions = self._callback_for_output('session-dropdown')
+        update_drivers = self._callback_for_output('driver1-dropdown')
+
+        with patch('static_schedule.get_static_races', return_value=('Singapore Grand Prix',)):
+            _, race = update_races(2026, None, '', 'Singapore Grand Prix')
+        with patch('static_schedule.get_static_sessions', return_value=('Practice 1', 'Race')):
+            _, session = update_sessions('Singapore Grand Prix', None, 2026, '', 'Race')
+        with patch.object(data, '_load_drivers_fast', return_value=[
+            {'abbr': 'VER', 'name': 'Max Verstappen'},
+            {'abbr': 'NOR', 'name': 'Lando Norris'},
+            {'abbr': 'LEC', 'name': 'Charles Leclerc'},
+        ]):
+            _, d1, _, d2 = update_drivers(
+                'Race', 2026, 'Singapore Grand Prix', '', 'LEC', 'NOR'
+            )
+
+        self.assertEqual((race, session, d1, d2), ('Singapore Grand Prix', 'Race', 'LEC', 'NOR'))
+
+    def test_partial_url_does_not_reset_persisted_drivers(self):
+        update_drivers = self._callback_for_output('driver1-dropdown')
+        url = '?year=2026&race=Singapore+Grand+Prix&session=Race'
+        with patch.object(data, '_load_drivers_fast', return_value=[
+            {'abbr': 'VER', 'name': 'Max Verstappen'},
+            {'abbr': 'NOR', 'name': 'Lando Norris'},
+            {'abbr': 'LEC', 'name': 'Charles Leclerc'},
+        ]):
+            _, d1, _, d2 = update_drivers(
+                'Race', 2026, 'Singapore Grand Prix', url, 'LEC', 'NOR'
+            )
+
+        self.assertEqual((d1, d2), ('LEC', 'NOR'))
+
+    def test_complete_selection_updates_url_before_loading_analysis(self):
+        sync_url = self._callback_for_output('url')
+        search = sync_url(
+            None, 'tab-trackmap', 2026, 'Singapore Grand Prix', 'Race', 'LEC', 'NOR',
+            'fastest', 'fastest', 'fastest', 'fastest', 'dominance', '',
+        )
+
+        self.assertIn('year=2026', search)
+        self.assertIn('race=Singapore+Grand+Prix', search)
+        self.assertIn('driver1=LEC', search)
+        self.assertIn('driver2=NOR', search)
+
+    def test_sidebar_toggle_keeps_a_visible_return_arrow(self):
+        toggle_sidebar = self._callback_for_output('sidebar-collapsed-store')
+
+        self.assertEqual(toggle_sidebar(1, False), (True, '›'))
+        self.assertEqual(toggle_sidebar(2, True), (False, '‹'))
 
 
 class TestUxHelpers(unittest.TestCase):
@@ -998,6 +1107,36 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertTrue(loaded._fastf1_telemetry_unavailable)
         self.assertEqual(get_session.call_count, 1)
         enable_cache.assert_not_called()
+
+    def test_vercel_renews_an_empty_lap_payload_before_reporting_it_unavailable(self):
+        partial_session = MagicMock()
+        partial_session.car_data = {}
+        partial_session.laps = pd.DataFrame()
+        recovered_session = MagicMock()
+        recovered_session.car_data = {
+            '1': pd.DataFrame({'Speed': [100.0] * 6}),
+        }
+        recovered_session.laps = pd.DataFrame([
+            {'DriverNumber': '1', 'LapNumber': 4},
+        ])
+
+        with (
+            patch.dict(os.environ, {'VERCEL': '1', 'OPENF1_FALLBACK_ENABLED': '1'}, clear=False),
+            patch.object(data, '_ensure_cache_ready'),
+            patch('fastf1.get_session', side_effect=[partial_session, recovered_session]) as get_session,
+            patch('fastf1.Cache.enable_cache') as enable_cache,
+            patch.object(data.time, 'sleep'),
+        ):
+            loaded = data._load_session_granular_cached(
+                2026, 'Singapore Grand Prix', 'Race', laps=True, telemetry=True
+            )
+
+        self.assertIs(loaded, recovered_session)
+        self.assertEqual(get_session.call_count, 2)
+        enable_cache.assert_has_calls([
+            unittest.mock.call(data._CACHE_DIR, force_renew=True),
+            unittest.mock.call(data._CACHE_DIR),
+        ])
 
     def test_partial_lap_session_is_rejected_before_reaching_a_chart(self):
         partial_session = MagicMock()

@@ -17,6 +17,8 @@
         lastAuxiliaryFrame: 0,
         lastLabelFrame: 0,
         lastMapUpdate: 0,
+        lastMarkerUpdate: 0,
+        markerPositions: null,
         lastCameraUpdate: 0,
         camera: null,
         trackBounds: null
@@ -54,6 +56,25 @@
     };
     const positionAt = function(series, time) {
         return [interpolate(series, time, 'x'), interpolate(series, time, 'y')];
+    };
+    const smoothMarkerPosition = function(key, target, now) {
+        if (!state.markerPositions) state.markerPositions = {};
+        const previous = state.markerPositions[key];
+        const elapsed = Math.max(1, now - state.lastMarkerUpdate);
+        if (!previous) {
+            state.markerPositions[key] = target.slice();
+            return target;
+        }
+        // GPS samples can briefly resolve backwards along the circuit. A short
+        // time-based low-pass filter keeps marker movement legible while
+        // retaining the relative gaps between the two cars.
+        const ease = 1 - Math.exp(-elapsed / 105);
+        const smoothed = [
+            previous[0] + (target[0] - previous[0]) * ease,
+            previous[1] + (target[1] - previous[1]) * ease
+        ];
+        state.markerPositions[key] = smoothed;
+        return smoothed;
     };
     const updateText = function() {
         const timeLabel = document.getElementById('lap-playback-time-label');
@@ -121,8 +142,11 @@
         // queue buildup that made both markers and camera appear stop-and-go.
         if (now - state.lastMapUpdate < 33) return;
         state.lastMapUpdate = now;
-        const p1 = positionAt(state.miniStore.d1, state.t);
-        const p2 = positionAt(state.miniStore.d2, state.t);
+        const rawP1 = positionAt(state.miniStore.d1, state.t);
+        const rawP2 = positionAt(state.miniStore.d2, state.t);
+        const p1 = smoothMarkerPosition('d1', rawP1, now);
+        const p2 = smoothMarkerPosition('d2', rawP2, now);
+        state.lastMarkerUpdate = now;
         pObj.restyle(mini, {
             x: [[p1[0]], [p2[0]]],
             y: [[p1[1]], [p2[1]]],
@@ -231,6 +255,8 @@
         state.lastAuxiliaryFrame = 0;
         state.lastLabelFrame = 0;
         state.lastMapUpdate = 0;
+        state.lastMarkerUpdate = 0;
+        state.markerPositions = null;
         state.lastCameraUpdate = 0;
         state.camera = null;
         state.trackBounds = null;
