@@ -3,11 +3,11 @@
 dash>=3.0,<5
 dash-bootstrap-components>=2.0,<3
 plotly>=6.0,<7
-# Pin the known-good release used by the local app. FastF1 3.8.3 can complete
-# ``Session.load`` while leaving required streams unset, which breaks deployed
-# callbacks with ``DataNotLoadedError``. A broad 3.x range would let that
-# regression return without a source change here.
-fastf1==3.8.1
+# FastF1 3.8.3 includes the maintained 2026 timing-data fixes.  The session
+# loader validates every required stream and explicitly normalizes optional
+# weather/message streams, so their occasional upstream absence cannot leak a
+# ``DataNotLoadedError`` into a Dash callback.
+fastf1==3.8.3
 pandas>=2.2,<3
 numpy>=1.26,<3
 scipy>=1.12,<2
