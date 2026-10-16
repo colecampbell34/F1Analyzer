@@ -13,3 +13,5 @@ feedback/
 ai_cache/
 .junie
 .cursor
+.vercel
+.env*
