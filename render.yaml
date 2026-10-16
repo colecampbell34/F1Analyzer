@@ -6,11 +6,8 @@ services:
     buildCommand: pip install -r requirements.txt
     # FastF1 cold telemetry requests can legitimately take several minutes.
     # Keep one worker to avoid duplicating a large in-memory session cache.
-    startCommand: gunicorn app:server --bind 0.0.0.0:$PORT --worker-class gthread --workers 1 --threads 4 --timeout 300 --graceful-timeout 300 --max-requests 200 --max-requests-jitter 25
+    startCommand: gunicorn app:server --bind 0.0.0.0:$PORT --worker-class gthread --workers 1 --threads 4 --timeout 300 --graceful-timeout 30 --max-requests 200 --max-requests-jitter 25
     healthCheckPath: /healthz
-    # Let an in-flight telemetry request finish during a deploy before Render
-    # sends SIGKILL. This matches the Gunicorn request/drain budget above.
-    maxShutdownDelaySeconds: 300
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.12

@@ -1431,7 +1431,7 @@ class TestApiValidation(unittest.TestCase):
             "no-cache, max-age=0, must-revalidate",
         )
 
-    def test_render_configuration_preserves_telemetry_drain_budget(self):
+    def test_render_configuration_uses_a_lightweight_health_check(self):
         import yaml
 
         with open("render.yaml", encoding="utf-8") as config_file:
@@ -1439,9 +1439,9 @@ class TestApiValidation(unittest.TestCase):
 
         service = config["services"][0]
         self.assertEqual(service["healthCheckPath"], "/healthz")
-        self.assertEqual(service["maxShutdownDelaySeconds"], 300)
         self.assertIn("--timeout 300", service["startCommand"])
-        self.assertIn("--graceful-timeout 300", service["startCommand"])
+        self.assertIn("--graceful-timeout 30", service["startCommand"])
+        self.assertNotIn("maxShutdownDelaySeconds", service)
 
     def test_renderer_waits_for_the_cross_version_dash_constructor(self):
         with open("app.py", encoding="utf-8") as app_file:

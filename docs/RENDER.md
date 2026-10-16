@@ -30,7 +30,9 @@ Redis keeps prepared two-driver telemetry traces available across processes.
    service and create it on the **Free** plan defined by the Blueprint. For a
    regularly used production service, change the instance type to a paid web
    service after the first deploy; that prevents sleeping and permits a
-   persistent disk.
+persistent disk. A paid service can also set **Maximum Shutdown Delay** to
+300 seconds in Render's service settings so an in-flight telemetry request can
+drain during a deploy; that option is unavailable on Free.
 3. Open the service's **Environment** page and set the variables below. Trigger
    a manual deploy after adding them.
 4. When the service is live, open `https://YOUR-SERVICE.onrender.com/healthz`.
