@@ -25,8 +25,12 @@ Redis keeps prepared two-driver telemetry traces available across processes.
 
 1. Push the repository, including `render.yaml`, to the branch you want to
    deploy.
-2. In Render, choose **New > Blueprint** and select the repository. Confirm
-   the `f1-analyzer` service, then create it on the **Free** plan.
+2. In Render, choose **New > Blueprint**, connect the repository, and select
+   it. Render discovers the root `render.yaml`; confirm the `f1-analyzer`
+   service and create it on the **Free** plan defined by the Blueprint. For a
+   regularly used production service, change the instance type to a paid web
+   service after the first deploy; that prevents sleeping and permits a
+   persistent disk.
 3. Open the service's **Environment** page and set the variables below. Trigger
    a manual deploy after adding them.
 4. When the service is live, open `https://YOUR-SERVICE.onrender.com/healthz`.
@@ -50,6 +54,26 @@ Render unless you have a specific reason. The app chooses suitable local paths
 automatically. Do not copy `KV_REST_API_READ_ONLY_TOKEN`: the cache needs the
 writable `KV_REST_API_TOKEN`.
 
+### Recommended paid-service cache setup
+
+Free Render instances spin down after 15 minutes of inactivity and lose their
+local filesystem when they sleep, restart, or redeploy. For a regularly used
+instance, attach a persistent disk in **Settings > Disks** and mount it at
+`/var/data`. Then add these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| `FASTF1_CACHE_DIR` | `/var/data/f1_cache` |
+| `AI_CACHE_DIR` | `/var/data/ai_cache` |
+| `FEEDBACK_DIR` | `/var/data/feedback` |
+
+The application creates these directories itself. A persistent disk is
+single-instance storage, so keep the service at one instance—the supplied
+Blueprint already does this—and retain Redis for derived telemetry sharing.
+Feedback and the AI-response cache are still local files, not a collaborative
+or durable database; use a managed store before treating either as durable
+product data.
+
 ## Verification
 
 After deployment, select a known finished event such as **2025 Australian
@@ -57,6 +81,12 @@ Grand Prix — Qualifying**, choose **NOR** and **PIA**, then open **Telemetry**
 The first cold load can take a little while; a repeat load should be much
 faster. `/warmup` can be opened after the service wakes to start non-critical
 cache initialization, but it does not replace loading an actual session.
+
+When validating a paid disk, trigger a manual deploy after the first telemetry
+load, then repeat the same comparison. The FastF1 cache directory should
+survive the deploy and avoid rebuilding the raw timing data. Use
+`/healthz?cache=1` only as an administrator diagnostic: it reports whether
+the optional shared cache is reachable without returning cache contents.
 
 ## Choosing one canonical host
 

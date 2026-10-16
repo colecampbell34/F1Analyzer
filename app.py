@@ -18,7 +18,14 @@ logging.getLogger('flask').setLevel(logging.WARNING)
 logging.getLogger('google.genai').setLevel(logging.WARNING)
 
 PUBLIC_BASE_URL = os.getenv('PUBLIC_BASE_URL', '').rstrip('/')
-APP_VERSION = os.getenv('VERCEL_GIT_COMMIT_SHA', 'local')[:12]
+# Both supported hosts expose the deployed revision through an environment
+# variable. Keeping this in the liveness response makes a Render rollback or
+# a Vercel preview straightforward to identify without exposing secrets.
+APP_VERSION = (
+    os.getenv('VERCEL_GIT_COMMIT_SHA')
+    or os.getenv('RENDER_GIT_COMMIT')
+    or 'local'
+)[:12]
 
 META_TAGS = [
     {"name": "viewport", "content": "width=device-width, initial-scale=1"},
