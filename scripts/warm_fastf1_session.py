@@ -1,13 +1,12 @@
-"""Seed the Vercel shared cache from a network where FastF1 can load a session.
+"""Seed the shared cache from a network where FastF1 can load a session.
 
-Use this only with the Vercel KV environment variables loaded locally. It
-stores bounded derived lap/trace payloads, never FastF1's raw cache files or a
-serialized Session object.
+Load a supported Upstash REST credential pair locally first. It stores bounded
+derived lap/trace payloads, never FastF1's raw cache files or a serialized
+Session object.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 
@@ -20,8 +19,12 @@ def main():
     parser.add_argument('driver2', nargs='?', help='Optional three-letter driver abbreviation')
     args = parser.parse_args()
 
-    if not (os.getenv('KV_REST_API_URL') and os.getenv('KV_REST_API_TOKEN')):
-        parser.error('load the Vercel KV variables first, e.g. `vercel env pull .env.local`.')
+    from shared_cache import is_configured
+    if not is_configured():
+        parser.error(
+            'set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN '
+            '(or the supported KV_REST_API_* aliases) first.'
+        )
     if bool(args.driver1) != bool(args.driver2):
         parser.error('provide both drivers to warm a telemetry comparison, or neither to warm session laps only.')
 

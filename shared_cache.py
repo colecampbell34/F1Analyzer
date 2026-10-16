@@ -1,9 +1,9 @@
-"""Optional, safe shared-cache access for serverless deployments.
+"""Optional, safe shared-cache access for deployments.
 
 The cache is intentionally an optimisation: FastF1 remains the source of
 truth and a cache timeout must never stop a dashboard callback.  Upstash's
 REST endpoint is used directly so this module adds no connection-pool or
-native dependency to the Vercel bundle.
+native dependency to the deployment bundle.
 """
 from __future__ import annotations
 

@@ -456,10 +456,28 @@ def _store_shared_lap_payload(session, year, race, session_name):
         return False
 
 
+def _shared_lap_recovery_enabled():
+    """Return whether an optional shared cache can recover a known-good lap payload.
+
+    This is useful on any ephemeral host, including Render Free after a sleep,
+    as well as on persistent hosts after a restart.  It does not replace a
+    normal FastF1 load: it only restores a bounded payload that FastF1
+    previously validated and wrote to the configured shared cache.
+    """
+    # Preserve Vercel's existing fast-path semantics. ``get_json`` remains a
+    # no-op without credentials, while Render and other persistent hosts only
+    # take this pre-load path when a shared cache is actually configured.
+    if is_serverless():
+        return True
+    try:
+        from shared_cache import is_configured
+        return is_configured()
+    except ImportError:
+        return False
+
+
 def _restore_shared_lap_payload(session, year, race, session_name):
     """Attach a previously validated FastF1 lap payload to a partial Session."""
-    if not is_serverless():
-        return None
     try:
         from shared_cache import get_json
         payload = get_json(_shared_lap_cache_key(year, race, session_name))
@@ -514,14 +532,10 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
         )
         return session
 
-    # A Vercel instance cannot rely on its local FastF1 HTTP cache.  More
-    # importantly, when Formula 1's archive rejects the instance's egress IP,
-    # a full ``Session.load`` can consume the entire Dash callback budget
-    # before it reports the familiar partial-session result.  Check the
-    # bounded, FastF1-derived payload first.  This is intentionally before
-    # *any* archive load: a warm cache is useful only if it avoids the request
-    # that is known to be rejected.
-    if laps and is_serverless():
+    # A cache hit can avoid a known-bad upstream request on Vercel, Render, or
+    # another host. The shared payload is bounded derived lap data, never a
+    # serialized Session or a raw FastF1 cache file.
+    if laps and _shared_lap_recovery_enabled():
         cached_session = _new_session()
         restored_laps = _restore_shared_lap_payload(
             cached_session, year, race, session_name,

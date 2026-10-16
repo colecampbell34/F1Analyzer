@@ -1188,10 +1188,7 @@ class TestPreloadJobs(unittest.TestCase):
         }
         session = PartialSession()
 
-        with (
-            patch.object(data, 'is_serverless', return_value=True),
-            patch('shared_cache.get_json', return_value=payload),
-        ):
+        with patch('shared_cache.get_json', return_value=payload):
             restored = data._restore_shared_lap_payload(
                 session, 2026, 'Spanish Grand Prix', 'Race',
             )
@@ -1200,6 +1197,25 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertEqual(len(session.laps), 1)
         self.assertEqual(session.laps.iloc[0]['Driver'], 'VER')
         self.assertEqual(session.laps.iloc[0]['LapTime'], pd.Timedelta(seconds=90.1))
+
+    def test_render_can_restore_a_valid_shared_lap_payload_before_fastf1_load(self):
+        restored_session = MagicMock()
+        restored_session.laps = pd.DataFrame([{'DriverNumber': '1', 'LapNumber': 4}])
+
+        with (
+            patch.dict(os.environ, {'VERCEL': ''}, clear=False),
+            patch.object(data, '_ensure_cache_ready'),
+            patch.object(data, '_shared_lap_recovery_enabled', return_value=True),
+            patch('fastf1.get_session', return_value=MagicMock()) as get_session,
+            patch.object(data, '_restore_shared_lap_payload', return_value=restored_session),
+        ):
+            loaded = data._load_session_granular_cached(
+                2026, 'Singapore Grand Prix', 'Race', laps=True, telemetry=True
+            )
+
+        self.assertIs(loaded, restored_session)
+        self.assertTrue(loaded._fastf1_telemetry_unavailable)
+        get_session.assert_called_once()
 
     def test_partial_lap_session_is_rejected_before_reaching_a_chart(self):
         partial_session = MagicMock()

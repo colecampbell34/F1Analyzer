@@ -45,8 +45,8 @@ drain during a deploy; that option is unavailable on Free.
 | Variable | Required | Value / purpose |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | Recommended | The Render service URL, without a trailing slash. |
-| `KV_REST_API_URL` | Recommended | Existing Vercel/Upstash REST URL. |
-| `KV_REST_API_TOKEN` | Recommended | Existing writable Vercel/Upstash REST token. |
+| `UPSTASH_REDIS_REST_URL` | Recommended | Upstash REST URL. `KV_REST_API_URL` is also accepted for an existing Vercel integration. |
+| `UPSTASH_REDIS_REST_TOKEN` | Recommended | Writable Upstash REST token. `KV_REST_API_TOKEN` is also accepted for an existing Vercel integration. |
 | `GEMINI_API_KEY` | Optional | Enables AI Analysis. |
 | `FEEDBACK_ADMIN_TOKEN` | Optional | Protects the feedback/performance-admin endpoints. |
 | `ENABLE_BACKGROUND_PRELOAD` | Set by blueprint | Keep as `1` for the persistent service. |
