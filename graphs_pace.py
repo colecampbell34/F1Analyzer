@@ -2,7 +2,7 @@
 import pandas as pd
 import plotly.graph_objects as go
 
-from data import distinct_plot_colors, get_single_driver_color, is_practice
+from data import get_single_driver_color, is_practice
 from ui_utils import _apply_base_layout
 
 
@@ -132,14 +132,6 @@ def _build_grid_pace_fig(session, session_type):
 
         except Exception:
             continue
-
-    # Preserve the first team's canonical color while separating later teams
-    # whose red/blue hues would otherwise merge into the same trace family.
-    for driver_data, color in zip(
-        drivers_data,
-        distinct_plot_colors([item['color'] for item in drivers_data]),
-    ):
-        driver_data['color'] = color
 
     _is_practice = is_practice(session_type)
     _is_shootout = 'Shootout' in session_type
