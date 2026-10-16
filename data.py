@@ -514,6 +514,29 @@ def _load_session_granular_cached(year, race, session_name, laps=True, telemetry
         )
         return session
 
+    # A Vercel instance cannot rely on its local FastF1 HTTP cache.  More
+    # importantly, when Formula 1's archive rejects the instance's egress IP,
+    # a full ``Session.load`` can consume the entire Dash callback budget
+    # before it reports the familiar partial-session result.  Check the
+    # bounded, FastF1-derived payload first.  This is intentionally before
+    # *any* archive load: a warm cache is useful only if it avoids the request
+    # that is known to be rejected.
+    if laps and is_serverless():
+        cached_session = _new_session()
+        restored_laps = _restore_shared_lap_payload(
+            cached_session, year, race, session_name,
+        )
+        if restored_laps is not None:
+            if telemetry:
+                # The session payload contains FastF1 timing/lap data, not
+                # raw car telemetry. telemetry_prep can still use an already
+                # warmed FastF1 trace, and otherwise shows its normal clear
+                # telemetry-unavailable state without triggering the archive.
+                restored_laps._fastf1_telemetry_unavailable = True
+            return _set_missing_optional_streams(
+                restored_laps, weather=weather, messages=messages,
+            )
+
     # FastF1's cache is process-local on Vercel. A retry with a fresh Session
     # object is cheap relative to surfacing a permanent false-negative after a
     # one-off timing endpoint/cache failure.

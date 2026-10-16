@@ -1098,6 +1098,7 @@ class TestPreloadJobs(unittest.TestCase):
             patch.object(data, '_ensure_cache_ready'),
             patch('fastf1.get_session', return_value=empty_session) as get_session,
             patch('fastf1.Cache.enable_cache') as enable_cache,
+            patch.object(data, '_restore_shared_lap_payload', return_value=None),
         ):
             loaded = data._load_session_granular_cached(
                 2026, 'Singapore Grand Prix', 'Race', laps=True, telemetry=True
@@ -1105,7 +1106,8 @@ class TestPreloadJobs(unittest.TestCase):
 
         self.assertIs(loaded, empty_session)
         self.assertTrue(loaded._fastf1_telemetry_unavailable)
-        self.assertEqual(get_session.call_count, 1)
+        # One construction checks the shared FastF1 payload before loading.
+        self.assertEqual(get_session.call_count, 2)
         enable_cache.assert_not_called()
 
     def test_vercel_renews_an_empty_lap_payload_before_reporting_it_unavailable(self):
@@ -1123,16 +1125,20 @@ class TestPreloadJobs(unittest.TestCase):
         with (
             patch.dict(os.environ, {'VERCEL': '1', 'OPENF1_FALLBACK_ENABLED': '1'}, clear=False),
             patch.object(data, '_ensure_cache_ready'),
-            patch('fastf1.get_session', side_effect=[partial_session, recovered_session]) as get_session,
+            patch(
+                'fastf1.get_session',
+                side_effect=[partial_session, partial_session, recovered_session],
+            ) as get_session,
             patch('fastf1.Cache.enable_cache') as enable_cache,
             patch.object(data.time, 'sleep'),
+            patch.object(data, '_restore_shared_lap_payload', return_value=None),
         ):
             loaded = data._load_session_granular_cached(
                 2026, 'Singapore Grand Prix', 'Race', laps=True, telemetry=True
             )
 
         self.assertIs(loaded, recovered_session)
-        self.assertEqual(get_session.call_count, 2)
+        self.assertEqual(get_session.call_count, 3)
         enable_cache.assert_has_calls([
             unittest.mock.call(data._CACHE_DIR, force_renew=True),
             unittest.mock.call(data._CACHE_DIR),
@@ -1150,9 +1156,7 @@ class TestPreloadJobs(unittest.TestCase):
         with (
             patch.dict(os.environ, {'VERCEL': '1', 'OPENF1_FALLBACK_ENABLED': '0'}, clear=False),
             patch.object(data, '_ensure_cache_ready'),
-            patch('fastf1.get_session', side_effect=[partial_session, partial_session]),
-            patch('fastf1.Cache.enable_cache'),
-            patch.object(data.time, 'sleep'),
+            patch('fastf1.get_session', return_value=partial_session),
             patch.object(data, '_restore_shared_lap_payload', return_value=restored_session) as restore,
         ):
             loaded = data._load_session_granular_cached(
@@ -1162,6 +1166,7 @@ class TestPreloadJobs(unittest.TestCase):
         self.assertIs(loaded, restored_session)
         self.assertTrue(loaded._fastf1_telemetry_unavailable)
         restore.assert_called_once_with(partial_session, 2026, 'Spanish Grand Prix', 'Race')
+        partial_session.load.assert_not_called()
 
     def test_shared_fastf1_lap_payload_restores_a_fastf1_laps_object(self):
         class PartialSession:
