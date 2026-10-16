@@ -16,12 +16,28 @@ def main():
     parser.add_argument('year', type=int)
     parser.add_argument('race')
     parser.add_argument('session')
-    parser.add_argument('driver1', help='Three-letter driver abbreviation')
-    parser.add_argument('driver2', help='Three-letter driver abbreviation')
+    parser.add_argument('driver1', nargs='?', help='Optional three-letter driver abbreviation')
+    parser.add_argument('driver2', nargs='?', help='Optional three-letter driver abbreviation')
     args = parser.parse_args()
 
     if not (os.getenv('KV_REST_API_URL') and os.getenv('KV_REST_API_TOKEN')):
         parser.error('load the Vercel KV variables first, e.g. `vercel env pull .env.local`.')
+    if bool(args.driver1) != bool(args.driver2):
+        parser.error('provide both drivers to warm a telemetry comparison, or neither to warm session laps only.')
+
+    if not args.driver1:
+        # This is enough for the leaderboard, pace, strategy and other
+        # timing-based charts. It deliberately remains FastF1-only.
+        from data import load_session_with_preload
+        load_session_with_preload(
+            args.year, args.race, args.session,
+            laps=True, telemetry=False, weather=False, messages=False,
+        )
+        print(
+            f"Seeded FastF1-derived laps for {args.year} {args.race} "
+            f"{args.session}."
+        )
+        return
 
     from telemetry_prep import prepare_selected_lap_comparison
 

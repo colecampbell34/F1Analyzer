@@ -56,6 +56,8 @@ same Vercel KV environment:
 ```bash
 vercel env pull .env.local
 set -a; source .env.local; set +a
+python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race
+# Optionally also warm one telemetry comparison:
 python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race VER NOR
 ```
 

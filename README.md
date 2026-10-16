@@ -125,11 +125,14 @@ the affected FastF1 session and selected comparison from the local runtime:
 ```bash
 vercel env pull .env.local
 set -a; source .env.local; set +a
+python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race
+# Optionally also warm one telemetry comparison:
 python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race VER NOR
 ```
 
-This sends only bounded FastF1-derived laps and the requested comparison
-traces to the existing Vercel KV cache; it never uploads FastF1 cache files.
+This sends only bounded FastF1-derived laps (and, when drivers are supplied,
+the requested comparison traces) to the existing Vercel KV cache; it never
+uploads FastF1 cache files.
 
 ## Testing
 
