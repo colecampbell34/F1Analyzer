@@ -265,6 +265,10 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         self.assertAlmostEqual(float(speed_traces[0].x[0]), 0.0)
         self.assertAlmostEqual(float(speed_traces[0].x[-1]), 100.0)
         self.assertEqual(figure.layout.xaxis4.title.text, "Lap progress (%)")
+        for axis_name in ("xaxis", "xaxis2", "xaxis3", "xaxis4"):
+            axis = getattr(figure.layout, axis_name)
+            self.assertEqual(list(axis.range), [0, 100])
+            self.assertFalse(axis.autorange)
         ham_behind = next(item for item in figure.data if item.name == "HAM behind")
         self.assertLess(float(np.nanmin(ham_behind.y)), 0.0)
         self.assertTrue(all(

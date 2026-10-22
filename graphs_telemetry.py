@@ -223,6 +223,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
+    fig.update_xaxes(range=[0, 100], autorange=False)
     fig.update_xaxes(title_text="Lap progress (%)", row=4, col=1)
 
     return fig

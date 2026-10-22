@@ -699,11 +699,11 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                         const ratio = (tSec - tArr[i - 1]) / Math.max(1e-6, (tArr[i] - tArr[i - 1]));
                         cDist = distArr[i - 1] + ratio * (distArr[i] - distArr[i - 1]);
                     }
-                    // Scale back to meters for the chart cursor
-                    const cDistM = cDist * (ref.dist_max || 1);
-                    const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDistM, x1: cDistM } : s));
+                    // The telemetry chart uses a shared 0..100% progress axis.
+                    const cDistProgress = cDist * 100;
+                    const shapes = (speedDiv.layout.shapes || []).map(s => (s.name === 'playback-cursor' ? { ...s, x0: cDistProgress, x1: cDistProgress } : s));
                     if (!shapes.some(s => s.name === 'playback-cursor')) {
-                        shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDistM, x1: cDistM, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
+                        shapes.push({ type: 'line', name: 'playback-cursor', xref: 'x', yref: 'paper', x0: cDistProgress, x1: cDistProgress, y0: 0, y1: 1, line: { color: '#bbbbbb', width: 1.5, dash: 'dot' } });
                     }
                     pObj.relayout(speedDiv, { 'shapes': shapes });
                 }
