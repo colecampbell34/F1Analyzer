@@ -14,41 +14,51 @@ it matters, and focused on explaining a performance delta.
 
 ## Coverage and data limits
 
-- Completed 2023 onward sessions are available after OpenF1 marks them
-  historical. Live timing is not supported.
+- The app supports completed sessions from 2023 onward. A session is eligible
+  once its published end time is at least 30 minutes in the past and it is not
+  marked canceled. Live timing is not supported.
 - OpenF1 is the primary source for sessions, drivers, laps, selected-lap car
-  and location traces, results, grid, stints, pits, weather, and race control.
-  Jolpica-F1 can supplement missing results; the interface retains source
-  labels for those values.
+  and location traces, results, starting grid, stints, pits, weather, and race
+  control. Jolpica-F1 can supplement missing classification data; the
+  interface retains source labels so supplements are not presented as OpenF1
+  values.
 - Selected-lap car and location streams are sampled at about 3.7 Hz. The map
-  uses approximate relative coordinates, and integrated distance is a progress
-  estimate rather than official circuit distance. Replay and map views require
-  sufficient location samples.
+  uses approximate, session-relative coordinates, and integrated distance is a
+  progress estimate rather than official circuit distance. Speed and other
+  car-only analysis can work without location data; track maps and replay
+  require sufficient aligned location samples.
 - OpenF1 does not publish FastF1-equivalent deleted-lap accuracy or exact
-  per-lap track status. Pit and race-control data support useful exclusions and
-  status overlays, but those are documented approximations.
-- Pit-lane total time is not stationary tyre-service time. The dashboard keeps
-  those measurements distinct.
-- OpenF1 describes its free historical API as intended for educational,
-  research, and non-commercial fan use. Review the [OpenF1 terms and API
-  documentation](https://openf1.org/docs/) before commercial use.
+  per-lap track status. Pit and race-control records support useful exclusions
+  and derived status overlays, but cannot guarantee exact parity with FastF1.
+- Pit-lane duration and stationary tyre-service duration are different
+  measurements. The dashboard keeps them distinct and does not infer service
+  time from pit-lane time.
+- OpenF1 documents historical access from 2023 onward and publishes limits of
+  3 requests per second and 30 per minute. Its public API is intended for
+  educational, research, and non-commercial fan engagement. Review the
+  [OpenF1 terms and API documentation](https://openf1.org/docs/) before
+  commercial use.
 
 ## Key features
 
 - Latest Race shortcut and historical year, event, session, and driver pickers.
 - Speed, throttle, brake, gear, RPM, DRS, and lap-delta comparison with
   browser-side replay controls.
-- Track-map dominance, braking, and speed overlays with heuristic corner
-  markers when circuit geometry is not aligned.
+- Track-map dominance, braking, and speed overlays; corner markers are
+  heuristic because third-party circuit geometry is not yet verified against
+  OpenF1's session-relative coordinates.
 - Tyre-stint plans, estimated degradation, weather, race gaps, grid-to-finish
-  context, and field pace distribution.
+  context, and field pace distribution when the relevant provider data is
+  available.
 - Grounded AI analysis with session, selected-lap, strategy, weather, and
-  race-control context when those feeds are available.
-- Bookmarkable URLs, feedback capture, chart downloads, and responsive layout.
+  race-control context when those feeds are available and `GEMINI_API_KEY` is
+  configured.
+- Bookmarkable URLs, feedback capture, chart downloads, and responsive
+  desktop/mobile layouts.
 
 ## Architecture
 
-- `app.py` owns Flask/Dash routes, response caching, and startup policy.
+- `app.py` owns Flask/Dash routes, HTTP cache headers, and startup policy.
 - `layout.py` owns components and stable IDs; callbacks treat those IDs as a
   public contract.
 - `callbacks.py`, `callbacks_telemetry.py`, `callbacks_tabs.py`, and
@@ -63,41 +73,58 @@ it matters, and focused on explaining a performance delta.
 - `assets/race-intelligence.css` owns the visual system; `assets/scripts.js`
   contains browser-side replay and high-frequency interactions.
 
-See [architecture](docs/ARCHITECTURE.md), [deployment](docs/DEPLOYMENT.md), and
-the completed [migration record](docs/OPENF1_MIGRATION_PLAN.md).
+See [architecture](docs/ARCHITECTURE.md), [deployment](docs/DEPLOYMENT.md),
+[Render deployment](docs/RENDER.md), and the completed
+[OpenF1 migration record](docs/OPENF1_MIGRATION_PLAN.md).
 
 ## Local setup
 
-Use Python 3.12 for deployment parity:
+Use Python 3.12 for deployment parity. The app listens on port 8080 when run
+directly:
 
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r requirements-dev.txt
 python app.py
 ```
 
-Optional environment variables:
+Optional environment variables (set secrets in the host environment; do not
+commit `.env`):
 
 - `GEMINI_API_KEY` enables AI analysis.
-- `FEEDBACK_ADMIN_TOKEN` protects feedback review endpoints.
+- `FEEDBACK_ADMIN_TOKEN` protects feedback review and performance endpoints.
 - `PUBLIC_BASE_URL` sets the Open Graph canonical URL.
-- `CALLBACK_TIMING_THRESHOLD_MS` and `LOG_ALL_CALLBACKS=1` control callback
-  timing logs.
-- `LOG_SESSION_LOADING=1` enables provider load logs.
-- `AI_CACHE_DIR` and `FEEDBACK_DIR` override local runtime directories.
-- `ENABLE_BACKGROUND_PRELOAD` controls persistent-process background loads;
-  it defaults off on Vercel and on for other hosts.
-- `KV_REST_API_URL` / `KV_REST_API_TOKEN` or
-  `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` enable the optional
-  shared cache for bounded selected-lap traces.
-- `F1_ANALYZER_SHARED_CACHE_ENABLED=0` disables that cache. Cache TTL and
-  selected-lap trace size can be tuned with the `SHARED_TELEMETRY_*` and
-  `OPENF1_TELEMETRY_*` variables.
+- `AI_CACHE_DIR` and `FEEDBACK_DIR` override local runtime file directories.
+- `ENABLE_BACKGROUND_PRELOAD` controls background session loads; it defaults
+  off on Vercel and on for persistent, non-serverless processes.
+- `KV_REST_API_URL` / `KV_REST_API_TOKEN`,
+  `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN`, or
+  `F1_ANALYZER_REDIS_REST_URL` / `F1_ANALYZER_REDIS_REST_TOKEN` enable the
+  optional Upstash shared cache for prepared selected-lap comparisons.
+  `F1_ANALYZER_SHARED_CACHE_ENABLED=0` disables it, and
+  `F1_ANALYZER_REDIS_TIMEOUT_SECONDS` adjusts its request timeout.
+- `OPENF1_TELEMETRY_CURRENT_TTL_SECONDS` and
+  `OPENF1_TELEMETRY_HISTORICAL_TTL_SECONDS` set prepared-telemetry cache TTLs;
+  defaults are 6 hours and 30 days. `OPENF1_TELEMETRY_MAX_POINTS` caps
+  serialized trace points (default 3,600). `TELEMETRY_PREP_CACHE_MAXSIZE`
+  sets the process-local prepared-comparison cache size (default 8).
+- `OPENF1_TELEMETRY_LOCK_WAIT_SECONDS` sets how long a request waits for
+  another instance to populate a shared-cache miss (default 18 seconds).
+- `CALLBACK_TIMING_THRESHOLD_MS` sets the slow-callback logging threshold
+  (default 400 ms); `LOG_ALL_CALLBACKS=1` logs every callback.
+- `ENABLE_VERCEL_ANALYTICS=1` adds Vercel Analytics scripts to the page.
 
-The provider caches historical JSON responses in-process and spaces OpenF1
-requests below its published free-tier limit. A process-local limiter does not
-coordinate separate Vercel instances; Redis shares derived traces, not API
-rate-limit state. Runtime files, feedback, AI responses, and memory caches are
-not durable storage.
+Provider responses are cached in bounded process memory (up to 512 entries and
+64 MB); historical session-key data is retained for up to 30 days, while an
+empty result/grid response is retried after 5 minutes. Normalized session
+bundles have a separate process-local LRU cache. Prepared selected-lap
+comparisons have a bounded local cache and can optionally be shared through
+Upstash; Upstash does not store raw session-wide telemetry. OpenF1 requests are
+paced and capped at 25 per minute per process. That limiter is not global
+across Vercel instances. Process memory and local runtime files are ephemeral
+on Vercel and are not durable storage on Render Free; use managed storage for
+durable data or globally coordinated rate limiting.
 
 ## Tests and checks
 
@@ -110,19 +137,19 @@ The opt-in Playwright browser smoke test needs a running app and live OpenF1
 availability:
 
 ```bash
-RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
+RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8080 \
   python -m pytest tests/test_browser_smoke.py
 ```
 
 ## Hosting
 
-Both Vercel and Render remain supported. For a regularly used public instance,
-the current provider architecture favors a single persistent Render web
-service: it keeps one process-local OpenF1 cache and request limiter, and can
-use background preloading. Render Free is suitable for a low-traffic demo but
-sleeps and loses local state on restart. Vercel remains a good fit for
-serverless-first hosting or an infrequently used demo; its function-local
-caches and rate limiter are ephemeral and do not coordinate across instances.
+Both Vercel and Render are supported. For regularly used public traffic, a
+single persistent Render web service is the recommended profile: its single
+Gunicorn worker shares one process-local OpenF1 cache and request limiter
+across its threads, and can run background preloads. Render Free sleeps after
+inactivity and has ephemeral local files. Vercel is suitable for
+serverless-first hosting; its function-local caches and limiter are ephemeral
+and do not coordinate across instances.
 
 The root Flask WSGI app remains configured for Vercel with native path
 routing, Fluid Compute, and a 300-second function budget. Do not add a
