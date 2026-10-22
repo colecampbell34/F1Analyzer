@@ -10,6 +10,7 @@ import pandas as pd
 import ai_cache
 import ai_utils
 import app
+import callbacks
 import callbacks_shared
 import callbacks_tabs
 import data
@@ -198,6 +199,79 @@ class TestUrlAndRuntimeContracts(unittest.TestCase):
 
 
 class TestNormalizedDashboardWorkflows(unittest.TestCase):
+    def test_loaded_selection_match_checks_every_sidebar_field(self):
+        loaded = {
+            "year": 2026,
+            "race": "Spanish Grand Prix",
+            "session_type": "Qualifying",
+            "driver1": "HAM",
+            "driver2": "RUS",
+        }
+        selection = (2026, "Spanish Grand Prix", "Qualifying", "HAM", "RUS")
+        self.assertTrue(callbacks._loaded_selection_matches(loaded, *selection))
+        self.assertFalse(callbacks._loaded_selection_matches(None, *selection))
+        for index in range(len(selection)):
+            changed = list(selection)
+            changed[index] = "different"
+            self.assertFalse(callbacks._loaded_selection_matches(loaded, *changed))
+
+    def test_selection_warning_is_hidden_only_for_the_loaded_selection(self):
+        key = next(
+            key for key in app.dash_app.callback_map
+            if "selection-dirty-warning.children" in key
+        )
+        callback = app.dash_app.callback_map[key]["callback"].__wrapped__
+        loaded = {
+            "year": 2026,
+            "race": "Spanish Grand Prix",
+            "session_type": "Qualifying",
+            "driver1": "HAM",
+            "driver2": "RUS",
+        }
+        selection = (2026, "Spanish Grand Prix", "Qualifying", "HAM", "RUS")
+        self.assertEqual(callback(None, *selection), ("", {"display": "none"}))
+        self.assertEqual(callback(loaded, *selection), ("", {"display": "none"}))
+        warning, style = callback(loaded, 2026, "Monaco Grand Prix", "Qualifying", "HAM", "RUS")
+        self.assertIn("Click Load analysis", warning)
+        self.assertEqual(style, {})
+
+    def test_telemetry_graph_aligns_all_traces_on_normalized_lap_progress(self):
+        progress = np.linspace(0.0, 1.0, 12)
+
+        def trace(distance_span, duration):
+            return pd.DataFrame({
+                "Distance": progress * distance_span,
+                "Time": pd.to_timedelta(progress * duration, unit="s"),
+                "Speed": np.linspace(100.0, 300.0, len(progress)),
+                "Throttle": np.linspace(10.0, 90.0, len(progress)),
+                "Brake": np.zeros(len(progress)),
+                "nGear": np.ones(len(progress)),
+            })
+
+        faster = trace(4000.0, 74.679)
+        slower = trace(4200.0, 74.743)
+        fast_data = ("RUS", faster, "#3671C6", 74.679, {"lap_duration": 74.679}, "RUS")
+        slow_data = ("HAM", slower, "#e8002d", 74.743, {"lap_duration": 74.743}, "HAM")
+        figure = graphs._build_telemetry_fig(
+            fast_data,
+            slow_data,
+            ("HAM", {"lap_duration": 74.743}),
+            ("RUS", {"lap_duration": 74.679}),
+        )
+
+        speed_traces = [item for item in figure.data if item.name.endswith(" Speed")]
+        self.assertEqual(len(speed_traces), 2)
+        np.testing.assert_allclose(speed_traces[0].x, speed_traces[1].x)
+        self.assertAlmostEqual(float(speed_traces[0].x[0]), 0.0)
+        self.assertAlmostEqual(float(speed_traces[0].x[-1]), 100.0)
+        self.assertEqual(figure.layout.xaxis4.title.text, "Lap progress (%)")
+        ham_behind = next(item for item in figure.data if item.name == "HAM behind")
+        self.assertLess(float(np.nanmin(ham_behind.y)), 0.0)
+        self.assertTrue(all(
+            np.sign(float(value)) == np.sign(float(label))
+            for value, label in zip(figure.layout.yaxis.tickvals, figure.layout.yaxis.ticktext)
+        ))
+
     def test_provider_fixture_builds_driver_result_stint_and_pit_context(self):
         bundle = _bundle()
         bundle.stints = pd.DataFrame([

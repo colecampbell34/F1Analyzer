@@ -366,6 +366,13 @@ content = html.Main([
                    id='download-active-chart-btn', color='secondary', outline=True, size='sm',
                    n_clicks=0, title='Download the active Plotly chart as a PNG'),
     ], className='dashboard-info-row'),
+    html.Div(
+        id='selection-dirty-warning',
+        className='selection-dirty-warning',
+        role='status',
+        **{'aria-live': 'polite'},
+        style={'display': 'none'},
+    ),
     html.Div(id='export-status', className='export-status', role='status', **{'aria-live': 'polite'}),
     html.Div(id='graph-summary', className='sr-only', role='status', **{'aria-live': 'polite'}),
     html.Div(id='plot-resize-sentinel', style={'display': 'none'}),

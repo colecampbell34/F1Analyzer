@@ -28,6 +28,18 @@ from callbacks_ai import register_ai_callbacks
 from callbacks_feedback import register_feedback_callbacks
 
 
+def _loaded_selection_matches(params, year, race, session_type, driver1, driver2):
+    """Return whether the sidebar selection exactly matches the loaded analysis."""
+    return bool(
+        params
+        and params.get('year') == year
+        and params.get('race') == race
+        and params.get('session_type') == session_type
+        and params.get('driver1') == driver1
+        and params.get('driver2') == driver2
+    )
+
+
 def register_callbacks(app):
     """Register all application callbacks."""
     _register_core_callbacks(app)
@@ -75,12 +87,8 @@ def _register_core_callbacks(app):
         elif not params:
             classes.append('mobile-flow-ready')
         else:
-            loaded_matches_selection = (
-                params.get('year') == year
-                and params.get('race') == race
-                and params.get('session_type') == session_type
-                and params.get('driver1') == driver1
-                and params.get('driver2') == driver2
+            loaded_matches_selection = _loaded_selection_matches(
+                params, year, race, session_type, driver1, driver2
             )
             classes.append('mobile-flow-loaded' if loaded_matches_selection else 'mobile-flow-ready mobile-flow-dirty')
         if replay_focus:
@@ -88,6 +96,19 @@ def _register_core_callbacks(app):
         if sidebar_collapsed:
             classes.append('sidebar-collapsed')
         return ' '.join(classes)
+
+    @app.callback(
+        [Output('selection-dirty-warning', 'children'),
+         Output('selection-dirty-warning', 'style')],
+        [Input('dashboard-params-store', 'data'),
+         Input('year-dropdown', 'value'), Input('race-dropdown', 'value'),
+         Input('session-dropdown', 'value'), Input('driver1-dropdown', 'value'),
+         Input('driver2-dropdown', 'value')]
+    )
+    def update_selection_dirty_warning(params, year, race, session_type, driver1, driver2):
+        if not params or _loaded_selection_matches(params, year, race, session_type, driver1, driver2):
+            return "", {'display': 'none'}
+        return "Sidebar selections have changed. Click Load analysis to update this view.", {}
 
     @app.callback(
         [Output('sidebar-collapsed-store', 'data'),

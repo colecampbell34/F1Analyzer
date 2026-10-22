@@ -591,6 +591,16 @@ div[class*="tab-container"] {
     border: 0 !important;
 }
 
+.selection-dirty-warning {
+    margin: 0.55rem 0 0.7rem;
+    padding: 0.45rem 0.65rem;
+    border-left: 2px solid var(--amber-accent);
+    background: rgba(232, 191, 104, 0.08);
+    color: #e8d5a6;
+    font-size: 0.78rem;
+    line-height: 1.35;
+}
+
 .analysis-view-panels > .tab-container,
 .analysis-view-panels > div[class*="tab-container"] {
     display: none !important;

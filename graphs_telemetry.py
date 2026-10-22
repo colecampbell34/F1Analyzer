@@ -55,6 +55,21 @@ def _split_delta_by_sign(delta_dist, delta_values):
     )
 
 
+def _distance_as_lap_progress(distances):
+    """Map one derived-distance trace onto a 0-to-100% lap-progress axis."""
+    values = pd.to_numeric(pd.Series(distances), errors='coerce').to_numpy(dtype=float)
+    valid = np.isfinite(values)
+    if valid.sum() < 2:
+        raise ValueError("Telemetry trace does not contain enough valid distance samples.")
+    start = float(np.min(values[valid]))
+    span = float(np.max(values[valid]) - start)
+    if span <= 0:
+        raise ValueError("Telemetry trace does not cover a usable lap distance.")
+    progress = np.full(values.shape, np.nan, dtype=float)
+    progress[valid] = (values[valid] - start) / span * 100.0
+    return progress
+
+
 def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_delta_data=None):
     """Build delta, speed, pedal, and gear traces."""
     from plotly.subplots import make_subplots
@@ -80,8 +95,10 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
         compare_tel=driver1_tel,
     )
 
-    fast_tel = _downsample(fast_tel)
-    slow_tel = _downsample(slow_tel)
+    fast_tel = _downsample(fast_tel).copy()
+    slow_tel = _downsample(slow_tel).copy()
+    fast_tel['Distance'] = _distance_as_lap_progress(fast_tel['Distance'])
+    slow_tel['Distance'] = _distance_as_lap_progress(slow_tel['Distance'])
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
@@ -94,7 +111,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     # Row 1: Time Delta
     delta_values = -pd.Series(delta_time).astype(float).to_numpy()
-    delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
+    delta_dist = _distance_as_lap_progress(ref_tel['Distance'])
     delta_ahead_x, delta_ahead, delta_behind_x, delta_behind = _split_delta_by_sign(delta_dist, delta_values)
     finite_delta = delta_values[np.isfinite(delta_values)]
     delta_tick_kwargs = {}
@@ -103,8 +120,8 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
         if max_abs_delta > 0:
             tick_vals = np.linspace(-max_abs_delta, max_abs_delta, 5)
 
-            def _inverted_tick_label(value):
-                shown = -float(value)
+            def _delta_tick_label(value):
+                shown = float(value)
                 if abs(shown) < 0.005:
                     shown = 0.0
                 return f"{shown:+.2f}" if shown != 0 else "0.00"
@@ -112,7 +129,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             delta_tick_kwargs = {
                 'tickmode': 'array',
                 'tickvals': tick_vals.tolist(),
-                'ticktext': [_inverted_tick_label(v) for v in tick_vals],
+                'ticktext': [_delta_tick_label(v) for v in tick_vals],
             }
 
     fig.add_trace(
@@ -125,7 +142,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             connectgaps=False,
             showlegend=False,
             hovertemplate=(
-                f"Distance: %{{x:.0f}} m<br>"
+                f"Lap progress: %{{x:.1f}}%<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
             )
         ),
@@ -140,7 +157,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             connectgaps=False,
             showlegend=False,
             hovertemplate=(
-                f"Distance: %{{x:.0f}} m<br>"
+                f"Lap progress: %{{x:.1f}}%<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
             )
         ),
@@ -186,7 +203,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     _apply_base_layout(
         fig,
-        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)<br><sup>OpenF1 samples are approximately 3.7 Hz; distance is integrated from speed.</sup>',
+        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)<br><sup>OpenF1 samples are approximately 3.7 Hz; traces align on normalized progress from integrated speed.</sup>',
         title_font=dict(size=16),
         margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)),
@@ -206,6 +223,6 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
-    fig.update_xaxes(title_text="Derived distance (m)", row=4, col=1)
+    fig.update_xaxes(title_text="Lap progress (%)", row=4, col=1)
 
     return fig
