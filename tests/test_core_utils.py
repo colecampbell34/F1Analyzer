@@ -309,9 +309,9 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
             {"date": "2023-05-28T13:08:10Z", "category": "Flag", "flag": "DOUBLE YELLOW", "scope": "Sector", "lap_number": 9, "message": "DOUBLE YELLOW IN SECTOR 2"},
         ])
         safety, vsc, red, yellow = data.get_track_status_events(bundle)
-        self.assertEqual(safety, {5, 6})
-        self.assertEqual(vsc, {1, 2, 4})
-        self.assertEqual(red, {7, 8})
+        self.assertEqual(safety, {5})
+        self.assertEqual(vsc, {1, 4})
+        self.assertEqual(red, {7})
         self.assertEqual(yellow, {9})
         strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
         status_regions = [
@@ -319,6 +319,40 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
             if shape.fillcolor in {"orange", "yellow", "red"}
         ]
         self.assertEqual(len(status_regions), 4)
+
+    def test_2026_barcelona_vsc_shading_uses_only_explicit_deployment_laps(self):
+        bundle = _bundle()
+        bundle.ref = session_data.SessionRef(
+            year=2026, round=9, event_name="Barcelona Grand Prix",
+            country_name="Spain", session_name="Race", session_type="Race",
+            session_key=11307, meeting_key=1287,
+        )
+        race_start = pd.Timestamp("2026-06-14T13:00:00Z")
+        rows = []
+        for abbreviation, offset in (("VER", 0), ("ALO", 8)):
+            for lap_number in range(1, 67):
+                rows.append({
+                    "abbreviation": abbreviation, "lap_number": lap_number,
+                    "date_start": race_start + pd.Timedelta(seconds=offset + (lap_number - 1) * 82),
+                    "lap_duration": 82.0, "stint_number": 1, "compound": "HARD",
+                    "pit_in": False, "pit_out": False,
+                })
+        bundle.laps = pd.DataFrame(rows)
+        bundle.messages = session_data._normalize_messages([
+            {"date": "2026-06-14T13:59:03Z", "category": "SafetyCar", "lap_number": 41, "message": "VSC DEPLOYED"},
+            {"date": "2026-06-14T14:01:20Z", "category": "SafetyCar", "lap_number": 42, "message": "VSC ENDING"},
+            {"date": "2026-06-14T14:29:52Z", "category": "SafetyCar", "lap_number": 63, "message": "VSC DEPLOYED"},
+            {"date": "2026-06-14T14:33:35Z", "category": "SafetyCar", "lap_number": 65, "message": "VSC ENDING"},
+        ])
+
+        safety, vsc, red, _yellow = data.get_track_status_events(bundle)
+        self.assertEqual(safety, set())
+        self.assertEqual(vsc, {41, 63})
+        self.assertEqual(red, set())
+
+        strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
+        vsc_regions = [shape for shape in strategy.layout.shapes if shape.fillcolor == "yellow"]
+        self.assertEqual([(shape.x0, shape.x1) for shape in vsc_regions], [(40.5, 41.5), (62.5, 63.5)])
 
     def test_public_data_facade_loads_fixture_backed_bundle(self):
         bundle = _bundle()

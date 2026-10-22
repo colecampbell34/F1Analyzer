@@ -384,47 +384,22 @@ def get_best_lap(session, driver_abbr):
 
 
 def _status_laps(bundle: SessionBundle) -> tuple[set, set, set, set]:
+    """Return explicit race-control status laps without timestamp expansion."""
     safety, vsc, red, yellow = set(), set(), set(), set()
     if bundle.messages.empty:
         return safety, vsc, red, yellow
-    laps = bundle.laps.dropna(subset=["lap_number", "date_start", "lap_duration"]).copy()
-    if laps.empty:
-        return safety, vsc, red, yellow
     message_records = bundle.messages.dropna(subset=["timestamp"]).sort_values("timestamp").to_dict("records")
     statuses = {"safety": safety, "vsc": vsc, "red": red, "yellow": yellow}
-    active: dict[str, object] = {}
-
-    def apply_interval(kind, start, end):
-        if start is None or pd.isna(start):
-            return
-        lap_ends = laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")
-        overlaps = lap_ends >= start
-        overlaps &= laps["date_start"] <= end
-        statuses[kind].update(pd.to_numeric(laps.loc[overlaps, "lap_number"], errors="coerce").dropna().astype(int).tolist())
 
     for event in message_records:
-        event_time = event["timestamp"]
         kind, action = _classify_race_control_event(event)
         if kind is None or action is None:
             continue
         explicit_lap = event.get("lap_number")
-        if action == "point":
-            if pd.notna(explicit_lap):
-                statuses[kind].add(int(explicit_lap))
-            continue
-        if action == "start":
-            if kind in active:
-                apply_interval(kind, active[kind], event_time)
-            active[kind] = event_time
-            if pd.notna(explicit_lap):
-                statuses[kind].add(int(explicit_lap))
-            continue
-        start = active.pop(kind, None)
-        if start is not None:
-            apply_interval(kind, start, event_time)
+        if action in {"start", "point"} and pd.notna(explicit_lap):
+            statuses[kind].add(int(explicit_lap))
 
-    # Conflicting or duplicate event windows should produce one plotted status
-    # per lap. Red flag takes precedence over Safety Car, then VSC.
+    # Conflicting status records on one lap produce one plotted status.
     safety.difference_update(red)
     vsc.difference_update(red | safety)
     return safety, vsc, red, yellow
