@@ -17,7 +17,7 @@ import pandas as pd
 from runtime import is_serverless
 from session_data import (
     SessionBundle,
-    _is_red_flag_event,
+    _classify_race_control_event,
     get_schedule as _get_schedule,
     latest_completed_race,
     load_session_bundle,
@@ -394,56 +394,39 @@ def _status_laps(bundle: SessionBundle) -> tuple[set, set, set, set]:
     statuses = {"safety": safety, "vsc": vsc, "red": red, "yellow": yellow}
     active: dict[str, object] = {}
 
-    def apply_interval(kind, start, end=None):
+    def apply_interval(kind, start, end):
         if start is None or pd.isna(start):
             return
         lap_ends = laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")
         overlaps = lap_ends >= start
-        if end is not None and not pd.isna(end):
-            overlaps &= laps["date_start"] <= end
+        overlaps &= laps["date_start"] <= end
         statuses[kind].update(pd.to_numeric(laps.loc[overlaps, "lap_number"], errors="coerce").dropna().astype(int).tolist())
 
     for event in message_records:
-        text = " ".join(str(event.get(key) or "") for key in ("category", "flag", "message")).casefold()
         event_time = event["timestamp"]
-        clear = any(token in text for token in (
-            "in this lap", "withdrawn", "ended", "green flag", "track clear",
-            "session resumed", "session restarted", "all clear", "vsc ending",
-        ))
-        if clear:
-            if "safety car" in text:
-                closing = {"safety"}
-            elif "virtual safety" in text or "vsc" in text:
-                closing = {"vsc"}
-            else:
-                closing = set(active)
-            for kind, start in list(active.items()):
-                if kind not in closing:
-                    continue
-                apply_interval(kind, start, event_time)
-                active.pop(kind, None)
+        kind, action = _classify_race_control_event(event)
+        if kind is None or action is None:
             continue
-        kind = (
-            "red" if _is_red_flag_event(event, text) else
-            "vsc" if "virtual safety" in text or "vsc" in text else
-            "safety" if "safety car" in text or "safetycar" in text else
-            "yellow" if "yellow" in text else None
-        )
         explicit_lap = event.get("lap_number")
-        if kind and pd.notna(explicit_lap):
-            statuses[kind].add(int(explicit_lap))
-        scope = str(event.get("scope") or "").casefold()
-        starts_interval = kind and (
-            (kind == "yellow" and ("yellow flag" in text or "full course" in text or scope in {"track", "all"}))
-            or any(token in text for token in ("deployed", "out", "red flag", "yellow flag"))
-        )
-        if starts_interval:
+        if action == "point":
+            if pd.notna(explicit_lap):
+                statuses[kind].add(int(explicit_lap))
+            continue
+        if action == "start":
+            if kind in active:
+                apply_interval(kind, active[kind], event_time)
             active[kind] = event_time
-    # Race-control rows can identify the lap directly even if a status end
-    # message is absent. This remains an explicit derived heuristic.
-    last_lap_end = (laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")).max()
-    for kind, start in active.items():
-        apply_interval(kind, start, last_lap_end)
+            if pd.notna(explicit_lap):
+                statuses[kind].add(int(explicit_lap))
+            continue
+        start = active.pop(kind, None)
+        if start is not None:
+            apply_interval(kind, start, event_time)
+
+    # Conflicting or duplicate event windows should produce one plotted status
+    # per lap. Red flag takes precedence over Safety Car, then VSC.
+    safety.difference_update(red)
+    vsc.difference_update(red | safety)
     return safety, vsc, red, yellow
 
 

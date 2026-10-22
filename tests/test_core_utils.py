@@ -11,6 +11,7 @@ import ai_cache
 import ai_utils
 import app
 import callbacks_shared
+import callbacks_tabs
 import data
 import graphs
 import graphs_pace
@@ -199,17 +200,31 @@ class TestUrlAndRuntimeContracts(unittest.TestCase):
 class TestNormalizedDashboardWorkflows(unittest.TestCase):
     def test_provider_fixture_builds_driver_result_stint_and_pit_context(self):
         bundle = _bundle()
+        bundle.stints = pd.DataFrame([
+            {"abbreviation": "VER", "stint_number": 1, "lap_start": 1, "lap_end": 20, "compound": "MEDIUM"},
+            {"abbreviation": "VER", "stint_number": 2, "lap_start": 21, "lap_end": 78, "compound": "HARD"},
+        ])
+        bundle.pits = pd.DataFrame([{"abbreviation": "VER", "lap_number": 20}])
         driver_info = data.get_driver_info(bundle)
         self.assertEqual([driver["abbr"] for driver in driver_info[:2]], ["VER", "ALO"])
         self.assertEqual(data.get_teammate_from_info("VER", driver_info), None)
         self.assertEqual(data.get_best_lap(bundle, "VER")["lap_number"], 3)
         self.assertEqual(strategy_insights.build_driver_stints(bundle, "VER")[0]["compound"], "MEDIUM")
         pit = strategy_insights.build_driver_pit_impacts(bundle, "VER")[0]
-        self.assertEqual(pit["source"], "openf1.pit")
-        self.assertEqual(pit["to_compound"], "MEDIUM")
+        self.assertEqual(pit["source"], "openf1.stints")
+        self.assertEqual(pit["to_compound"], "HARD")
 
     def test_fixture_backed_graphs_return_figures_with_sparse_laps(self):
         bundle = _bundle()
+        extra_laps = []
+        for driver_number, abbreviation in ((1, "VER"), (14, "ALO")):
+            for lap_number in range(5, 11):
+                extra_laps.append({
+                    "driver_number": driver_number, "abbreviation": abbreviation,
+                    "lap_number": lap_number, "lap_duration": 78.0 + lap_number / 10,
+                    "stint_number": 1, "compound": "MEDIUM",
+                })
+        bundle.laps = pd.concat([bundle.laps, pd.DataFrame(extra_laps)], ignore_index=True)
         strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
         degradation = graphs._build_deg_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
         race_gap = graphs._build_race_gaps_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
@@ -218,6 +233,45 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         self.assertTrue(degradation.data)
         self.assertTrue(race_gap.data)
         self.assertTrue(pace.data or pace.layout.annotations)
+        self.assertTrue({"SC", "VSC", "Red flag"}.issubset({trace.name for trace in strategy.data}))
+        self.assertTrue({"SC", "VSC", "Red flag"}.issubset({trace.name for trace in race_gap.data}))
+
+    def test_strategy_calls_follow_displayed_stints_including_same_compound_stop(self):
+        bundle = _bundle()
+        bundle.stints = pd.DataFrame([
+            {"abbreviation": "VER", "stint_number": 1, "lap_start": 1, "lap_end": 11, "compound": "SOFT"},
+            {"abbreviation": "VER", "stint_number": 2, "lap_start": 12, "lap_end": 27, "compound": "HARD"},
+            {"abbreviation": "VER", "stint_number": 3, "lap_start": 28, "lap_end": 41, "compound": "MEDIUM"},
+            {"abbreviation": "VER", "stint_number": 4, "lap_start": 42, "lap_end": 60, "compound": "HARD"},
+            {"abbreviation": "VER", "stint_number": 5, "lap_start": 61, "lap_end": 66, "compound": "HARD"},
+        ])
+        bundle.pits = pd.DataFrame([
+            {"abbreviation": "VER", "lap_number": 2},
+            {"abbreviation": "VER", "lap_number": 27},
+            {"abbreviation": "VER", "lap_number": 41},
+            {"abbreviation": "VER", "lap_number": 60},
+        ])
+        bundle.laps = pd.DataFrame([
+            {"abbreviation": "VER", "lap_number": lap, "position": 3}
+            for lap in range(1, 68)
+        ])
+
+        impacts = strategy_insights.build_driver_pit_impacts(bundle, "VER")
+        self.assertEqual([event["pit_lap"] for event in impacts], [11, 27, 41, 60])
+        self.assertEqual(
+            [(event["from_compound"], event["to_compound"]) for event in impacts],
+            [("SOFT", "HARD"), ("HARD", "MEDIUM"), ("MEDIUM", "HARD"), ("HARD", "HARD")],
+        )
+        self.assertTrue(all(event["source"] == "openf1.stints" for event in impacts))
+
+        overview = callbacks_tabs._render_stint_overview([
+            ("VER", strategy_insights.build_driver_stints(bundle, "VER")),
+        ])
+        bar = overview.children[1].children[0].children[1]
+        markers = [child for child in bar.children if child.className == "stint-pit-marker"]
+        self.assertEqual(len(markers), 4)
+        labels = [child.children for child in bar.children if child.className == "stint-bar-segment"]
+        self.assertEqual(labels, ["SOFT 1–11", "HARD 12–27", "MEDIUM 28–41", "HARD 42–60", "HARD 61–66"])
 
     def test_pace_excludes_known_pit_and_out_laps_and_race_gap_labels_lapped_strings(self):
         laps = pd.DataFrame({
@@ -231,28 +285,40 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         gap = graphs_race._build_race_gaps_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
         self.assertIn("Derived cumulative lap-time gap", gap.layout.title.text)
 
-    def test_race_control_status_intervals_include_yellow_and_red_flag_laps(self):
+    def test_race_control_status_intervals_use_explicit_deployments_without_yellow_shading(self):
         bundle = _bundle()
-        starts = pd.to_datetime([
-            "2023-05-28T13:00:00Z", "2023-05-28T13:01:00Z",
-            "2023-05-28T13:02:00Z", "2023-05-28T13:03:00Z",
-        ], utc=True)
+        starts = pd.date_range("2023-05-28T13:00:00Z", periods=9, freq="min")
         bundle.laps = pd.DataFrame({
-            "lap_number": [1, 2, 3, 4], "date_start": starts,
-            "lap_duration": [60.0, 60.0, 60.0, 60.0],
+            "abbreviation": ["VER"] * 9,
+            "lap_number": range(1, 10), "date_start": starts,
+            "lap_duration": [60.0] * 9, "stint_number": [1] * 9,
+            "compound": ["MEDIUM"] * 9, "pit_in": [False] * 9,
         })
         bundle.messages = session_data._normalize_messages([
-            {"date": "2023-05-28T13:00:30Z", "category": "SafetyCar", "message": "SAFETY CAR DEPLOYED"},
-            {"date": "2023-05-28T13:02:30Z", "category": "SafetyCar", "message": "SAFETY CAR IN THIS LAP"},
-            {"date": "2023-05-28T13:01:30Z", "category": "Flag", "flag": "RED", "message": "RED FLAG"},
-            {"date": "2023-05-28T13:02:30Z", "category": "Flag", "message": "SESSION RESUMED"},
-            {"date": "2023-05-28T13:03:10Z", "category": "Flag", "flag": "YELLOW", "scope": "Sector", "lap_number": 4, "message": "YELLOW IN SECTOR 2"},
+            {"date": "2023-05-28T13:00:30Z", "category": "SafetyCar", "lap_number": 1, "message": "VSC DEPLOYED"},
+            {"date": "2023-05-28T13:01:30Z", "category": "SafetyCar", "lap_number": 2, "message": "VSC ENDING"},
+            {"date": "2023-05-28T13:02:10Z", "category": "Other", "lap_number": 3, "message": "INCIDENT DURING VSC"},
+            {"date": "2023-05-28T13:03:10Z", "category": "SafetyCar", "lap_number": 4, "message": "VSC DEPLOYED"},
+            {"date": "2023-05-28T13:03:20Z", "category": "SafetyCar", "lap_number": 4, "message": "VSC ENDING"},
+            {"date": "2023-05-28T13:04:30Z", "category": "SafetyCar", "lap_number": 5, "message": "SAFETY CAR DEPLOYED"},
+            {"date": "2023-05-28T13:04:45Z", "category": "SafetyCar", "lap_number": 5, "message": "VSC DEPLOYED"},
+            {"date": "2023-05-28T13:05:00Z", "category": "SafetyCar", "lap_number": 5, "message": "VSC ENDING"},
+            {"date": "2023-05-28T13:05:30Z", "category": "SafetyCar", "lap_number": 6, "message": "SAFETY CAR IN THIS LAP"},
+            {"date": "2023-05-28T13:06:30Z", "category": "Flag", "flag": "RED", "lap_number": 7, "message": "RED FLAG"},
+            {"date": "2023-05-28T13:07:30Z", "category": "Flag", "lap_number": 8, "message": "SESSION RESUMED"},
+            {"date": "2023-05-28T13:08:10Z", "category": "Flag", "flag": "DOUBLE YELLOW", "scope": "Sector", "lap_number": 9, "message": "DOUBLE YELLOW IN SECTOR 2"},
         ])
         safety, vsc, red, yellow = data.get_track_status_events(bundle)
-        self.assertEqual(safety, {1, 2, 3})
-        self.assertEqual(vsc, set())
-        self.assertEqual(red, {2, 3})
-        self.assertEqual(yellow, {4})
+        self.assertEqual(safety, {5, 6})
+        self.assertEqual(vsc, {1, 2, 4})
+        self.assertEqual(red, {7, 8})
+        self.assertEqual(yellow, {9})
+        strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
+        status_regions = [
+            shape for shape in strategy.layout.shapes
+            if shape.fillcolor in {"orange", "yellow", "red"}
+        ]
+        self.assertEqual(len(status_regions), 4)
 
     def test_public_data_facade_loads_fixture_backed_bundle(self):
         bundle = _bundle()

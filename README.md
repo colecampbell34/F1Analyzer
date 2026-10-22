@@ -79,7 +79,7 @@ See [architecture](docs/ARCHITECTURE.md), [deployment](docs/DEPLOYMENT.md),
 
 ## Local setup
 
-Use Python 3.12 for deployment parity. The app listens on port 8080 when run
+Use Python 3.12 for deployment parity. The app listens on port 8000 when run
 directly:
 
 ```bash
@@ -137,7 +137,7 @@ The opt-in Playwright browser smoke test needs a running app and live OpenF1
 availability:
 
 ```bash
-RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8080 \
+RUN_BROWSER_SMOKE=1 F1_ANALYZER_BASE_URL=http://127.0.0.1:8000 \
   python -m pytest tests/test_browser_smoke.py
 ```
 

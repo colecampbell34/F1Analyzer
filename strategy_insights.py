@@ -62,32 +62,26 @@ def build_driver_stints(session, driver):
 
 
 def build_driver_pit_impacts(session, driver):
-    """Join pit events to adjacent tyre stints and lap positions."""
-    pit_records = getattr(session, "pits", pd.DataFrame())
-    driver_pits = pit_records[pit_records["abbreviation"] == driver].copy() if not pit_records.empty else pd.DataFrame()
+    """Describe stint transitions using the same stint records as the plan."""
     stints = build_driver_stints(session, driver)
     laps = _driver_laps(session, driver)
+    provider_stints = getattr(session, "stints", pd.DataFrame())
+    has_provider_stints = (
+        not provider_stints.empty
+        and "abbreviation" in provider_stints
+        and not provider_stints.loc[provider_stints["abbreviation"] == driver].empty
+    )
+    source = "openf1.stints" if has_provider_stints else "laps.stint_transition"
     events = []
-    if driver_pits.empty:
-        # A compound/stint transition is still useful context when a pit
-        # record was not published; keep its provenance explicit.
-        for previous, following in zip(stints, stints[1:]):
-            start_lap = _number(following.get("start_lap"))
-            if start_lap is None:
-                continue
-            event_lap = int(start_lap) - 1
-            events.append(_pit_impact(laps, event_lap, previous.get("compound"), following.get("compound"), source="stint_transition"))
-        return events
-
-    for _, pit in driver_pits.iterrows():
-        pit_lap = _number(pit.get("lap_number"))
-        if pit_lap is None:
+    for previous, following in zip(stints, stints[1:]):
+        pit_lap = _number(previous.get("end_lap"))
+        next_start = _number(following.get("start_lap"))
+        if pit_lap is None or next_start is None or next_start <= pit_lap:
             continue
-        before_stint = next((item for item in reversed(stints) if _number(item.get("end_lap")) is not None and _number(item.get("end_lap")) < pit_lap), None)
-        after_stint = next((item for item in stints if _number(item.get("start_lap")) is not None and _number(item.get("start_lap")) >= pit_lap), None)
-        from_compound = before_stint.get("compound") if before_stint else "UNKNOWN"
-        to_compound = after_stint.get("compound") if after_stint else from_compound
-        events.append(_pit_impact(laps, int(pit_lap), from_compound, to_compound, source="openf1.pit"))
+        events.append(_pit_impact(
+            laps, int(pit_lap), previous.get("compound"), following.get("compound"),
+            source=source,
+        ))
     return events
 
 

@@ -93,11 +93,20 @@ def _pit_laps(session, driver):
 
 
 def _add_status_regions(fig, session):
-    sc_laps, vsc_laps, red_laps, yellow_laps = get_track_status_events(session)
-    for lap_set, color in ((sc_laps, "orange"), (vsc_laps, "yellow"), (red_laps, "red"), (yellow_laps, "#e4c84a")):
+    sc_laps, vsc_laps, red_laps, _yellow_laps = get_track_status_events(session)
+    for lap_set, color in ((sc_laps, "orange"), (vsc_laps, "yellow"), (red_laps, "red")):
         for start_lap, end_lap in _collapse_lap_ranges(lap_set):
             fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.14, layer="below", line_width=0, row="all", col="all")
-    return bool(sc_laps or vsc_laps or red_laps or yellow_laps)
+    return bool(sc_laps or vsc_laps or red_laps)
+
+
+def _add_status_legend(fig):
+    for name, color in (("SC", "orange"), ("VSC", "yellow"), ("Red flag", "red")):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=name,
+            marker=dict(color=color, symbol="square", size=9),
+            hoverinfo="skip", showlegend=True,
+        ), row=1, col=1)
 
 
 def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
@@ -130,6 +139,7 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
 
     has_status = _add_status_regions(fig, session)
     _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=1, col=1)
+    _add_status_legend(fig)
     for compound in compound_drawn:
         if compound in COMPOUND_COLORS:
             fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=compound,
@@ -293,12 +303,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         for pit_lap in _pit_laps(session, driver):
             fig.add_vline(x=pit_lap, line_width=1.5, line_dash="dot", line_color=color, opacity=0.6, row="all", col="all")
     _add_status_regions(fig, session)
-    for name, color in (("SC", "orange"), ("VSC", "yellow"), ("Red flag", "red")):
-        fig.add_trace(go.Scatter(
-            x=[None], y=[None], mode="markers", name=name,
-            marker=dict(color=color, symbol="square", size=9),
-            hoverinfo="skip", showlegend=True,
-        ), row=1, col=1)
+    _add_status_legend(fig)
     max_lap = float(merged["lap_number"].max()) if not merged.empty else 1.0
     _apply_base_layout(
         fig, title=f"Race Gap & Position Analysis<br><sup>{gap_label}; pit and race-control context shown when published.{gap_start_note}</sup>",

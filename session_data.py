@@ -713,6 +713,33 @@ def _normalize_messages(records: list[dict[str, Any]]) -> pd.DataFrame:
     return frame.sort_values("timestamp", na_position="last").reset_index(drop=True) if not frame.empty else frame
 
 
+def _classify_race_control_event(event: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Classify explicit status changes without matching incidental mentions."""
+    message = str(event.get("message") or "").strip().casefold()
+    flag = str(event.get("flag") or "").strip().casefold()
+    category = re.sub(r"[^a-z]", "", str(event.get("category") or "").casefold())
+
+    vsc = r"(?:vsc|virtual safety car)"
+    if category == "safetycar":
+        if re.search(rf"^{vsc}\s+(?:deployed|deploy|out)\b", message):
+            return "vsc", "start"
+        if re.search(rf"^{vsc}\s+(?:ending|in this lap|ended|withdrawn)\b", message):
+            return "vsc", "end"
+        if re.search(r"^safety car\s+(?:deployed|deploy|out)\b", message):
+            return "safety", "start"
+        if re.search(r"^safety car\s+(?:ending|in this lap|ended|withdrawn)\b", message):
+            return "safety", "end"
+
+    if category == "flag":
+        if flag in {"red", "red flag"} or re.match(r"^red flag(?:\b|$)", message):
+            return "red", "start"
+        if flag in {"green", "green flag"} or re.match(r"^(?:green flag|session resumed|session restarted)\b", message):
+            return "red", "end"
+        if flag in {"yellow", "double yellow"} or re.match(r"^(?:yellow|double yellow)\b", message):
+            return "yellow", "point"
+    return None, None
+
+
 def _normalize_timed_position(records: list[dict[str, Any]], kind: str) -> pd.DataFrame:
     rows = []
     for record in records:
@@ -778,9 +805,9 @@ def _attach_lap_context(laps: pd.DataFrame, positions: pd.DataFrame, intervals: 
             lap_number = _as_int(event.get("lap_number"))
             if lap_number is None:
                 continue
-            text = " ".join(str(event.get(key) or "") for key in ("category", "flag", "message")).casefold()
-            status = "safety_car" if "safety car" in text else "vsc" if "virtual safety" in text or "vsc" in text else "red_flag" if _is_red_flag_event(event, text) else "yellow" if "yellow" in text else None
-            if status:
+            status, action = _classify_race_control_event(event)
+            if status and action in {"start", "point"}:
+                status = {"safety": "safety_car", "red": "red_flag"}.get(status, status)
                 result.loc[result["lap_number"] == lap_number, "track_status"] = status
                 result.loc[result["lap_number"] == lap_number, "track_status_source"] = "race_control_explicit_lap"
     return result.drop(columns=["lap_end"], errors="ignore")
@@ -1180,4 +1207,3 @@ def clear_rate_window_for_tests():
         _ERROR_COUNT = 0
         _RESPONSE_BYTES = 0
         _ENDPOINT_METRICS.clear()
-

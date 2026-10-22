@@ -20,12 +20,18 @@ def _render_stint_overview(stints_by_driver):
             continue
         total_laps = max(stint['end_lap'] for stint in drawable)
         bars = []
-        for stint in drawable:
+        for index, stint in enumerate(drawable):
+            if index:
+                bars.append(html.Span(
+                    title=f"Pit stop before lap {stint['start_lap']}",
+                    className='stint-pit-marker',
+                    **{'aria-label': f"Pit stop before lap {stint['start_lap']}"},
+                ))
             lap_count = max(1, stint['end_lap'] - stint['start_lap'] + 1)
             compound = stint['compound']
             start_lap = int(stint['start_lap']) if float(stint['start_lap']).is_integer() else stint['start_lap']
             end_lap = int(stint['end_lap']) if float(stint['end_lap']).is_integer() else stint['end_lap']
-            label = f"{compound} L{start_lap}–{end_lap}"
+            label = f"{compound} {start_lap}–{end_lap}"
             bars.append(html.Span(
                 label,
                 title=(label if compound != 'UNAVAILABLE' else f"{label} · compound unavailable from source"),
