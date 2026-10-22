@@ -458,6 +458,49 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         self.assertIn("do not infer", context.casefold())
         prompt = ai_utils.build_ai_prompt(context, "Compare what the data says about these drivers.")
         self.assertIn("Do not fill gaps from memory", prompt)
+        self.assertIn("explain performance", prompt)
+        self.assertIn("shrinking gap means the primary driver gained time", prompt)
+
+    def test_ai_context_includes_telemetry_gain_windows_for_corner_analysis(self):
+        progress = np.linspace(0.0, 1.0, 201)
+        slower_time = progress * 80.640
+        corner_gain = np.clip((progress - 0.2) / 0.2, 0.0, 1.0) * 0.4
+        faster_time = slower_time - 0.118 * progress - corner_gain
+        speed = np.full(len(progress), 300.0)
+        brake = np.zeros(len(progress))
+        corner = (progress >= 0.2) & (progress <= 0.4)
+        speed[corner] = 150.0
+        brake[corner] = 1.0
+
+        def trace(elapsed, speed_values, brake_values):
+            return pd.DataFrame({
+                "Distance": progress * 4000.0,
+                "Time": pd.to_timedelta(elapsed, unit="s"),
+                "Speed": speed_values,
+                "Brake": brake_values,
+                "Throttle": np.where(brake_values > 0, 0.0, 100.0),
+            })
+
+        lap1 = pd.Series({
+            "lap_number": 44, "lap_duration": 80.122,
+            "duration_sector_1": 23.533, "duration_sector_2": 32.255, "duration_sector_3": 24.334,
+        })
+        lap2 = pd.Series({
+            "lap_number": 43, "lap_duration": 80.640,
+            "duration_sector_1": 23.421, "duration_sector_2": 32.616, "duration_sector_3": 24.603,
+        })
+        context = ai_utils._get_dashboard_telemetry_context(
+            "HAM", "RUS", lap1, lap2,
+            trace(faster_time, speed, brake),
+            trace(slower_time, np.where(corner, 155.0, 305.0), brake),
+        )
+        self.assertIn("Total lap: HAM 80.122s vs RUS 80.640s; HAM gained 0.518s.", context)
+        self.assertIn("Sector 1: HAM 23.533s vs RUS 23.421s; HAM lost 0.112s.", context)
+        self.assertIn("Sector 2: HAM 32.255s vs RUS 32.616s; HAM gained 0.361s.", context)
+        self.assertIn("20%–25% lap progress", context)
+        self.assertIn("HAM gained 0.106s vs RUS", context)
+        self.assertIn("brake active 100% of samples", context)
+        self.assertIn("mean speed 150 km/h", context)
 
     def test_ai_context_keeps_lapped_result_and_fallback_provenance(self):
         bundle = _bundle()

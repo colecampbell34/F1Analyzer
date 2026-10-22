@@ -120,7 +120,7 @@ def check_user_limit(ip):
 
 def _cache_key(session_context, question):
     q_normalized = question.lower().strip()
-    raw = (session_context or '') + '||' + q_normalized
+    raw = 'ai-analysis-v2||' + (session_context or '') + '||' + q_normalized
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

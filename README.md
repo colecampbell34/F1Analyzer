@@ -52,7 +52,11 @@ it matters, and focused on explaining a performance delta.
   available.
 - Grounded AI analysis with session, selected-lap, strategy, weather, and
   race-control context when those feeds are available and `GEMINI_API_KEY` is
-  configured.
+  configured. When both selected-lap traces are usable, AI context also
+  includes approximate lap-progress time-gap changes alongside speed,
+  throttle, and braking samples so answers can explain where a driver gained
+  time. These derived windows do not identify verified corner numbers or
+  precise track locations.
 - Bookmarkable URLs, feedback capture, chart downloads, and responsive
   desktop/mobile layouts.
 

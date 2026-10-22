@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 from data import get_driver_info, get_teammate_from_info
@@ -21,16 +22,40 @@ def build_ai_prompt(session_context, question, history=None):
         "context as the only authoritative source for this session. Driver and "
         "team identity, classification, starting grid, and timing claims must "
         "match the listed source and quality notes. Do not fill gaps from memory.\n\n"
+        "Your job is to explain performance, not merely repeat the context. For "
+        "comparisons, state the result first, identify where time was gained or "
+        "lost, quantify the contribution of each relevant phase, then connect "
+        "that pattern to supporting telemetry. Use the most specific evidence "
+        "available: sector splits first, then the telemetry progress windows "
+        "and speed/braking/throttle patterns. A faster lap time alone does not "
+        "show where the gain occurred.\n\n"
         "Use only supported values. Distinguish observed OpenF1 data, optional "
         "Jolpica supplements, and derived estimates. Do not claim official status "
         "for a supplemental or derived value. If telemetry is absent or marked "
         "incomplete, do not infer speed, braking, throttle, gear, GPS, or lap-delta "
         "details. Treat gaps in samples as unknown, not as zero.\n\n"
+        "For selected-lap comparisons, interpret the supplied cumulative time-gap "
+        "changes by progress window: a shrinking gap means the primary driver "
+        "gained time in that window; a growing gap means they lost time. Relate "
+        "gain/loss windows to sampled speed and braking evidence. Group adjacent "
+        "windows into a coherent braking/cornering phase when the evidence supports "
+        "it. Call a phase cornering or braking-related only when telemetry supports "
+        "it (for example, braking samples and a speed reduction relative to "
+        "adjacent windows); otherwise describe it "
+        "as a lap-progress window. Do not invent corner numbers, track locations, "
+        "or causal explanations from approximate integrated distance. Mention "
+        "sampling limits and qualify small or ambiguous differences.\n\n"
+        "Keep lap performance separate from race outcome: a fastest lap does not "
+        "make its driver the race winner, and finishing position is not evidence "
+        "of who was faster on the selected laps. Never add result claims unless "
+        "they appear in the classification data.\n\n"
         "Compare lap and sector times only where both values are available. Note "
         "when pit-out laps or laps marked by a race-control heuristic affect a "
         "comparison. Describe tyre degradation as an estimate. Pit lane duration "
         "and stationary service duration are different measurements. State missing "
-        "data plainly. Answer directly with concise bullets and bold key metrics.\n\n"
+        "data plainly. Do not copy earlier answers as evidence: recalculate claims "
+        "from the current session data. Answer with a concise but substantive "
+        "engineering explanation and bold key metrics.\n\n"
         f"=== SESSION DATA ===\n{session_context}{history_text}\n\n"
         f"=== USER QUESTION ===\n{question}"
     )
@@ -186,6 +211,29 @@ def _lap_summary(lap, driver):
     return ", ".join(parts)
 
 
+def _get_lap_time_comparison(driver1, driver2, lap1, lap2):
+    """Calculate lap and sector deltas from the selected timing records."""
+    lines = ["Timing comparison (driver 1 elapsed time minus driver 2 elapsed time; negative means driver 1 was faster)."]
+    for field, label in (
+        ("lap_duration", "Total lap"),
+        ("duration_sector_1", "Sector 1"),
+        ("duration_sector_2", "Sector 2"),
+        ("duration_sector_3", "Sector 3"),
+    ):
+        first = pd.to_numeric(pd.Series([lap1.get(field) if lap1 is not None else None]), errors="coerce").iloc[0]
+        second = pd.to_numeric(pd.Series([lap2.get(field) if lap2 is not None else None]), errors="coerce").iloc[0]
+        if pd.isna(first) or pd.isna(second):
+            lines.append(f"{label}: unavailable for at least one driver.")
+            continue
+        delta = float(first - second)
+        outcome = f"{driver1} gained" if delta < 0 else f"{driver1} lost" if delta > 0 else "tied"
+        lines.append(
+            f"{label}: {driver1} {_fmt_seconds(first)} vs {driver2} {_fmt_seconds(second)}; "
+            f"{outcome} {_fmt_seconds(abs(delta))}."
+        )
+    return "\n".join(lines)
+
+
 def _trace_summary(trace, driver, lap_number):
     if trace is None or trace.empty or "Speed" not in trace:
         return f"{driver} lap {lap_number}: no usable selected-lap telemetry trace."
@@ -211,21 +259,98 @@ def _trace_summary(trace, driver, lap_number):
     return ", ".join(parts)
 
 
+def _get_trace_comparison_windows(driver1, driver2, tel1, tel2, window_count=20):
+    """Summarize time-gap changes and telemetry by normalized lap-progress window."""
+    def _prepare(trace):
+        required = {"Distance", "Time", "Speed"}
+        if trace is None or trace.empty or not required.issubset(trace.columns):
+            return None
+        frame = trace.loc[:, [column for column in ("Distance", "Time", "Speed", "Brake", "Throttle") if column in trace]].copy()
+        frame["Distance"] = pd.to_numeric(frame["Distance"], errors="coerce")
+        frame["TimeSeconds"] = pd.to_timedelta(frame["Time"], errors="coerce").dt.total_seconds()
+        frame["Speed"] = pd.to_numeric(frame["Speed"], errors="coerce")
+        if "Brake" in frame:
+            frame["Brake"] = pd.to_numeric(frame["Brake"], errors="coerce")
+        if "Throttle" in frame:
+            frame["Throttle"] = pd.to_numeric(frame["Throttle"], errors="coerce")
+        frame = frame.replace([np.inf, -np.inf], np.nan).dropna(subset=["Distance", "TimeSeconds", "Speed"])
+        frame = frame.sort_values("Distance").drop_duplicates("Distance", keep="first")
+        if len(frame) < 6:
+            return None
+        start = float(frame["Distance"].iloc[0])
+        span = float(frame["Distance"].iloc[-1] - start)
+        if span <= 0:
+            return None
+        frame["Progress"] = (frame["Distance"] - start) / span
+        frame["TimeSeconds"] -= float(frame["TimeSeconds"].iloc[0])
+        return frame
+
+    first, second = _prepare(tel1), _prepare(tel2)
+    lines = ["Telemetry comparison windows (derived from sampled car data; progress and distance are approximate)."]
+    if first is None or second is None:
+        return "\n".join(lines + ["Insufficient aligned speed/time samples to calculate progress-window time gains."])
+
+    boundaries = np.linspace(0.0, 1.0, window_count + 1)
+    gap_at_boundary = []
+    for progress in boundaries:
+        time1 = np.interp(progress, first["Progress"], first["TimeSeconds"])
+        time2 = np.interp(progress, second["Progress"], second["TimeSeconds"])
+        gap_at_boundary.append(float(time1 - time2))
+
+    for index, (start, end) in enumerate(zip(boundaries[:-1], boundaries[1:])):
+        gap_change = gap_at_boundary[index + 1] - gap_at_boundary[index]
+        start_distance = float(np.interp(start, first["Progress"], first["Distance"] - first["Distance"].iloc[0]))
+        end_distance = float(np.interp(end, first["Progress"], first["Distance"] - first["Distance"].iloc[0]))
+        parts = [
+            f"{start:.0%}–{end:.0%} lap progress (reference-derived distance about {start_distance:.0f}–{end_distance:.0f} m):",
+            f"{driver1} {'gained' if gap_change < 0 else 'lost'} {_fmt_seconds(abs(gap_change))} vs {driver2}",
+        ]
+        for driver, frame in ((driver1, first), (driver2, second)):
+            mask = (frame["Progress"] >= start) & (
+                (frame["Progress"] < end) | ((end == 1.0) & (frame["Progress"] <= end))
+            )
+            window = frame.loc[mask]
+            if window.empty:
+                continue
+            parts.append(f"{driver} mean speed {window['Speed'].mean():.0f} km/h")
+            if "Brake" in window:
+                brake = window["Brake"].dropna()
+                if not brake.empty:
+                    parts.append(f"brake active {brake.gt(0).mean() * 100:.0f}% of samples")
+            if "Throttle" in window:
+                throttle = window["Throttle"].dropna()
+                if not throttle.empty:
+                    parts.append(f"full throttle {throttle.ge(99).mean() * 100:.0f}% of samples")
+        lines.append("; ".join(parts) + ".")
+    lines.append(
+        f"Cumulative gap is {driver1} elapsed time minus {driver2} elapsed time; "
+        "negative means the primary driver is ahead. Window gains are changes "
+        "in that gap, not official sector timing."
+    )
+    return "\n".join(lines)
+
+
 def _get_dashboard_telemetry_context(driver1, driver2, lap1, lap2, tel1=None, tel2=None, lap_label="selected laps"):
     lines = ["=== SELECTED LAP AND TELEMETRY CONTEXT ===", f"Selected dashboard laps: {lap_label}."]
     lines.append(_lap_summary(lap1, driver1))
     lines.append(_lap_summary(lap2, driver2))
+    lines.append(_get_lap_time_comparison(driver1, driver2, lap1, lap2))
     if tel1 is None or tel2 is None:
         lines.append("No complete pair of telemetry traces is available. Do not infer a lap delta or telemetry advantage.")
         return "\n".join(lines)
     lines.append(_trace_summary(tel1, driver1, lap1.get("lap_number")))
     lines.append(_trace_summary(tel2, driver2, lap2.get("lap_number")))
+    lines.append(_get_trace_comparison_windows(driver1, driver2, tel1, tel2))
     quality1 = tel1.attrs.get("quality", {})
     quality2 = tel2.attrs.get("quality", {})
     if quality1.get("has_position") and quality2.get("has_position"):
         lines.append("Both traces include aligned OpenF1 location samples; map coordinates are approximate and session-specific.")
     else:
-        lines.append("At least one trace lacks complete location alignment. No positional or distance-based driver advantage is asserted here.")
+        lines.append(
+            "At least one trace lacks complete location alignment. No GPS or "
+            "track-position advantage is asserted; progress windows use the "
+            "approximate distance integrated from car speed."
+        )
     return "\n".join(lines)
 
 
