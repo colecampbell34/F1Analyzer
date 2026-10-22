@@ -235,7 +235,7 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         self.assertIn("Click Load analysis", warning)
         self.assertEqual(style, {})
 
-    def test_telemetry_graph_aligns_all_traces_on_normalized_lap_progress(self):
+    def test_telemetry_graph_aligns_delta_and_channels_on_reference_distance(self):
         progress = np.linspace(0.0, 1.0, 12)
 
         def trace(distance_span, duration):
@@ -263,12 +263,16 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         self.assertEqual(len(speed_traces), 2)
         np.testing.assert_allclose(speed_traces[0].x, speed_traces[1].x)
         self.assertAlmostEqual(float(speed_traces[0].x[0]), 0.0)
-        self.assertAlmostEqual(float(speed_traces[0].x[-1]), 100.0)
-        self.assertEqual(figure.layout.xaxis4.title.text, "Lap progress (%)")
+        self.assertAlmostEqual(float(speed_traces[0].x[-1]), 4000.0)
+        self.assertEqual(figure.layout.xaxis4.title.text, "Derived distance (m)")
         for axis_name in ("xaxis", "xaxis2", "xaxis3", "xaxis4"):
             axis = getattr(figure.layout, axis_name)
-            self.assertEqual(list(axis.range), [0, 100])
+            self.assertEqual(list(axis.range), [0, 4000])
             self.assertFalse(axis.autorange)
+        delta_traces = [item for item in figure.data if item.name in ("HAM ahead", "HAM behind")]
+        delta_x = np.concatenate([np.asarray(item.x, dtype=float) for item in delta_traces])
+        self.assertAlmostEqual(float(np.nanmin(delta_x)), 0.0)
+        self.assertAlmostEqual(float(np.nanmax(delta_x)), 4000.0)
         ham_behind = next(item for item in figure.data if item.name == "HAM behind")
         self.assertLess(float(np.nanmin(ham_behind.y)), 0.0)
         self.assertTrue(all(

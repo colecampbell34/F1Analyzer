@@ -55,18 +55,18 @@ def _split_delta_by_sign(delta_dist, delta_values):
     )
 
 
-def _distance_as_lap_progress(distances):
-    """Map one derived-distance trace onto a 0-to-100% lap-progress axis."""
+def _distance_on_common_axis(distances, common_distance):
+    """Map a derived-distance trace onto the reference lap's distance axis."""
     values = pd.to_numeric(pd.Series(distances), errors='coerce').to_numpy(dtype=float)
     valid = np.isfinite(values)
     if valid.sum() < 2:
         raise ValueError("Telemetry trace does not contain enough valid distance samples.")
     start = float(np.min(values[valid]))
     span = float(np.max(values[valid]) - start)
-    if span <= 0:
+    if span <= 0 or common_distance <= 0:
         raise ValueError("Telemetry trace does not cover a usable lap distance.")
     progress = np.full(values.shape, np.nan, dtype=float)
-    progress[valid] = (values[valid] - start) / span * 100.0
+    progress[valid] = (values[valid] - start) / span * common_distance
     return progress
 
 
@@ -95,10 +95,18 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
         compare_tel=driver1_tel,
     )
 
+    reference_distance = pd.to_numeric(ref_tel['Distance'], errors='coerce').to_numpy(dtype=float)
+    reference_distance = reference_distance[np.isfinite(reference_distance)]
+    if len(reference_distance) < 2:
+        raise ValueError("Delta trace does not contain enough valid distance samples.")
+    common_distance = float(np.max(reference_distance))
+    if common_distance <= 0:
+        raise ValueError("Delta trace does not cover a usable lap distance.")
+
     fast_tel = _downsample(fast_tel).copy()
     slow_tel = _downsample(slow_tel).copy()
-    fast_tel['Distance'] = _distance_as_lap_progress(fast_tel['Distance'])
-    slow_tel['Distance'] = _distance_as_lap_progress(slow_tel['Distance'])
+    fast_tel['Distance'] = _distance_on_common_axis(fast_tel['Distance'], common_distance)
+    slow_tel['Distance'] = _distance_on_common_axis(slow_tel['Distance'], common_distance)
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
@@ -111,7 +119,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     # Row 1: Time Delta
     delta_values = -pd.Series(delta_time).astype(float).to_numpy()
-    delta_dist = _distance_as_lap_progress(ref_tel['Distance'])
+    delta_dist = pd.to_numeric(ref_tel['Distance'], errors='coerce').to_numpy(dtype=float)
     delta_ahead_x, delta_ahead, delta_behind_x, delta_behind = _split_delta_by_sign(delta_dist, delta_values)
     finite_delta = delta_values[np.isfinite(delta_values)]
     delta_tick_kwargs = {}
@@ -142,7 +150,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             connectgaps=False,
             showlegend=False,
             hovertemplate=(
-                f"Lap progress: %{{x:.1f}}%<br>"
+                f"Derived distance: %{{x:.0f}} m<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
             )
         ),
@@ -157,7 +165,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
             connectgaps=False,
             showlegend=False,
             hovertemplate=(
-                f"Lap progress: %{{x:.1f}}%<br>"
+                f"Derived distance: %{{x:.0f}} m<br>"
                 f"{driver1} gap: %{{y:.3f}} s<br>"
             )
         ),
@@ -203,7 +211,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
 
     _apply_base_layout(
         fig,
-        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)<br><sup>OpenF1 samples are approximately 3.7 Hz; traces align on normalized progress from integrated speed.</sup>',
+        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)<br><sup>OpenF1 samples are approximately 3.7 Hz; distance is integrated from speed and aligned on lap progress.</sup>',
         title_font=dict(size=16),
         margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)),
@@ -223,7 +231,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
-    fig.update_xaxes(range=[0, 100], autorange=False)
-    fig.update_xaxes(title_text="Lap progress (%)", row=4, col=1)
+    fig.update_xaxes(range=[0, common_distance], autorange=False)
+    fig.update_xaxes(title_text="Derived distance (m)", row=4, col=1)
 
     return fig
