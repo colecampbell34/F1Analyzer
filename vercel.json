@@ -4,7 +4,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 300,
-      "excludeFiles": "{tests/**,__pycache__/**,**/*.pyc,.DS_Store,.env,.cursor/**,.idea/**,.junie/**,f1_cache/**,ai_cache/**,feedback/**}"
+      "excludeFiles": "{tests/**,__pycache__/**,**/*.pyc,.DS_Store,.env,.cursor/**,.idea/**,.junie/**,ai_cache/**,feedback/**}"
     }
   },
   "headers": [

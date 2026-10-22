@@ -1,4 +1,4 @@
-"""Pure helpers for concise tyre-stint and pit-decision context."""
+"""Pure helpers for normalized tyre-stint and pit-decision context."""
 import math
 
 import pandas as pd
@@ -6,9 +6,9 @@ import pandas as pd
 
 def _compound(value):
     if value is None or pd.isna(value):
-        return 'UNKNOWN'
+        return "UNAVAILABLE"
     text = str(value).strip().upper()
-    return text or 'UNKNOWN'
+    return "UNAVAILABLE" if text in {"", "UNKNOWN", "NONE", "NAN", "NULL"} else text
 
 
 def _number(value):
@@ -20,99 +20,86 @@ def _number(value):
 
 
 def _driver_laps(session, driver):
-    """Return one driver's lap data in chronological order, or an empty frame."""
-    try:
-        laps = session.laps.pick_drivers(driver).copy()
-    except Exception:
+    if session is None or session.laps.empty:
         return pd.DataFrame()
-    if laps.empty or 'LapNumber' not in laps.columns:
-        return pd.DataFrame()
-    laps['LapNumber'] = pd.to_numeric(laps['LapNumber'], errors='coerce')
-    laps = laps.dropna(subset=['LapNumber']).sort_values('LapNumber').reset_index(drop=True)
-    return laps
+    laps = session.laps[session.laps["abbreviation"] == driver].copy(deep=True)
+    laps["lap_number"] = pd.to_numeric(laps["lap_number"], errors="coerce")
+    return laps.dropna(subset=["lap_number"]).sort_values("lap_number", kind="stable").reset_index(drop=True)
 
 
 def build_driver_stints(session, driver):
-    """Return compact compound ranges for one driver without changing session data."""
+    """Return provider stint records, with per-lap intervals as a fallback."""
+    stints = getattr(session, "stints", pd.DataFrame())
+    if not stints.empty:
+        rows = stints[stints["abbreviation"] == driver].sort_values("stint_number", na_position="last", kind="stable")
+        return [{
+            "compound": _compound(row.get("compound")),
+            "stint": _number(row.get("stint_number")),
+            "start_lap": _number(row.get("lap_start")),
+            "end_lap": _number(row.get("lap_end")),
+            "tyre_age_at_start": _number(row.get("tyre_age_at_start")),
+        } for _, row in rows.iterrows()]
+
     laps = _driver_laps(session, driver)
     if laps.empty:
         return []
-
-    stints = []
-    current = None
+    result, current = [], None
     for _, lap in laps.iterrows():
-        lap_number = int(lap['LapNumber'])
-        compound = _compound(lap.get('Compound'))
-        stint_number = _number(lap.get('Stint'))
+        lap_number = int(lap["lap_number"])
+        compound = _compound(lap.get("compound"))
+        stint_number = _number(lap.get("stint_number"))
         key = (stint_number, compound)
         if current is None:
-            current = {
-                'compound': compound,
-                'stint': stint_number,
-                'start_lap': lap_number,
-                'end_lap': lap_number,
-            }
-            continue
-        # Stint identifiers are authoritative when supplied. Compound changes
-        # and discontinuous lap numbers remain useful fallbacks for archives.
-        same_stint = key == (current['stint'], current['compound'])
-        contiguous = lap_number <= current['end_lap'] + 1
-        if same_stint and contiguous:
-            current['end_lap'] = lap_number
-            continue
-        stints.append(current)
-        current = {
-            'compound': compound,
-            'stint': stint_number,
-            'start_lap': lap_number,
-            'end_lap': lap_number,
-        }
+            current = {"compound": compound, "stint": stint_number, "start_lap": lap_number, "end_lap": lap_number, "tyre_age_at_start": None}
+        elif key == (current["stint"], current["compound"]) and lap_number <= current["end_lap"] + 1:
+            current["end_lap"] = lap_number
+        else:
+            result.append(current)
+            current = {"compound": compound, "stint": stint_number, "start_lap": lap_number, "end_lap": lap_number, "tyre_age_at_start": None}
     if current is not None:
-        stints.append(current)
-    return stints
-
-
-def _is_pit_transition(current_lap, next_lap):
-    """Detect a real service transition between adjacent completed laps.
-
-    ``FreshTyre`` describes the set of tyres, not a per-lap transition. Some
-    FastF1 feeds retain it for every lap in a stint, so it must never be used
-    as a stand-alone pit-stop signal.
-    """
-    current_stint = _number(current_lap.get('Stint'))
-    next_stint = _number(next_lap.get('Stint'))
-    if current_stint is not None and next_stint is not None and next_stint > current_stint:
-        return True
-    current_compound = _compound(current_lap.get('Compound'))
-    next_compound = _compound(next_lap.get('Compound'))
-    if 'UNKNOWN' not in (current_compound, next_compound) and current_compound != next_compound:
-        return True
-    for lap, field in ((current_lap, 'PitInTime'), (next_lap, 'PitOutTime')):
-        value = lap.get(field)
-        if value is not None and not pd.isna(value):
-            return True
-    return False
+        result.append(current)
+    return result
 
 
 def build_driver_pit_impacts(session, driver):
-    """Return factual pit/compound changes with position context where available."""
+    """Join pit events to adjacent tyre stints and lap positions."""
+    pit_records = getattr(session, "pits", pd.DataFrame())
+    driver_pits = pit_records[pit_records["abbreviation"] == driver].copy() if not pit_records.empty else pd.DataFrame()
+    stints = build_driver_stints(session, driver)
     laps = _driver_laps(session, driver)
-    if len(laps) < 2:
-        return []
-
     events = []
-    for index in range(len(laps) - 1):
-        current = laps.iloc[index]
-        following = laps.iloc[index + 1]
-        if not _is_pit_transition(current, following):
+    if driver_pits.empty:
+        # A compound/stint transition is still useful context when a pit
+        # record was not published; keep its provenance explicit.
+        for previous, following in zip(stints, stints[1:]):
+            start_lap = _number(following.get("start_lap"))
+            if start_lap is None:
+                continue
+            event_lap = int(start_lap) - 1
+            events.append(_pit_impact(laps, event_lap, previous.get("compound"), following.get("compound"), source="stint_transition"))
+        return events
+
+    for _, pit in driver_pits.iterrows():
+        pit_lap = _number(pit.get("lap_number"))
+        if pit_lap is None:
             continue
-        before = _number(current.get('Position'))
-        after = _number(following.get('Position'))
-        events.append({
-            'pit_lap': int(current['LapNumber']),
-            'from_compound': _compound(current.get('Compound')),
-            'to_compound': _compound(following.get('Compound')),
-            'position_before': int(before) if before is not None else None,
-            'position_after': int(after) if after is not None else None,
-        })
+        before_stint = next((item for item in reversed(stints) if _number(item.get("end_lap")) is not None and _number(item.get("end_lap")) < pit_lap), None)
+        after_stint = next((item for item in stints if _number(item.get("start_lap")) is not None and _number(item.get("start_lap")) >= pit_lap), None)
+        from_compound = before_stint.get("compound") if before_stint else "UNKNOWN"
+        to_compound = after_stint.get("compound") if after_stint else from_compound
+        events.append(_pit_impact(laps, int(pit_lap), from_compound, to_compound, source="openf1.pit"))
     return events
+
+
+def _pit_impact(laps, pit_lap, from_compound, to_compound, *, source):
+    before_row = laps[laps["lap_number"] == pit_lap] if not laps.empty else pd.DataFrame()
+    after_row = laps[laps["lap_number"] == pit_lap + 1] if not laps.empty else pd.DataFrame()
+    before = _number(before_row.iloc[-1].get("position")) if not before_row.empty else None
+    after = _number(after_row.iloc[0].get("position")) if not after_row.empty else None
+    return {
+        "pit_lap": int(pit_lap), "from_compound": _compound(from_compound),
+        "to_compound": _compound(to_compound),
+        "position_before": int(before) if before is not None else None,
+        "position_after": int(after) if after is not None else None,
+        "source": source,
+    }

@@ -1,0 +1,78 @@
+{
+  "meeting": {
+    "meeting_key": 1210,
+    "meeting_name": "Monaco Grand Prix",
+    "country_name": "Monaco",
+    "circuit_short_name": "Monte Carlo",
+    "date_start": "2023-05-25T11:00:00Z",
+    "is_cancelled": false
+  },
+  "sessions": [
+    {
+      "meeting_key": 1210,
+      "session_key": 9090,
+      "session_name": "Qualifying",
+      "session_type": "Qualifying",
+      "date_start": "2023-05-27T14:00:00Z",
+      "date_end": "2023-05-27T15:00:00Z",
+      "is_cancelled": false
+    },
+    {
+      "meeting_key": 1210,
+      "session_key": 9094,
+      "session_name": "Race",
+      "session_type": "Race",
+      "date_start": "2023-05-28T13:00:00Z",
+      "date_end": "2023-05-28T15:00:00Z",
+      "is_cancelled": false
+    }
+  ],
+  "session": {
+    "year": 2023,
+    "round": 6,
+    "meeting_key": 1210,
+    "session_key": 9090,
+    "event_name": "Monaco Grand Prix",
+    "session_name": "Qualifying",
+    "session_type": "Qualifying",
+    "date_start": "2023-05-27T14:00:00Z",
+    "date_end": "2023-05-27T15:00:00Z"
+  },
+  "drivers": [
+    {"driver_number": 1, "name_acronym": "VER", "full_name": "Max Verstappen", "team_name": "Red Bull Racing", "team_colour": "3671C6"},
+    {"driver_number": 16, "name_acronym": "LEC", "full_name": "Charles Leclerc", "team_name": "Ferrari", "team_colour": "ED1131"}
+  ],
+  "laps": [
+    {"driver_number": 1, "lap_number": 1, "date_start": "2023-05-27T14:01:00Z", "lap_duration": 72.3, "duration_sector_1": 22.4, "duration_sector_2": 27.1, "duration_sector_3": 22.8, "is_pit_out_lap": true},
+    {"driver_number": 1, "lap_number": 2, "date_start": "2023-05-27T14:03:00Z", "lap_duration": 71.4, "duration_sector_1": 22.1, "duration_sector_2": 26.8, "duration_sector_3": 22.5, "is_pit_out_lap": false},
+    {"driver_number": 16, "lap_number": 2, "date_start": "2023-05-27T14:03:02Z", "lap_duration": 71.5, "duration_sector_1": 22.2, "duration_sector_2": 26.7, "duration_sector_3": 22.6, "is_pit_out_lap": false}
+  ],
+  "car_data": [
+    {"date": "2023-05-27T14:03:00.1Z", "driver_number": 1, "speed": 230, "throttle": 94, "brake": 0, "n_gear": 6, "rpm": 11800, "drs": 12},
+    {"date": "2023-05-27T14:03:00.37Z", "driver_number": 1, "speed": 232, "throttle": 0, "brake": 100, "n_gear": 5, "rpm": 10800, "drs": 8}
+  ],
+  "location": [
+    {"date": "2023-05-27T14:03:00.12Z", "driver_number": 1, "x": 110, "y": -205},
+    {"date": "2023-05-27T14:03:00.39Z", "driver_number": 1, "x": 130, "y": -195}
+  ],
+  "session_result": [
+    {"driver_number": 1, "position": 1, "duration": [72.0, 71.4, 71.2], "gap_to_leader": [0, 0, 0], "dnf": false, "dns": false, "dsq": false},
+    {"driver_number": 16, "position": 2, "duration": [72.2, 71.6, 71.5], "gap_to_leader": [0.2, 0.2, 0.3], "dnf": false, "dns": false, "dsq": false}
+  ],
+  "starting_grid": [
+    {"driver_number": 1, "position": 1, "lap_duration": 71.2},
+    {"driver_number": 16, "position": 2, "lap_duration": 71.5}
+  ],
+  "stints": [
+    {"driver_number": 1, "stint_number": 1, "lap_start": 1, "lap_end": 2, "compound": "SOFT", "tyre_age_at_start": 0}
+  ],
+  "pit": [],
+  "weather": [
+    {"date": "2023-05-27T14:00:00Z", "track_temperature": 48, "air_temperature": 26, "humidity": 44, "rainfall": false}
+  ],
+  "position": [],
+  "intervals": [],
+  "race_control": [
+    {"date": "2023-05-27T14:20:00Z", "category": "Flag", "flag": "YELLOW", "scope": "Sector", "sector": 1, "lap_number": 8, "message": "YELLOW IN SECTOR 1"}
+  ]
+}

@@ -1,6 +1,6 @@
 """Estimated G-force helpers for the Telemetry sidecar.
 
-FastF1 does not expose chassis accelerometers. Longitudinal load is estimated
+OpenF1 does not expose chassis accelerometers. Longitudinal load is estimated
 from the speed trace and lateral load from the change in position heading.
 """
 from __future__ import annotations

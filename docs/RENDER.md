@@ -1,98 +1,68 @@
 # Render deployment
 
-## When Render makes sense for FastF1
+## Why use Render
 
-The Dash application is supported on Vercel. This repository enables Vercel
-Fluid Compute and a 300-second Python-function limit, so a Vercel deployment
-is the first option to validate.
+The application is supported on Vercel and Render. For a regularly used
+public instance, Render is the recommended host for this OpenF1-backed version:
+one persistent Python process shares its bounded response cache and
+process-local API limiter across requests, and can run background preloads.
+Keep the service at one Gunicorn worker so requests use the same process state.
 
-Render is an alternative if you deliberately prefer a single long-lived
-Gunicorn process. While it is awake, that process can reuse FastF1's local
-cache across requests and can use the app's background preload workflow.
-
-Render runs this application as one long-lived Gunicorn process while the
-service is awake. That lets FastF1 complete a cold car-data download, reuse
-its local cache for later requests, and use the app's background preload
-workflow. The supplied [`render.yaml`](../render.yaml) uses one worker so a
-large FastF1 session is not duplicated in memory.
-
-Free Render services sleep after 15 minutes without inbound traffic and their
-filesystem is erased when they restart or redeploy. This is acceptable for a
-hobby deployment: the first request after a wake can be slow, while shared
-Redis keeps prepared two-driver telemetry traces available across processes.
+Render Free is useful for a low-traffic demo, but the service sleeps after
+inactivity and local files are not durable through restart or redeploy. Use a
+paid, always-on web service for a regularly used instance. The app itself does
+not require a persistent disk for OpenF1 session data because historical API
+responses are cached in process; feedback and AI response files remain
+ephemeral unless connected to managed storage.
 
 ## Deploy
 
-1. Push the repository, including `render.yaml`, to the branch you want to
-   deploy.
-2. In Render, choose **New > Blueprint**, connect the repository, and select
-   it. Render discovers the root `render.yaml`; confirm the `f1-analyzer`
-   service and create it on the **Free** plan defined by the Blueprint. For a
-   regularly used production service, change the instance type to a paid web
-   service after the first deploy; that prevents sleeping and permits a
-persistent disk. A paid service can also set **Maximum Shutdown Delay** to
-300 seconds in Render's service settings so an in-flight telemetry request can
-drain during a deploy; that option is unavailable on Free.
-3. Open the service's **Environment** page and set the variables below. Trigger
-   a manual deploy after adding them.
-4. When the service is live, open `https://YOUR-SERVICE.onrender.com/healthz`.
-   It should return JSON with `status: "ok"` and `runtime: "local"`.
-5. Set `PUBLIC_BASE_URL` to the new `https://YOUR-SERVICE.onrender.com` URL
-   (or your custom domain) and redeploy once more.
+1. Push the repository, including `render.yaml`, to the branch to deploy.
+2. In Render, choose **New → Blueprint**, connect the repository, and create
+   the `f1-analyzer` web service.
+3. Set optional environment variables in the service dashboard, then deploy.
+4. Visit `https://YOUR-SERVICE.onrender.com/healthz`; expect
+   `status: "ok"` and `runtime: "local"`.
+5. Set `PUBLIC_BASE_URL` to the service URL or custom domain and redeploy.
+
+The blueprint runs `gunicorn app:server` with one threaded worker, a 300-second
+request timeout, and `/healthz` as the health check. It enables background
+preloading because Render is persistent.
 
 ## Environment variables
 
-| Variable | Required | Value / purpose |
+| Variable | Required | Purpose |
 | --- | --- | --- |
-| `PUBLIC_BASE_URL` | Recommended | The Render service URL, without a trailing slash. |
-| `UPSTASH_REDIS_REST_URL` | Recommended | Upstash REST URL. `KV_REST_API_URL` is also accepted for an existing Vercel integration. |
-| `UPSTASH_REDIS_REST_TOKEN` | Recommended | Writable Upstash REST token. `KV_REST_API_TOKEN` is also accepted for an existing Vercel integration. |
-| `GEMINI_API_KEY` | Optional | Enables AI Analysis. |
-| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects the feedback/performance-admin endpoints. |
-| `ENABLE_BACKGROUND_PRELOAD` | Set by blueprint | Keep as `1` for the persistent service. |
+| `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph URL |
+| `GEMINI_API_KEY` | Optional | Enables AI analysis |
+| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints |
+| `AI_CACHE_DIR` / `FEEDBACK_DIR` | Optional | Override local runtime file paths |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Optional | Shared selected-lap cache |
+| `ENABLE_BACKGROUND_PRELOAD` | Blueprint sets `1` | Persistent-process preloads |
 
-Do not set `VERCEL`, `FASTF1_CACHE_DIR`, `AI_CACHE_DIR`, or `FEEDBACK_DIR` on
-Render unless you have a specific reason. The app chooses suitable local paths
-automatically. Do not copy `KV_REST_API_READ_ONLY_TOKEN`: the cache needs the
-writable `KV_REST_API_TOKEN`.
-
-### Recommended paid-service cache setup
-
-Free Render instances spin down after 15 minutes of inactivity and lose their
-local filesystem when they sleep, restart, or redeploy. For a regularly used
-instance, attach a persistent disk in **Settings > Disks** and mount it at
-`/var/data`. Then add these environment variables:
-
-| Variable | Value |
-| --- | --- |
-| `FASTF1_CACHE_DIR` | `/var/data/f1_cache` |
-| `AI_CACHE_DIR` | `/var/data/ai_cache` |
-| `FEEDBACK_DIR` | `/var/data/feedback` |
-
-The application creates these directories itself. A persistent disk is
-single-instance storage, so keep the service at one instance—the supplied
-Blueprint already does this—and retain Redis for derived telemetry sharing.
-Feedback and the AI-response cache are still local files, not a collaborative
-or durable database; use a managed store before treating either as durable
-product data.
+The Vercel Upstash names `KV_REST_API_URL` and `KV_REST_API_TOKEN` are also
+accepted. Do not set `VERCEL`; runtime behavior is derived from that platform
+environment automatically.
 
 ## Verification
 
-After deployment, select a known finished event such as **2025 Australian
-Grand Prix — Qualifying**, choose **NOR** and **PIA**, then open **Telemetry**.
-The first cold load can take a little while; a repeat load should be much
-faster. `/warmup` can be opened after the service wakes to start non-critical
-cache initialization, but it does not replace loading an actual session.
+1. Visit `/`, `/health`, and `/healthz`.
+2. Select a completed 2023+ session and two drivers, then load the dashboard.
+3. Exercise Telemetry and Track Map with a lap that has position samples.
+4. Exercise Strategy and Race & Pace, then confirm missing optional feeds are
+   shown as view-specific limitations.
+5. Load the same session again and confirm the process-local cache reduces
+   repeat API requests.
 
-When validating a paid disk, trigger a manual deploy after the first telemetry
-load, then repeat the same comparison. The FastF1 cache directory should
-survive the deploy and avoid rebuilding the raw timing data. Use
-`/healthz?cache=1` only as an administrator diagnostic: it reports whether
-the optional shared cache is reachable without returning cache contents.
+Use `/healthz?cache=1` only as an administrator diagnostic. It reports whether
+the optional shared cache is reachable without returning its URL, token, or
+cached data.
 
 ## Choosing one canonical host
 
-Use one host as the public production URL. Hosting the same live app on both
-Vercel and Render splits their local FastF1 caches and makes investigations
-harder. If you move to Render after validating it, set `PUBLIC_BASE_URL` to its
-URL; otherwise leave the Vercel URL as canonical.
+Pick one public production URL. A Vercel deployment is still a valid choice
+for serverless-first traffic and remains configured with native Flask routing,
+Fluid Compute, and the 300-second function budget. Keep it on Vercel when that
+deployment model is more useful than shared per-process state. For regular
+traffic and the most predictable OpenF1 request pacing, prefer the single
+persistent Render service described above.

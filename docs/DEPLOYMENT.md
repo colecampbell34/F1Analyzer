@@ -2,90 +2,69 @@
 
 ## Configuration
 
-The app deploys as one Flask WSGI Vercel Function:
+The project deploys as one Flask WSGI function:
 
-- entrypoint: root `app.py`
-- root rewrite: none (Vercel's Flask integration preserves the requested path)
-- deployment Python: 3.12 (`.python-version`)
-- Fluid Compute: explicitly enabled for this deployment
-- function timeout: 300 seconds, the current Hobby-plan maximum with Fluid
-  Compute
+- Entrypoint: root `app.py`
+- Root rewrite: none; native Flask path handling preserves Dash asset URLs.
+- Python: 3.12 (`.python-version`)
+- Fluid Compute: enabled in `vercel.json`
+- Function timeout: 300 seconds
 
-Set these environment variables in Vercel as appropriate:
+Set these environment variables as needed:
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph URL |
-| `GEMINI_API_KEY` | Optional | Enables AI Analysis |
-| `FEEDBACK_ADMIN_TOKEN` | Optional | Enables feedback review endpoints |
-| `FASTF1_CACHE_DIR` | Optional | Overrides FastF1 writable cache directory |
-| `OPENF1_FALLBACK_ENABLED` | Optional | Defaults to `1`. Uses OpenF1 only for a selected lap when FastF1 returns an empty car-data stream; set to `0` to disable. |
-| `OPENF1_FALLBACK_TIMEOUT_SECONDS` | Optional | Per-request timeout for the optional OpenF1 fallback; defaults to `8` (range: 1–20). |
-| `AI_CACHE_DIR` | Optional | Overrides local AI cache directory |
-| `FEEDBACK_DIR` | Optional | Overrides local feedback directory |
-| `KV_REST_API_URL` | Recommended | Upstash REST endpoint injected by Vercel for the shared selected-lap cache |
-| `KV_REST_API_TOKEN` | Recommended | Writable Upstash REST token injected by Vercel for the shared cache |
+| `GEMINI_API_KEY` | Optional | Enables AI analysis |
+| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints |
+| `AI_CACHE_DIR` | Optional | Overrides AI-response cache path |
+| `FEEDBACK_DIR` | Optional | Overrides feedback file path |
+| `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Optional | Upstash REST connection for selected-lap cache |
+| `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Optional | Alternative Upstash REST variable names |
+| `ENABLE_BACKGROUND_PRELOAD` | Optional | Defaults off under Vercel; serverless loads are on demand |
 
-## Cache policy
+Do not add a catch-all rewrite. Dash requests CSS and component-suite assets at
+their own paths; routing every path to a fixed function path can return the
+dashboard HTML in place of JavaScript or CSS.
 
-Dash uses stable names for `custom.css`, `race-intelligence.css`,
-`scripts.js`, and `manifest.json`. Those files revalidate so a deployment
-cannot combine old JavaScript with a new Dash renderer. Only versioned icon
-assets and Dash component-suite URLs are cached long-term. The service worker
-also avoids cache-first handling for mutable application shell assets.
+## Cache and rate policy
 
-### Shared FastF1-derived cache
+Mutable assets (`custom.css`, `race-intelligence.css`, `scripts.js`, and
+`manifest.json`) revalidate on deploy. The service worker does not cache those
+assets cache-first.
 
-For consistently quick telemetry loads across separate Vercel instances,
-install an Upstash Redis integration through the Vercel Marketplace and
-connect it to this project. Confirm that the integration supplies
-`KV_REST_API_URL` and writable `KV_REST_API_TOKEN` to the Production
-environment (Preview is optional). No code or `vercel.json` change is needed.
+The application keeps bounded in-memory OpenF1 response data and selected-lap
+traces. Optional Upstash stores only the bounded, compressed selected-lap
+comparison payload, never provider session objects or raw session-wide
+telemetry. A Redis miss, timeout, or outage falls back to the local trace path.
+Vercel instances do not share process-local rate-limit state, so this cache
+does not make the OpenF1 request budget globally consistent.
 
-The application stores a bounded, compressed, schema-versioned selected-lap
-comparison payload: driver labels/colors, lap times, and the graph columns
-needed for speed, delta, and position views. It does **not** serialize FastF1
-session objects or copy FastF1's local cache directory. A short Redis lock
-limits duplicate cold loads; a timeout or Redis outage falls back to direct
-FastF1 loading without making a dashboard request fail.
+`/health` and `/healthz` are local, inexpensive checks. Add `?cache=1` to
+`/healthz` only when you need a secret-free shared-cache reachability check.
+`/warmup` reports direct on-demand loading on Vercel; it does not start a
+background preload.
 
-When the official archive accepts a developer machine but blocks Vercel's
-egress network, seed the affected session from that machine after pulling the
-same Vercel KV environment:
+## Release checks
 
-```bash
-vercel env pull .env.local
-set -a; source .env.local; set +a
-python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race
-# Optionally also warm one telemetry comparison:
-python scripts/warm_fastf1_session.py 2026 "Spanish Grand Prix" Race VER NOR
-```
+1. Visit `/healthz` and confirm `status: ok` and `runtime: vercel`.
+2. Load `/` and confirm the current dashboard assets load rather than HTML
+   responses for CSS/JavaScript.
+3. Use Latest Race, choose drivers, and load the dashboard.
+4. Open Telemetry, Track Map, Strategy, and Race & Pace for a completed
+   2023+ session. Missing location, result, weather, or race-control data should
+   be reported only for the affected view.
+5. Check `/api/session-summary?year=2023&race=Monaco%20Grand%20Prix&session=Race`
+   for normalized driver/result fields and source labels.
 
-The warmer loads FastF1 normally, then stores only a bounded derived lap
-payload and the selected two-driver traces. Serverless requests restore those
-validated laps before reporting an archive failure; raw FastF1 cache files and
-Session objects are never uploaded.
+## Limitations
 
-Default retention is 6 hours for the current season and 30 days for historical
-seasons. Override it with `SHARED_TELEMETRY_CURRENT_TTL_SECONDS` and
-`SHARED_TELEMETRY_HISTORICAL_TTL_SECONDS` when needed. Check the protected
-`/api/perf` endpoint after deployment: `cache.selected_lap_cache.shared`
-reports whether the integration is configured and its hit/miss counters.
+The function filesystem and memory are ephemeral and per-instance. Feedback,
+AI-response cache entries, API request counters, and local provider caches are
+not durable. Add a managed shared store before treating any of those as durable
+product data or a global rate-limit mechanism.
 
-## Post-deploy smoke checks
-
-1. Visit `/health` and confirm `status: ok`.
-2. Load `/` in a clean browser window and confirm the title is *F1 Analyzer —
-   Race Intelligence*.
-3. Click **Latest Race**; the Grand Prix and session controls should populate.
-4. Select a pair, click **Update Dashboard**, and load the Telemetry and Track
-   Map tabs.
-5. If an old client looks stale, refresh once; the new service worker activates
-   immediately and releases prior caches.
-
-## Limits to understand
-
-The Vercel function filesystem and in-memory caches are ephemeral. Feedback,
-AI-cache entries, request rate limits, and FastF1 cache hits can disappear
-between invocations. Use a managed data store before treating any of those as
-durable or globally shared production state.
+Vercel remains a supported host for serverless-first or infrequently used
+deployments. For regular public traffic, see the [Render profile](RENDER.md):
+one persistent process provides a shared local cache and limiter across its
+requests.

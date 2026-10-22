@@ -15,25 +15,30 @@ def _render_stint_overview(stints_by_driver):
     for driver, stints in stints_by_driver:
         if not stints:
             continue
-        total_laps = max(stint['end_lap'] for stint in stints)
+        drawable = [stint for stint in stints if stint.get('start_lap') is not None and stint.get('end_lap') is not None]
+        if not drawable:
+            continue
+        total_laps = max(stint['end_lap'] for stint in drawable)
         bars = []
-        for stint in stints:
+        for stint in drawable:
             lap_count = max(1, stint['end_lap'] - stint['start_lap'] + 1)
             compound = stint['compound']
-            label = f"{compound} L{stint['start_lap']}–{stint['end_lap']}"
+            start_lap = int(stint['start_lap']) if float(stint['start_lap']).is_integer() else stint['start_lap']
+            end_lap = int(stint['end_lap']) if float(stint['end_lap']).is_integer() else stint['end_lap']
+            label = f"{compound} L{start_lap}–{end_lap}"
             bars.append(html.Span(
                 label,
-                title=label,
+                title=(label if compound != 'UNAVAILABLE' else f"{label} · compound unavailable from source"),
                 className='stint-bar-segment',
                 style={
-                    'flex': f'{lap_count} 1 0',
+                    'flex': f'{lap_count:g} 1 0',
                     'backgroundColor': COMPOUND_COLORS.get(compound, '#737980'),
                     'color': '#101216' if compound in {'MEDIUM', 'HARD', 'INTERMEDIATE'} else '#f7f7f3',
                 },
             ))
         rows.append(html.Div([
             html.Strong(driver, className='stint-driver-code'),
-            html.Div(bars, className='stint-bar', title=f'{driver}: {total_laps} laps'),
+            html.Div(bars, className='stint-bar', title=f'{driver}: {int(total_laps) if float(total_laps).is_integer() else total_laps} laps'),
         ], className='stint-overview-row'))
 
     if not rows:
@@ -52,14 +57,14 @@ def _render_race_context(session, driver1, driver2, color1, color2):
     for driver in (driver1, driver2):
         row = None
         try:
-            match = results[results['Abbreviation'] == driver]
+            match = results[results['abbreviation'] == driver]
             row = match.iloc[0] if not match.empty else None
         except Exception:
             pass
         if row is None:
             continue
-        grid = row.get('GridPosition')
-        finish = row.get('Position')
+        grid = row.get('grid_position')
+        finish = row.get('position')
         try:
             grid_label = f'G{int(grid)}' if int(grid) > 0 else 'Pit lane'
         except (TypeError, ValueError):
@@ -178,7 +183,15 @@ def register_tab_callbacks(app):
                     params, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
                     require_position=True,
                 )
-                session = cmp['session']
+                from data import load_session_with_preload
+
+                # The track-map preload already includes optional circuit
+                # metadata; reuse that profile so official turn markers are
+                # available to the figure builder.
+                session = load_session_with_preload(
+                    params['year'], params['race'], params['session_type'],
+                    laps=True, telemetry=True, circuit=True,
+                )
                 d1, d2 = cmp['d1'], cmp['d2']
                 lbl1, lbl2, c1, c2 = cmp['lbl1'], cmp['lbl2'], cmp['c1'], cmp['c2']
                 lap1, lap2 = cmp['lap1'], cmp['lap2']
@@ -259,7 +272,7 @@ def register_tab_callbacks(app):
                     d1, d2, c1, c2, tel1, tel2, fast_data, slow_data,
                     mode=mode,
                     session=session,
-                    circuit_corners=cmp.get('circuit_corners'),
+                    circuit_corners=session.circuit_corners.to_dict('records'),
                 )
                 return fig, dna_ui, cache_key
             except Exception as e:
@@ -291,7 +304,9 @@ def register_tab_callbacks(app):
                 from graph_shared import _not_applicable_figure
 
                 # Strategy view needs laps + weather; no telemetry.
-                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(params, laps=True, telemetry=False, weather=True)
+                session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(
+                    params, laps=True, telemetry=False, weather=True, strategy=True, race_context=True,
+                )
                 session_type = params['session_type']
 
                 if is_qualifying(session_type):
@@ -347,7 +362,7 @@ def register_tab_callbacks(app):
                 from strategy_insights import build_driver_pit_impacts
 
                 session, d1, d2, lbl1, lbl2, c1, c2 = get_shared_data(
-                    params, laps=True, telemetry=False, weather=True,
+                    params, laps=True, telemetry=False, weather=True, strategy=True, race_context=True,
                 )
                 pace_fig = _build_grid_pace_fig(session, params['session_type'])
                 if is_race(params['session_type']):

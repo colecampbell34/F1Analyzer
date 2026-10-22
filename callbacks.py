@@ -206,7 +206,11 @@ def _register_core_callbacks(app):
 
         from data import get_latest_race_session_default
 
-        latest = get_latest_race_session_default()
+        try:
+            latest = get_latest_race_session_default()
+        except Exception as exc:
+            logging.warning("Latest race lookup failed error_type=%s", type(exc).__name__)
+            return dash.no_update, dash.no_update
         if not latest:
             raise PreventUpdate
 
@@ -224,9 +228,10 @@ def _register_core_callbacks(app):
         url_state = _parse_url_state(url_search)
 
         try:
-            from static_schedule import get_static_races
+            from data import get_event_schedule
 
-            race_names = list(get_static_races(int(year)))
+            schedule = get_event_schedule(int(year))
+            race_names = [event['race'] for event in schedule]
             if not race_names:
                 return [], None
 
@@ -262,9 +267,10 @@ def _register_core_callbacks(app):
         url_state = _parse_url_state(url_search)
 
         try:
-            from static_schedule import get_static_sessions
+            from data import get_event_schedule
 
-            sessions = get_static_sessions(int(year), race)
+            event = next((item for item in get_event_schedule(int(year)) if item['race'] == race), None)
+            sessions = event.get('sessions', []) if event else []
             if not sessions:
                 return [], None
 
@@ -535,9 +541,11 @@ def _register_core_callbacks(app):
          Input('mobile-update-dashboard-btn', 'n_clicks')],
         [State('driver1-dropdown', 'value'), State('driver2-dropdown', 'value'),
          State('session-dropdown', 'value'), State('race-dropdown', 'value'),
-         State('year-dropdown', 'value'), State('main-tabs', 'value')]
+         State('year-dropdown', 'value'), State('main-tabs', 'value'),
+         State('url', 'search')],
+        prevent_initial_call=True,
     )
-    def update_dashboard_params(n_clicks, mobile_clicks, driver1, driver2, session_type, race, year, active_tab):
+    def update_dashboard_params(n_clicks, mobile_clicks, driver1, driver2, session_type, race, year, active_tab, url_search):
         if not ((n_clicks or 0) + (mobile_clicks or 0)):
             return dash.no_update, False, ""
         missing = _missing_required_fields({
@@ -549,14 +557,30 @@ def _register_core_callbacks(app):
         })
 
         if missing:
-            msg = (
-                "Please select: " + ", ".join(missing) + " before updating.\n\n"
-                f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
-                f"driver1={driver1!r}, driver2={driver2!r}"
-            )
-            logging.warning(f"[update_dashboard_params] missing={missing} values: year={year!r} race={race!r} "
-                          f"session={session_type!r} driver1={driver1!r} driver2={driver2!r}")
-            return dash.no_update, True, msg
+            url_state = _parse_url_state(url_search)
+            if all(url_state.get(key) for key in ('year', 'race', 'session_type', 'driver1', 'driver2')):
+                # A click count can fire while a bookmarked URL is still
+                # hydrating its dependent dropdowns. Use the complete URL state
+                # so the initial analysis still loads instead of showing a
+                # misleading missing-selection warning.
+                year = int(url_state['year'])
+                race = url_state['race']
+                session_type = url_state['session_type']
+                driver1 = url_state['driver1']
+                driver2 = url_state['driver2']
+                active_tab = url_state.get('tab') or active_tab
+                missing = []
+            else:
+                msg = (
+                    "Please select: " + ", ".join(missing) + " before updating.\n\n"
+                    f"Debug values: year={year!r}, race={race!r}, session={session_type!r}, "
+                    f"driver1={driver1!r}, driver2={driver2!r}"
+                )
+                logging.warning(
+                    "[update_dashboard_params] missing=%s values: year=%r race=%r session=%r driver1=%r driver2=%r",
+                    missing, year, race, session_type, driver1, driver2,
+                )
+                return dash.no_update, True, msg
 
         from data import get_preload_kwargs_for_tab, preload_session
 
@@ -597,7 +621,7 @@ def _register_core_callbacks(app):
                     position = None
                     try:
                         value = session.results.loc[
-                            session.results['Abbreviation'] == driver, 'Position'
+                            session.results['abbreviation'] == driver, 'position'
                         ].values[0]
                         position = int(value) if pd.notna(value) else None
                     except (IndexError, KeyError, TypeError, ValueError):
@@ -814,6 +838,7 @@ def _register_core_callbacks(app):
         year, race, session_type = params['year'], params['race'], params['session_type']
 
         try:
+            import pandas as pd
             from data import load_session_with_preload
 
             # The active view preload owns this profile, so lap controls should
@@ -825,10 +850,11 @@ def _register_core_callbacks(app):
             def _options_for_driver(driver):
                 options = [{'label': 'Fastest', 'value': 'fastest'}]
                 try:
-                    laps = session.laps.pick_drivers(driver)
+                    laps = session.laps[session.laps['abbreviation'] == driver]
+                    timed = pd.to_numeric(laps['lap_duration'], errors='coerce')
                     lap_numbers = sorted(
                         int(lap)
-                        for lap in laps['LapNumber'].dropna().unique().tolist()
+                        for lap in laps.loc[timed.gt(0), 'lap_number'].dropna().unique().tolist()
                     )
                 except Exception:
                     lap_numbers = []

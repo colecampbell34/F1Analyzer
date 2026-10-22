@@ -5,20 +5,36 @@ from dash import html
 import dash_bootstrap_components as dbc
 
 def _friendly_error(e):
-    """Translate cryptic FastF1/network errors to user-friendly messages."""
+    """Translate provider and data-quality failures without exposing responses."""
     msg = str(e)
     lower_msg = msg.lower()
+    kind = getattr(e, 'kind', None)
+    if kind == 'rate_limited':
+        return "The public timing service is busy. Please wait a moment and try again."
+    if kind == 'not_found':
+        return "This completed session is not available in the supported 2023+ historical archive."
+    if kind in {'network', 'http_error'}:
+        return "The public F1 data service did not respond. Please retry shortly."
+    if kind in {'malformed', 'oversize'}:
+        return "The public F1 data service returned incomplete or invalid records for this view."
+    if 'track-position data is unavailable' in lower_msg or 'position samples' in lower_msg:
+        return "Track-position samples are missing for one selected lap. Speed and pedal traces can still be compared."
+    if 'no usable speed trace' in lower_msg or 'speed samples' in lower_msg:
+        return "This lap has no usable speed trace in the published data. Choose another lap or use the Fastest option."
+    if 'selected lap' in lower_msg and 'time or duration' in lower_msg:
+        return "That lap has no published start time or duration, so its telemetry cannot be selected."
+    if 'completed session' in lower_msg or 'historical archive' in lower_msg:
+        return "Choose a completed session from the 2023 onward historical archive."
     if (
         'data has not been loaded' in lower_msg
         or ('has not been loaded' in lower_msg and 'session.load' in lower_msg)
         or 'session does not exist' in lower_msg
     ):
         return (
-            "FastF1 returned incomplete session data. Please retry in a few minutes; "
-            "the upstream timing feed may still be syncing."
+            "The timing service returned incomplete session data. Please retry shortly; the archive may still be syncing."
         )
     if '404' in msg:
-        return "This session's data is not available yet. It may not have started, or FastF1 has not published it yet."
+        return "This session's data is not available yet. It may still be in progress or awaiting publication."
     if '503' in msg or '502' in msg or 'Connection' in lower_msg:
         return "The F1 data server is temporarily unavailable. Please try again in a few minutes."
     if 'timeout' in lower_msg:
@@ -27,27 +43,23 @@ def _friendly_error(e):
         return "Lap data is not available for this session yet. The event may still be in progress or not published."
     if 'did not set a valid lap' in msg:
         return msg
-    if 'track-position data is unavailable' in lower_msg:
-        return (
-            "Track-position samples are missing for one selected lap. "
-            "Try Fastest for both drivers; the speed trace can still be used."
-        )
+    if 'no valid published lap time' in lower_msg:
+        return "That lap has no published timing. Choose one of the listed completed laps."
     if 'after' in lower_msg and 'telemetry' in lower_msg and 'attempt' in lower_msg:
-        return "FastF1 could not retrieve telemetry after retrying. Please try the session again shortly."
+        return "The data service could not retrieve telemetry after retrying. Please try again shortly."
     if 'no usable speed trace after checking alternate valid laps' in lower_msg:
         return (
-            "FastF1 did not return a usable speed trace for this driver after checking "
-            "the available valid laps. Timing and AI analysis remain available for this session."
+            "No usable speed trace was published for this driver's valid laps. Timing and AI analysis remain available."
         )
     if 'no usable speed trace' in lower_msg:
         return "That selected lap has no usable speed trace in the published timing data. Try the driver's Fastest lap."
     if 'selected lap' in lower_msg and 'telemetry' in lower_msg:
         return "That lap does not have a complete telemetry trace. Try the driver's Fastest lap."
     if 'telemetry data is not available' in lower_msg or 'telemetry' in lower_msg:
-        return "Telemetry data is not available or is incomplete for this session from the F1 live timing feed."
+        return "Telemetry data is not available or is incomplete for this session in the historical feed."
     if 'date' in lower_msg or 'columns' in lower_msg:
         return "Telemetry data is incomplete or has missing timestamps for this session."
-    return f"Something went wrong loading the data: {msg}"
+    return "Something went wrong loading this view. Please try again or select another completed session."
 
 def _tab_label(tab_value):
     labels = {
@@ -214,8 +226,9 @@ def _build_perf_review_panel(snapshot, jobs, cache_stats):
 
     cache_info = cache_stats.get('session_cache') or {}
     selected_lap_cache = cache_stats.get('selected_lap_cache') or {}
+    provider = cache_stats.get('provider') or {}
     cache_text = (
-        f"FastF1 cache {_format_bytes(cache_stats.get('cache_size_bytes'))} | "
+        f"OpenF1 requests {provider.get('requests', 0)} | "
         f"session hits {cache_info.get('hits', 0)} misses {cache_info.get('misses', 0)} | "
         f"telemetry prep hits {selected_lap_cache.get('hits', 0)} misses {selected_lap_cache.get('misses', 0)}"
     )
@@ -286,26 +299,28 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
         })
     ] if subtitle else []
 
-    if (_is_practice or _is_shootout) and getattr(session, 'laps', None) is not None and not session.laps.empty:
+    if (_is_practice or _is_shootout) and session is not None and not session.laps.empty:
         drivers_data = []
-        all_drivers = (session.results['Abbreviation'].dropna().unique()
-                       if getattr(session, 'results', None) is not None and not session.results.empty
-                       else session.laps['Driver'].unique())
+        all_drivers = session.drivers['abbreviation'].dropna().unique().tolist()
 
         for drv in all_drivers:
             if not isinstance(drv, str) or len(drv) != 3:
                 continue
             fastest_lap = get_best_lap(session, drv)
-            lap_time = fastest_lap['LapTime'] if fastest_lap is not None and pd.notna(
-                fastest_lap['LapTime']) else pd.NaT
+            lap_time = pd.to_numeric(fastest_lap.get('lap_duration'), errors='coerce') if fastest_lap is not None else float('nan')
 
             team_name = ''
             raw_color = None
-            if getattr(session, 'results', None) is not None and not session.results.empty:
-                res_row = session.results[session.results['Abbreviation'] == drv]
+            if session is not None and not session.results.empty:
+                res_row = session.results[session.results['abbreviation'] == drv]
                 if not res_row.empty:
-                    team_name = res_row.iloc[0].get('TeamName', '')
-                    raw_color = res_row.iloc[0].get('TeamColor', None)
+                    team_name = res_row.iloc[0].get('team_name', '')
+                    raw_color = None
+            else:
+                driver_rows = session.drivers[session.drivers['abbreviation'] == drv]
+                if not driver_rows.empty:
+                    team_name = driver_rows.iloc[0].get('team_name', '')
+                    raw_color = driver_rows.iloc[0].get('team_colour')
             color = resolve_team_color(
                 team_name,
                 session=session,
@@ -328,12 +343,12 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
 
             if pd.notna(r['LapTime']):
                 if idx == 0 or leader_time is None:
-                    delta = r['LapTime']
-                    mins = int(delta.total_seconds() // 60)
-                    secs = delta.total_seconds() % 60
+                    delta = float(r['LapTime'])
+                    mins = int(delta // 60)
+                    secs = delta % 60
                     time_str = f"{mins}:{secs:06.3f}"
                 else:
-                    gap = (r['LapTime'] - leader_time).total_seconds()
+                    gap = float(r['LapTime']) - float(leader_time)
                     time_str = f"+{gap:.3f}s"
             else:
                 time_str = "NO TIME"
@@ -348,50 +363,52 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
 
             leaderboard_children.append(row_div)
     else:
-        if getattr(session, 'results', None) is not None and not session.results.empty:
+        if session is not None and not session.results.empty:
             results_df = session.results.copy()
-            results_df['Position_Num'] = pd.to_numeric(results_df['Position'], errors='coerce')
+            results_df['Position_Num'] = pd.to_numeric(results_df['position'], errors='coerce')
             results_df = results_df.sort_values(by='Position_Num')
 
             leader_time = None
-            is_race = session_name in ['Race', 'Sprint']
+            is_race = session_name.casefold() in ['race', 'sprint', 'sprint race']
 
             for _, row in results_df.iterrows():
-                abbr = row.get('Abbreviation', '')
+                abbr = row.get('abbreviation', '')
                 if not isinstance(abbr, str) or len(abbr) != 3:
                     continue
 
-                pos = row.get('Position', '?')
+                pos = row.get('position', '?')
                 pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
 
                 color = resolve_team_color(
-                    row.get('TeamName', ''),
+                    row.get('team_name', ''),
                     session=session,
-                    raw_color=row.get('TeamColor', None),
+                    raw_color=None,
                     fallback_identifier=abbr,
                 )
 
-                raw_time = None
-                for col in ['Time', 'Q3', 'Q2', 'Q1', 'SQ3', 'SQ2', 'SQ1']:
-                    if col in row and pd.notna(row[col]):
-                        raw_time = row[col]
-                        break
+                raw_time = row.get('race_time') if is_race else row.get('best_lap_time')
 
                 if raw_time is not None:
                     if leader_time is None:
-                        leader_time = raw_time
-                        mins = int(raw_time.total_seconds() // 60)
-                        secs = raw_time.total_seconds() % 60
+                        leader_time = float(raw_time)
+                        mins = int(leader_time // 60)
+                        secs = leader_time % 60
                         time_str = f"{mins}:{secs:06.3f}"
                     else:
                         if is_race:
-                            gap = raw_time.total_seconds()
-                            time_str = f"+{gap:.3f}s"
+                            gap = row.get('gap')
+                            if isinstance(gap, str) and 'lap' in gap.casefold():
+                                time_str = gap
+                            else:
+                                try:
+                                    time_str = f"+{float(gap):.3f}s"
+                                except (TypeError, ValueError):
+                                    time_str = f"+{float(raw_time) - leader_time:.3f}s"
                         else:
-                            gap = (raw_time - leader_time).total_seconds()
+                            gap = float(raw_time) - leader_time
                             time_str = f"+{gap:.3f}s"
                 else:
-                    status = row.get('Status', '')
+                    status = row.get('status', '')
                     time_str = status if isinstance(status, str) else ""
 
                 row_div = html.Div([

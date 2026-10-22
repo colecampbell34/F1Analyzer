@@ -12,7 +12,6 @@ from graphs_trackmap import (
     _compute_driver_dna_summary,
     _driver_dna_legend,
     _identify_corners,
-    _identify_corners_from_circuit,
     _normalize_driver_dna,
 )
 from graphs_race import (
@@ -34,7 +33,6 @@ __all__ = [
     '_split_delta_by_sign',
     '_build_telemetry_fig',
     '_identify_corners',
-    '_identify_corners_from_circuit',
     '_build_dominance_fig',
     '_driver_dna_legend',
     '_compute_driver_dna_raw',

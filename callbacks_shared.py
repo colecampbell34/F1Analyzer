@@ -40,19 +40,22 @@ def _missing_required_fields(field_map):
 
 def _has_valid_lap(lap, pd):
     """Return True when lap exists and contains a valid lap time."""
-    return not (getattr(lap, "empty", True) or (pd.isna(lap.get("LapTime")) if lap is not None else True))
+    return not (getattr(lap, "empty", True) or (pd.isna(lap.get("lap_duration")) if lap is not None else True))
 
 
 def _pick_driver_lap(session, driver, mode, lap_num, get_best_lap):
     """Return specific lap when requested, otherwise driver fastest lap."""
-    drv_laps = session.laps.pick_drivers(driver)
+    drv_laps = session.laps[session.laps['abbreviation'] == driver].copy()
     if mode == 'specific' and lap_num is not None:
-        specific = drv_laps[drv_laps['LapNumber'] == int(lap_num)]
+        specific = drv_laps[drv_laps['lap_number'] == int(lap_num)]
         if not specific.empty:
-            return specific.iloc[0]
+            duration = pd.to_numeric(specific.iloc[0].get('lap_duration'), errors='coerce')
+            if pd.notna(duration) and duration > 0:
+                return specific.iloc[0]
+            raise ValueError(f"{driver} lap {int(lap_num)} has no valid published lap time.")
         available = sorted(
             int(lap)
-            for lap in drv_laps['LapNumber'].dropna().unique().tolist()
+            for lap in drv_laps['lap_number'].dropna().unique().tolist()
         )
         if available:
             raise ValueError(
@@ -78,7 +81,10 @@ def _active_tab_ready(params, active_tab, expected_tab):
     if not background_preload_enabled():
         return True
     status = ensure_preload_for_tab(params, active_tab)
-    return status.get('status') == 'ready'
+    # Failed preloads are terminal too: let the callback run once so its
+    # existing error-figure path can explain the unavailable analysis instead
+    # of silently leaving the previous placeholder visible.
+    return status.get('status') in {'ready', 'error'}
 
 
 def _trim_history(history):

@@ -1006,7 +1006,6 @@ div[class*="tab-container"] {
 /* Fixed widths to prevent jitter */
 #live-d1-speed, #live-d2-speed { min-width: 32px; }
 #live-d1-gear, #live-d2-gear { min-width: 12px; }
-#live-d1-rpm, #live-d2-rpm { min-width: 44px; }
 
 .stat-item small {
     font-size: 0.5rem;
@@ -1853,6 +1852,12 @@ div[class*="tab-container"] {
         margin: 0 !important;
         min-height: 0 !important;
         overflow: hidden !important;
+    }
+
+    .mobile-flow-loaded .telemetry-visual-grid > [class*="col-"] > div,
+    .mobile-flow-loaded .telemetry-visual-grid > [class*="col-"] > div > div {
+        height: 100% !important;
+        min-height: 0 !important;
     }
 
     .mobile-flow-loaded #speed-graph,

@@ -30,12 +30,12 @@ def _results_order(results):
         return []
     try:
         df = results.copy()
-        df["Position_Num"] = pd.to_numeric(df["Position"], errors="coerce")
+        df["Position_Num"] = pd.to_numeric(df["position"], errors="coerce")
         df = df.sort_values("Position_Num")
         return [
-            row.get("Abbreviation")
+            row.get("abbreviation")
             for _, row in df.iterrows()
-            if isinstance(row.get("Abbreviation"), str) and len(row.get("Abbreviation")) == 3
+            if isinstance(row.get("abbreviation"), str) and len(row.get("abbreviation")) == 3
         ]
     except Exception:
         return []
@@ -48,17 +48,22 @@ def _closest_classified_pair(results):
         return None
     try:
         df = results.copy()
-        df["Position_Num"] = pd.to_numeric(df["Position"], errors="coerce")
+        df["Position_Num"] = pd.to_numeric(df["position"], errors="coerce")
         df = df.dropna(subset=["Position_Num"]).sort_values("Position_Num")
         candidates = []
+        timing_column = "race_time" if df["race_time"].notna().any() else "best_lap_time"
         for _, row in df.iterrows():
-            abbr = row.get("Abbreviation")
-            raw_time = row.get("Time")
+            abbr = row.get("abbreviation")
+            raw_time = row.get(timing_column)
             if not isinstance(abbr, str) or len(abbr) != 3:
                 continue
-            if pd.isna(raw_time) or not hasattr(raw_time, "total_seconds"):
+            try:
+                seconds = float(raw_time)
+            except (TypeError, ValueError):
                 continue
-            candidates.append((abbr, float(raw_time.total_seconds())))
+            if not math.isfinite(seconds):
+                continue
+            candidates.append((abbr, seconds))
         if len(candidates) < 2:
             return None
         best_pair = None

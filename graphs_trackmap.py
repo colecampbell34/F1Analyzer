@@ -1,6 +1,5 @@
 """Track map and Driver DNA graph builders."""
 import numpy as np
-import pandas as pd
 import plotly.graph_objects as go
 
 from graphs_common import _add_driver_legend_entries
@@ -57,115 +56,38 @@ def _identify_corners(tel1, tel2):
     return corners
 
 
-def _identify_corners_from_circuit(session, tel1, tel2, window_m=30.0, circuit_corners=None):
-    """Map FastF1 circuit corner definitions onto lap telemetry.
-
-    This uses `session.get_circuit_info().corners` when available to get the intended
-    corner count and numbering, then finds the nearest telemetry point for placement.
-    """
-    corners_df = None
-    if circuit_corners is not None:
+def _validated_circuit_corners(circuit_corners, telemetry):
+    """Accept official turn points only when their coordinates match the lap."""
+    if telemetry is None or telemetry.empty or circuit_corners is None:
+        return []
+    corners = circuit_corners.copy() if hasattr(circuit_corners, 'copy') and hasattr(circuit_corners, 'columns') else circuit_corners
+    if hasattr(corners, 'to_dict'):
+        corners = corners.to_dict('records')
+    if not isinstance(corners, (list, tuple)) or not corners:
+        return []
+    valid = []
+    for row in corners:
         try:
-            corners_df = pd.DataFrame(circuit_corners)
-        except (TypeError, ValueError):
-            corners_df = None
-    elif session is not None:
-        try:
-            circuit_info = session.get_circuit_info()
-            corners_df = getattr(circuit_info, 'corners', None)
-        except Exception:
-            corners_df = None
-
-    if corners_df is None:
-        return []
-
-    try:
-        if isinstance(corners_df, pd.DataFrame):
-            df = corners_df.copy()
-        else:
-            return []
-    except Exception:
-        return []
-
-    if df.empty:
-        return []
-
-    # Expected columns (varies by FastF1 versions): Number, Letter, X, Y
-    for required in ('Number', 'X', 'Y'):
-        if required not in df.columns:
-            return []
-            
-    if tel1 is None or tel1.empty or tel2 is None or tel2.empty:
-        return []
-    required_tel_cols = ['X', 'Y', 'Distance', 'Speed']
-    if not all(col in tel1.columns for col in required_tel_cols) or not all(col in tel2.columns for col in required_tel_cols):
-        return []
-
-    # Normalize ordering: Number asc, then Letter (if present)
-    if 'Letter' in df.columns:
-        df['Letter'] = df['Letter'].fillna('').astype(str)
-        df = df.sort_values(by=['Number', 'Letter'], kind='mergesort')
-    else:
-        df = df.sort_values(by=['Number'], kind='mergesort')
-
-    tel_ref = _downsample(tel1, max_points=5000)
-    tel_other = _downsample(tel2, max_points=5000)
-
-    x_ref = tel_ref['X'].to_numpy(dtype=float)
-    y_ref = tel_ref['Y'].to_numpy(dtype=float)
-    d_ref = tel_ref['Distance'].to_numpy(dtype=float)
-
-    corners = []
-    for _, row in df.iterrows():
-        try:
-            num = int(row['Number'])
-        except Exception:
+            number, x, y = int(row['number']), float(row['x']), float(row['y'])
+        except (KeyError, TypeError, ValueError):
             continue
-        letter = ''
-        if 'Letter' in df.columns:
-            try:
-                letter = str(row.get('Letter') or '').strip()
-            except Exception:
-                letter = ''
-        turn_label = f"{num}{letter}" if letter else f"{num}"
-
-        try:
-            cx = float(row['X'])
-            cy = float(row['Y'])
-        except Exception:
-            continue
-
-        # Find nearest telemetry point by XY distance.
-        # (Small N corners, modest telemetry size: brute force is fine.)
-        dx = x_ref - cx
-        dy = y_ref - cy
-        idx = int((dx * dx + dy * dy).argmin())
-        dist0 = float(d_ref[idx])
-
-        # Use a distance window around the mapped point and take local min speeds.
-        lo = dist0 - float(window_m)
-        hi = dist0 + float(window_m)
-
-        try:
-            v1_min = float(tel1[(tel1['Distance'] >= lo) & (tel1['Distance'] <= hi)]['Speed'].min())
-        except Exception:
-            v1_min = float('nan')
-        try:
-            v2_min = float(tel2[(tel2['Distance'] >= lo) & (tel2['Distance'] <= hi)]['Speed'].min())
-        except Exception:
-            v2_min = float('nan')
-
-        corners.append({
-            'id': len(corners) + 1,
-            'turn': turn_label,
-            'distance': dist0,
-            'v1_min': v1_min,
-            'v2_min': v2_min,
-            'x': float(x_ref[idx]),
-            'y': float(y_ref[idx]),
-        })
-
-    return corners
+        if np.isfinite(x) and np.isfinite(y):
+            valid.append({**row, 'number': number, 'x': x, 'y': y})
+    if not valid or not {'X', 'Y'}.issubset(telemetry.columns):
+        return []
+    track_x = telemetry['X'].to_numpy(dtype=float)
+    track_y = telemetry['Y'].to_numpy(dtype=float)
+    track_x, track_y = track_x[np.isfinite(track_x)], track_y[np.isfinite(track_y)]
+    if not len(track_x) or not len(track_y):
+        return []
+    span = max(float(np.ptp(track_x)), float(np.ptp(track_y)), 1.0)
+    margin = max(60.0, span * 0.06)
+    inside = [
+        row for row in valid
+        if track_x.min() - margin <= row['x'] <= track_x.max() + margin
+        and track_y.min() - margin <= row['y'] <= track_y.max() + margin
+    ]
+    return sorted(inside, key=lambda row: row['number']) if len(inside) >= max(4, int(len(valid) * 0.75)) else []
 
 
 def _build_dominance_fig(
@@ -183,14 +105,11 @@ def _build_dominance_fig(
 ):
     """Builds the 2D Track Map with multiple overlay modes."""
     from plotly.subplots import make_subplots
-    fast_driver, fast_tel, fast_c, fast_t, _, fast_lbl = fast_data
-    slow_driver, slow_tel, slow_c, slow_t, _, slow_lbl = slow_data
+    fast_driver, _, fast_c, fast_t, _, fast_lbl = fast_data
+    slow_driver, _, slow_c, slow_t, _, slow_lbl = slow_data
 
     tel1_s = _downsample(tel1, max_points=3000)
     tel2_s = _downsample(tel2, max_points=3000)
-    fast_tel_s = _downsample(fast_tel, max_points=3000)
-    slow_tel_s = _downsample(slow_tel, max_points=3000)
-
     def _build_dense_grid(base_df, step_m=6.0):
         """Build a shared dense distance grid for marker overlays."""
         d = base_df['Distance'].to_numpy(dtype=float)
@@ -234,7 +153,9 @@ def _build_dominance_fig(
         d1_time, d1_lbl = slow_t, slow_lbl
         d2_time, d2_lbl = fast_t, fast_lbl
 
-    title_text = f"Track Map - {mode_title}<br><sup>{d1_lbl}: {d1_time:.3f}s | {d2_lbl}: {d2_time:.3f}s</sup>"
+    official_corners = _validated_circuit_corners(circuit_corners, tel1)
+    corner_note = "official numbered corner markers" if official_corners else "estimated speed-dip markers"
+    title_text = f"Track Map - {mode_title}<br><sup>{d1_lbl}: {d1_time:.3f}s | {d2_lbl}: {d2_time:.3f}s · sampled locations · {corner_note}</sup>"
 
     if mode in ('braking', 'speed'):
         fig = make_subplots(
@@ -268,37 +189,22 @@ def _build_dominance_fig(
                     ))
                 group_start = ms
 
-        # Use FastF1's official circuit-marker data even after Redis serves a
-        # telemetry cache hit. Without it, the speed-dip fallback can miss
-        # several turns and relabel a subset as 1..N.
-        corners = []
-        if session is not None or circuit_corners:
-            corners = _identify_corners_from_circuit(
-                session,
-                tel1,
-                tel2,
-                window_m=28.0,
-                circuit_corners=circuit_corners,
-            )
-        if not corners:
-            corners = _identify_corners(tel1, tel2)
-        for c in corners:
-            winner = driver1 if c['v1_min'] > c['v2_min'] else driver2
-            color = c1 if winner == driver1 else c2
-            fig.add_trace(go.Scatter(
-                x=[c['x']], y=[c['y']], mode='markers+text',
-                marker=dict(color=color, size=14, symbol='circle', line=dict(color='white', width=1)),
-                # Use the corner number label to avoid cluttering the map with speed text.
-                text=[str(c.get('turn', c.get('id', '')))], textposition="top center",
-                textfont=dict(size=10, color='white'),
-                name=f"Turn {c.get('turn', c.get('id'))} Apex",
-                showlegend=False,
-                hovertext=(
-                    f"Turn {c.get('turn', c.get('id'))} Apex Speed<br>"
-                    f"{driver1}: {int(c['v1_min'])} km/h<br>"
-                    f"{driver2}: {int(c['v2_min'])} km/h"
-                )
-            ))
+        if not official_corners:
+            for corner in _identify_corners(tel1, tel2):
+                winner = driver1 if corner['v1_min'] > corner['v2_min'] else driver2
+                color = c1 if winner == driver1 else c2
+                fig.add_trace(go.Scatter(
+                    x=[corner['x']], y=[corner['y']], mode='markers+text',
+                    marker=dict(color=color, size=14, symbol='circle', line=dict(color='white', width=1)),
+                    text=[str(corner['id'])], textposition="top center",
+                    textfont=dict(size=10, color='white'), name=f"Estimated turn {corner['id']}",
+                    showlegend=False,
+                    hovertext=(
+                        f"Estimated turn {corner['id']} speed dip<br>"
+                        f"{driver1}: {int(corner['v1_min'])} km/h<br>"
+                        f"{driver2}: {int(corner['v2_min'])} km/h"
+                    ),
+                ))
 
     elif mode == 'braking':
         # Braking intensity map, side-by-side (driver1 vs driver2).
@@ -379,6 +285,19 @@ def _build_dominance_fig(
 
         _add_speed_subplot(tel1_s, driver1, col=1, show_scale=False)
         _add_speed_subplot(tel2_s, driver2, col=2, show_scale=True)
+
+    if official_corners and mode == 'dominance':
+        customdata = [row.get('letter') or '' for row in official_corners]
+        fig.add_trace(go.Scatter(
+            x=[row['x'] for row in official_corners],
+            y=[row['y'] for row in official_corners],
+            mode='markers+text', text=[str(row['number']) for row in official_corners],
+            textposition='middle center', textfont=dict(size=8, color='#101216'),
+            customdata=customdata,
+            marker=dict(color='#f4f1e8', size=13, symbol='circle', line=dict(color='#101216', width=1.4)),
+            name='Official turn', showlegend=False,
+            hovertemplate='Turn %{text}%{customdata}<extra></extra>',
+        ))
 
     # Legend surrogates
     if mode == 'dominance':

@@ -1,0 +1,63 @@
+{
+  "qualifying_results": [
+    {"driver_number": 4, "position": 1, "duration": [90.1, 89.7, 89.2], "gap_to_leader": [0, 0, 0], "number_of_laps": 12, "dnf": false, "dns": false, "dsq": false},
+    {"driver_number": 81, "position": 2, "duration": [90.4, 89.9, 89.5], "gap_to_leader": [0.3, 0.2, 0.3], "number_of_laps": 11, "dnf": false, "dns": false, "dsq": false}
+  ],
+  "practice_results": [
+    {"driver_number": 44, "position": 1, "duration": 91.4, "gap_to_leader": 0, "number_of_laps": 22},
+    {"driver_number": 63, "position": 2, "duration": 91.8, "gap_to_leader": 0.4, "number_of_laps": 20}
+  ],
+  "sprint_results": [
+    {"driver_number": 1, "position": 1, "duration": 2380.1, "gap_to_leader": 0, "number_of_laps": 19, "dnf": false, "dns": false, "dsq": false},
+    {"driver_number": 16, "position": 2, "duration": 2382.4, "gap_to_leader": 2.3, "number_of_laps": 19, "dnf": false, "dns": false, "dsq": false},
+    {"driver_number": 55, "position": null, "duration": null, "gap_to_leader": null, "number_of_laps": 0, "dnf": false, "dns": true, "dsq": false},
+    {"driver_number": 11, "position": null, "duration": null, "gap_to_leader": null, "number_of_laps": 0, "dnf": false, "dns": false, "dsq": true}
+  ],
+  "jolpica_race": {
+    "MRData": {
+      "RaceTable": {
+        "Races": [{"Results": [
+          {"position": "1", "grid": "2", "laps": "57", "status": "Finished", "points": "25", "Driver": {"code": "VER", "permanentNumber": "1", "givenName": "Max", "familyName": "Verstappen"}, "Constructor": {"name": "Red Bull"}},
+          {"position": "2", "grid": "1", "laps": "57", "status": "+1 Lap", "points": "18", "Driver": {"code": "NOR", "permanentNumber": "4", "givenName": "Lando", "familyName": "Norris"}, "Constructor": {"name": "McLaren"}}
+        ]}]
+      }
+    }
+  },
+  "jolpica_qualifying": {
+    "MRData": {
+      "QualifyingTable": {
+        "Races": [{"QualifyingResults": [
+          {"position": "1", "Driver": {"code": "VER", "permanentNumber": "1", "givenName": "Max", "familyName": "Verstappen"}, "Constructor": {"name": "Red Bull"}, "Q1": "1:12.1", "Q2": "1:11.4", "Q3": "1:10.9"}
+        ]}]
+      }
+    }
+  },
+  "jolpica_sprint": {
+    "MRData": {
+      "SprintTable": {
+        "Races": [{"SprintResults": [
+          {"position": "1", "grid": "1", "laps": "19", "status": "Finished", "points": "8", "Driver": {"code": "VER", "permanentNumber": "1", "givenName": "Max", "familyName": "Verstappen"}, "Constructor": {"name": "Red Bull"}}
+        ]}]
+      }
+    }
+  },
+  "jolpica_drivers": {
+    "MRData": {
+      "DriverTable": {
+        "Drivers": [
+          {"driverId": "max_verstappen", "code": "VER", "permanentNumber": "1"},
+          {"driverId": "lando_norris", "code": "NOR", "permanentNumber": "4"}
+        ]
+      }
+    }
+  },
+  "jolpica_pitstops": {
+    "MRData": {
+      "RaceTable": {
+        "Races": [{"PitStops": [
+          {"driverId": "max_verstappen", "lap": "20", "stop": "1", "duration": "2.4", "time": "14:12:05"}
+        ]}]
+      }
+    }
+  }
+}

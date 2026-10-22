@@ -68,7 +68,7 @@
         // GPS samples can briefly resolve backwards along the circuit. A short
         // time-based low-pass filter keeps marker movement legible while
         // retaining the relative gaps between the two cars.
-        const ease = 1 - Math.exp(-elapsed / 105);
+        const ease = 1 - Math.exp(-elapsed / 220);
         const smoothed = [
             previous[0] + (target[0] - previous[0]) * ease,
             previous[1] + (target[1] - previous[1]) * ease
@@ -124,7 +124,7 @@
             // Use elapsed time rather than a fixed amount so the camera has
             // the same glide on fast and slower displays.
             const elapsed = Math.max(1, now - state.lastCameraUpdate);
-            const ease = 1 - Math.exp(-elapsed / 185);
+            const ease = 1 - Math.exp(-elapsed / 360);
             ['x0', 'x1', 'y0', 'y1'].forEach(function(key) {
                 state.camera[key] += (target[key] - state.camera[key]) * ease;
             });
@@ -757,18 +757,16 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
                 const nameEl = document.getElementById(`live-${id}-name`);
                 const speedEl = document.getElementById(`live-${id}-speed`);
                 const gearEl = document.getElementById(`live-${id}-gear`);
-                const rpmEl = document.getElementById(`live-${id}-rpm`);
                 if (nameEl) { nameEl.innerText = data.name; nameEl.style.color = data.color; }
                 if (speedEl) speedEl.innerText = Math.round(interpMetric(data, t, 'speed'));
                 if (gearEl) gearEl.innerText = Math.round(interpMetric(data, t, 'gear'));
-                if (rpmEl) rpmEl.innerText = Math.round(interpMetric(data, t, 'rpm'));
             };
 
             updateDriver('d1', miniStore.d1, tSec);
             updateDriver('d2', miniStore.d2, tSec);
 
             // Delta uses a 0..1 lap-progress scale so its lookup remains correct
-            // regardless of whether FastF1 or the fallback source generated it.
+            // regardless of which provider returned the normalized trace.
             // The lookup is cheap, so update it on every replay frame and hover.
             const getDeltaAtProgress = (targetProgress) => {
                     const delta = miniStore.delta || {};

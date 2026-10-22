@@ -1,7 +1,7 @@
 """Optional, safe shared-cache access for deployments.
 
-The cache is intentionally an optimisation: FastF1 remains the source of
-truth and a cache timeout must never stop a dashboard callback.  Upstash's
+The cache is intentionally an optimisation: OpenF1 remains the source of
+truth and a cache timeout must never stop a dashboard callback. Upstash's
 REST endpoint is used directly so this module adds no connection-pool or
 native dependency to the deployment bundle.
 """
@@ -24,7 +24,7 @@ _STATS = Counter()
 _LAST_ERROR = ''
 # A Vercel cold function may need a fresh TLS connection to Upstash.  The old
 # 1.25-second limit turned a healthy cache into a silent miss under that brief
-# startup latency, which in turn allowed duplicate FastF1 downloads.
+# startup latency, which in turn allowed duplicate selected-lap downloads.
 _DEFAULT_TIMEOUT_SECONDS = 4.0
 _MAX_VALUE_BYTES = 900_000
 
@@ -170,7 +170,7 @@ def set_json(key, value, ttl_seconds):
 
 
 def acquire_lock(key, ttl_seconds=75):
-    """Attempt a short Redis lock to avoid duplicate FastF1 cold loads."""
+    """Attempt a short Redis lock to avoid duplicate OpenF1 trace loads."""
     if not is_configured():
         return None
     result = _command(('SET', key, '1', 'NX', 'EX', max(1, int(ttl_seconds))))

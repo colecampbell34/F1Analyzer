@@ -8,7 +8,7 @@ from callbacks_shared import _active_tab_ready, _figure_cache_key, _lap_dropdown
 
 
 def _delta_progress_values(distances, values):
-    """Normalize either FastF1 or fallback delta distances to 0..1 lap progress."""
+    """Normalize derived trace distances to 0..1 lap progress."""
     import numpy as np
 
     distance_values = np.asarray(distances, dtype=float)
@@ -88,7 +88,6 @@ def register_telemetry_callbacks(app):
         if current_cache_key == cache_key:
             return dash.no_update, dash.no_update, dash.no_update
         try:
-            import numpy as np
             import pandas as pd
             import plotly.graph_objects as go
             from graph_shared import _compute_lap_delta
@@ -105,10 +104,9 @@ def register_telemetry_callbacks(app):
             c1, c2 = cmp['c1'], cmp['c2']
             lap1, lap2 = cmp['lap1'], cmp['lap2']
             tel1, tel2 = cmp['tel1'], cmp['tel2']
-            # Preserve original distances for the fallback delta calculation.
-            # The replay stores normalized distance, but delta sources can be
-            # FastF1 (metres) or a fallback trace (normalized), so the client
-            # receives a separate, unambiguous progress scale below.
+            # Preserve integrated distances for the delta calculation. Replay
+            # uses normalized progress, while the comparison payload retains
+            # the derived distance axis and its provenance.
             delta_tel1 = tel1.copy()
             delta_tel2 = tel2.copy()
             
@@ -122,7 +120,7 @@ def register_telemetry_callbacks(app):
                 
                 tel1['Time'] -= tel1['Time'].min()
                 t_raw_max = tel1['Time'].max().total_seconds()
-                lap_time1 = float(lap1['LapTime'].total_seconds())
+                lap_time1 = float(lap1['lap_duration'])
                 if t_raw_max > 0:
                     tel1['Time'] = (tel1['Time'].dt.total_seconds() / t_raw_max) * lap_time1
                 else:
@@ -135,7 +133,7 @@ def register_telemetry_callbacks(app):
                 
                 tel2['Time'] -= tel2['Time'].min()
                 t_raw_max = tel2['Time'].max().total_seconds()
-                lap_time2 = float(lap2['LapTime'].total_seconds())
+                lap_time2 = float(lap2['lap_duration'])
                 if t_raw_max > 0:
                     tel2['Time'] = (tel2['Time'].dt.total_seconds() / t_raw_max) * lap_time2
                 else:
@@ -146,6 +144,24 @@ def register_telemetry_callbacks(app):
 
             max_pts = 1800
 
+            def _smooth_replay_positions(tel):
+                # OpenF1 position samples can snap between adjacent GPS cells.
+                # A short median filter removes isolated jumps before the
+                # browser interpolates the marker between samples.
+                replay_tel = tel.copy(deep=True)
+                for column in ('X', 'Y'):
+                    replay_tel[column] = (
+                        pd.to_numeric(replay_tel[column], errors='coerce')
+                        .rolling(window=7, center=True, min_periods=1)
+                        .median()
+                        .rolling(window=5, center=True, min_periods=1)
+                        .mean()
+                    )
+                return replay_tel
+
+            replay_tel1 = _smooth_replay_positions(tel1)
+            replay_tel2 = _smooth_replay_positions(tel2)
+
             def _sample_for_playback(tel):
                 n = len(tel)
                 step = max(1, n // max_pts)
@@ -155,17 +171,14 @@ def register_telemetry_callbacks(app):
                     'dist': tel['Distance'].to_numpy(dtype=float)[::step].tolist(),
                     't': tel['Time'].to_numpy(dtype=float)[::step].tolist(),
                     'speed': tel['Speed'].to_numpy(dtype=float)[::step].tolist(),
-                    # Some older FastF1 traces have valid position/speed data
-                    # but no gear or RPM channel. Preserve playback instead of
-                    # failing the entire telemetry panel for those laps.
+                    # Optional car channels can be absent without blocking replay.
                     'gear': tel['nGear'].fillna(0).to_numpy(dtype=int)[::step].tolist(),
-                    'rpm': tel['RPM'].fillna(0).to_numpy(dtype=int)[::step].tolist()
                 }
 
-            d1_data = _sample_for_playback(tel1)
-            d2_data = _sample_for_playback(tel2)
-            track_x = tel1['X'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
-            track_y = tel1['Y'].to_numpy(dtype=float)[::max(1, len(tel1) // 1400)]
+            d1_data = _sample_for_playback(replay_tel1)
+            d2_data = _sample_for_playback(replay_tel2)
+            track_x = replay_tel1['X'].to_numpy(dtype=float)[::max(1, len(replay_tel1) // 1400)]
+            track_y = replay_tel1['Y'].to_numpy(dtype=float)[::max(1, len(replay_tel1) // 1400)]
             # Positive delta means Driver 1 is ahead of Driver 2 at that point.
             delta_time, ref_tel, _ = _compute_lap_delta(
                 lap2,
@@ -179,12 +192,12 @@ def register_telemetry_callbacks(app):
 
             store = {
                 'track': {'x': track_x.tolist(), 'y': track_y.tolist()},
-                'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['LapTime'].total_seconds()), 'dist_max': float(lap1_dist_max)},
-                'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['LapTime'].total_seconds()), 'dist_max': float(lap2_dist_max)},
+                'd1': {**d1_data, 'name': d1, 'color': c1, 'lap_s': float(lap1['lap_duration']), 'dist_max': float(lap1_dist_max)},
+                'd2': {**d2_data, 'name': d2, 'color': c2, 'lap_s': float(lap2['lap_duration']), 'dist_max': float(lap2_dist_max)},
                 'delta': {
                     # Always use 0..1 lap progress. This works identically for
-                    # FastF1's metre-based trace and the distance-normalized
-                    # fallback trace used when car telemetry is incomplete.
+                    # Distance is an integrated progress estimate, not an
+                    # official measured circuit length.
                     'progress': delta_progress.tolist(),
                     'value': delta_values.tolist(),
                     'primary': d1,

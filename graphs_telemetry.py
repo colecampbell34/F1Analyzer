@@ -56,7 +56,7 @@ def _split_delta_by_sign(delta_dist, delta_values):
 
 
 def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_delta_data=None):
-    """Builds the 4-Row Telemetry Subplot (Delta, Speed, Throttle/Brake, Gear)."""
+    """Build delta, speed, pedal, and gear traces."""
     from plotly.subplots import make_subplots
     fast_driver, fast_tel, fast_c, fast_t, fast_lap, fast_lbl = fast_data
     slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
@@ -71,8 +71,8 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     driver1_tel = fast_tel if fast_driver == driver1 else slow_tel
     driver2_tel = fast_tel if fast_driver == driver2 else slow_tel
 
-    # FastF1 returns compare_time - reference_time. Use Driver 2 as the
-    # reference and invert the sign so positive means Driver 1 is ahead.
+    # Use Driver 2 as the reference and invert the sign so positive means
+    # Driver 1 is ahead.
     delta_time, ref_tel, comp_tel = _compute_lap_delta(
         driver2_lap,
         driver1_lap,
@@ -84,9 +84,12 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     slow_tel = _downsample(slow_tel)
 
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-        specs=[[{"secondary_y": False}], [{"secondary_y": False}], [{"secondary_y": True}], [{"secondary_y": False}]],
-        row_heights=[0.15, 0.35, 0.25, 0.25]
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.035,
+        specs=[
+            [{"secondary_y": False}], [{"secondary_y": False}],
+            [{"secondary_y": True}], [{"secondary_y": False}],
+        ],
+        row_heights=[0.17, 0.31, 0.30, 0.22]
     )
 
     # Row 1: Time Delta
@@ -178,11 +181,12 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
                              line=dict(color=fast_c, width=2), showlegend=False), row=4, col=1)
     fig.add_trace(go.Scatter(x=slow_tel['Distance'], y=slow_tel['nGear'], mode='lines', name=f'{slow_driver} Gear',
                              line=dict(color=slow_c, width=2), showlegend=False), row=4, col=1)
+
     _add_driver_legend_entries(fig, [(fast_driver, fast_c), (slow_driver, slow_c)], row=2, col=1)
 
     _apply_base_layout(
         fig,
-        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)',
+        title=f'Telemetry Traces: {fast_lbl} ({fast_t:.3f}s) vs {slow_lbl} ({slow_t:.3f}s)<br><sup>OpenF1 samples are approximately 3.7 Hz; distance is integrated from speed.</sup>',
         title_font=dict(size=16),
         margin=dict(l=40, r=40, t=80, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)),
@@ -190,7 +194,7 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     )
 
     fig.update_yaxes(
-        title_text=f"Time Delta (s)",
+        title_text="Time Delta (s)",
         zeroline=True,
         zerolinecolor='#bbbbbb',
         zerolinewidth=1,
@@ -202,6 +206,6 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     fig.update_yaxes(title_text="Throttle (%)", row=3, col=1, secondary_y=False)
     fig.update_yaxes(title_text="Brake", row=3, col=1, secondary_y=True, showgrid=False)
     fig.update_yaxes(title_text="Gear", row=4, col=1, tickvals=[1, 2, 3, 4, 5, 6, 7, 8])
-    fig.update_xaxes(title_text="Distance along track (meters)", row=4, col=1)
+    fig.update_xaxes(title_text="Derived distance (m)", row=4, col=1)
 
     return fig

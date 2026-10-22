@@ -1,1395 +1,494 @@
-import os
-import shutil
-import threading
-import time
-import logging
-import hashlib
-import re
+"""Dashboard-facing data facade for normalized historical F1 sessions."""
+from __future__ import annotations
+
 import colorsys
 from concurrent.futures import Future, ThreadPoolExecutor
+from copy import deepcopy
 from functools import lru_cache
+import hashlib
+import logging
+import os
+import re
+import threading
+import time
+
 import pandas as pd
-from static_schedule import (
-    get_latest_static_race_session,
-    get_static_sessions,
+
+from runtime import is_serverless
+from session_data import (
+    SessionBundle,
+    _is_red_flag_event,
+    get_schedule as _get_schedule,
+    latest_completed_race,
+    load_session_bundle,
 )
-from runtime import is_serverless, runtime_directory
 
-# Suppress FastF1 and other noisy libraries at the module level.
-logging.getLogger('fastf1').setLevel(logging.WARNING)
-logging.getLogger('urllib3').setLevel(logging.WARNING)
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - non-POSIX fallback
-    fcntl = None
-
-
-def _env_int(name, default, minimum=None, maximum=None):
-    try:
-        value = int(os.getenv(name, default))
-    except (TypeError, ValueError):
-        value = default
-    if minimum is not None:
-        value = max(minimum, value)
-    if maximum is not None:
-        value = min(maximum, value)
-    return value
-
-
-_SESSION_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4)
-_SESSION_PRELOAD_FUTURES = {}
-_SESSION_PRELOAD_LOCK = threading.Lock()
-_SESSION_PRELOAD_JOBS = {}
-_GRANULAR_LOAD_LOCK = threading.Lock()
-_DIRECT_PROFILE_FUTURES = {}
-_DIRECT_PROFILE_LOCK = threading.Lock()
-_MAX_TRACKED_PRELOAD_FUTURES = 12
-_MAX_TRACKED_PRELOAD_JOBS = 24
-_PRELOAD_JOB_TTL_SECONDS = 900
-
-
-_CACHE_DIR = runtime_directory('FASTF1_CACHE_DIR', 'f1_cache')
-_CACHE_SETUP_LOCK = threading.Lock()
-_CACHE_READY = False
-_CACHE_PRUNE_LOCKFILE = os.path.join(_CACHE_DIR, '.cache-prune.lock')
-_CACHE_PRUNE_STAMP = os.path.join(_CACHE_DIR, '.cache-prune.stamp')
-LOG_SESSION_LOADING = os.getenv('LOG_SESSION_LOADING') == '1'
-SESSION_CACHE_MAXSIZE = _env_int('SESSION_CACHE_MAXSIZE', 6, minimum=2, maximum=12)
-SESSION_SUMMARY_CACHE_MAXSIZE = _env_int('SESSION_SUMMARY_CACHE_MAXSIZE', 16, minimum=4, maximum=48)
-TELEMETRY_LOAD_ATTEMPTS = _env_int('TELEMETRY_LOAD_ATTEMPTS', 2, minimum=1, maximum=3)
-EVENT_SCHEDULE_CACHE_MAXSIZE = 20
 
 TEAM_COLOR_FALLBACKS = {
-    # Current/recent canonical and feed-specific names.
-    'mercedes': '#00D7B6',
-    'mclaren': '#F47600',
-    'redbull': '#4781D7',
-    'redbullracing': '#4781D7',
-    'ferrari': '#ED1131',
-    'alpine': '#00A1E8',
-    'alpinef1team': '#00A1E8',
-    'williams': '#1868DB',
-    'haas': '#9C9FA2',
-    'haasf1team': '#9C9FA2',
-    'audi': '#F50537',
-    'racingbulls': '#6C98FF',
-    'rb': '#6C98FF',
-    'rbf1team': '#6C98FF',
-    'astonmartin': '#229971',
-    'cadillac': '#909090',
-    'cadillacf1team': '#909090',
-    # Older aliases still reachable in historical sessions.
-    'alphatauri': '#2B4562',
-    'alfaromeo': '#900000',
-    'sauber': '#52E252',
-    'stakesauber': '#52E252',
-    'kicksauber': '#52E252',
-    'renault': '#FFF500',
-    'tororosso': '#469BFF',
-    'racingpoint': '#F596C8',
-    'forceindia': '#F596C8',
+    "mercedes": "#00D7B6", "mclaren": "#F47600", "redbull": "#4781D7",
+    "redbullracing": "#4781D7", "ferrari": "#ED1131", "alpine": "#00A1E8",
+    "alpinef1team": "#00A1E8", "williams": "#1868DB", "haas": "#9C9FA2",
+    "haasf1team": "#9C9FA2", "audi": "#F50537", "racingbulls": "#6C98FF",
+    "rb": "#6C98FF", "rbf1team": "#6C98FF", "astonmartin": "#229971",
+    "alphatauri": "#2B4562", "alfaromeo": "#900000", "sauber": "#52E252",
+    "stakesauber": "#52E252", "kicksauber": "#52E252", "renault": "#FFF500",
+    "tororosso": "#469BFF", "racingpoint": "#F596C8", "forceindia": "#F596C8",
 }
-
-_COLOR_FALLBACK_PALETTE = (
-    '#00D7B6', '#F47600', '#4781D7', '#ED1131', '#00A1E8',
-    '#1868DB', '#9C9FA2', '#F50537', '#6C98FF', '#229971',
-    '#B46CFF', '#FFD166'
-)
-
-# A small high-contrast palette used only when the two compared teams would
-# otherwise merge visually (for example Ferrari/Audi or the blue teams).
-_COMPARISON_SECONDARY_COLORS = ('#FFD166', '#B46CFF', '#00D7B6')
-
-# Vercel's filesystem is ephemeral and F1's archive occasionally refuses
-# cloud-provider IP ranges.  These are deliberately *derived* lap records,
-# not FastF1 cache files or Session objects.  A successful local FastF1 load
-# can seed them into the configured shared cache for a serverless instance.
-_SHARED_LAP_CACHE_SCHEMA_VERSION = 1
-_SHARED_LAP_CACHE_COLUMNS = (
-    'DriverNumber', 'Driver', 'Team', 'LapNumber', 'LapTime', 'Time',
-    'LapStartTime', 'PitInTime', 'PitOutTime', 'Stint', 'Compound',
-    'TyreLife', 'FreshTyre', 'TrackStatus', 'IsAccurate', 'Position',
-    'SpeedI1', 'SpeedI2', 'SpeedFL', 'SpeedST', 'Sector1Time',
-    'Sector2Time', 'Sector3Time', 'FastF1Generated',
-)
-_SHARED_LAP_TIME_COLUMNS = {
-    'LapTime', 'Time', 'LapStartTime', 'PitInTime', 'PitOutTime',
-    'Sector1Time', 'Sector2Time', 'Sector3Time',
-}
+_COLOR_PALETTE = ("#00D7B6", "#F47600", "#4781D7", "#ED1131", "#00A1E8", "#1868DB", "#9C9FA2", "#F50537", "#6C98FF", "#229971", "#B46CFF", "#FFD166")
+_SECONDARY_COLORS = ("#FFD166", "#B46CFF", "#00D7B6")
+_PRELOAD_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="session-preload")
+_PRELOAD_LOCK = threading.RLock()
+_PRELOAD_JOBS: dict[tuple, dict] = {}
+_PRELOAD_FUTURES: dict[tuple, Future] = {}
+_MAX_PRELOAD_JOBS = 24
 
 
-
-# --- SESSION TYPE HELPERS ---
 def is_qualifying(session_type):
-    """Check if a session type is any form of qualifying."""
-    return any(q in session_type for q in ['Qualifying', 'Shootout'])
+    value = str(session_type or "").casefold()
+    return "qualifying" in value or "shootout" in value
 
 
 def is_race(session_type):
-    """Check if a session type is a race or sprint race."""
-    return session_type in ['Race', 'Sprint']
+    return str(session_type or "").casefold() in {"race", "sprint", "sprint race"}
 
 
 def is_practice(session_type):
-    """Check if a session type is any form of practice."""
-    return any(p in session_type for p in ['Practice', 'FP'])
+    value = str(session_type or "").casefold()
+    return "practice" in value or value.startswith("fp")
 
 
-def _normalize_color_value(value):
-    """Return a CSS hex color or None for missing/invalid FastF1 color values."""
+def _normalize_color(value):
     if value is None or pd.isna(value):
         return None
-    color = str(value).strip()
-    if not color or color.lower() in ('none', 'nan'):
-        return None
-    if color.startswith('#'):
-        color = color[1:]
-    if len(color) == 3 and all(ch in '0123456789abcdefABCDEF' for ch in color):
-        color = ''.join(ch * 2 for ch in color)
-    if len(color) != 6 or not all(ch in '0123456789abcdefABCDEF' for ch in color):
+    color = str(value).strip().removeprefix("#")
+    if len(color) == 3 and all(char in "0123456789abcdefABCDEF" for char in color):
+        color = "".join(char * 2 for char in color)
+    if len(color) != 6 or not all(char in "0123456789abcdefABCDEF" for char in color):
         return None
     return f"#{color.upper()}"
 
 
-def _hex_to_rgb(color):
-    """Return an RGB tuple for a normalized CSS hex color, or None."""
-    normalized = _normalize_color_value(color)
+def _team_color_key(team_name):
+    return re.sub(r"[^a-z0-9]+", "", str(team_name or "").casefold())
+
+
+def _stable_fallback_color(identifier):
+    digest = hashlib.sha1(str(identifier or "unknown").encode("utf-8")).hexdigest()
+    return _COLOR_PALETTE[int(digest[:2], 16) % len(_COLOR_PALETTE)]
+
+
+def _rgb(color):
+    normalized = _normalize_color(color)
     if not normalized:
         return None
     return tuple(int(normalized[index:index + 2], 16) for index in (1, 3, 5))
 
 
-def _colors_are_visually_similar(first, second):
-    """Return whether two team colors need separating in a two-driver plot."""
-    first_rgb, second_rgb = _hex_to_rgb(first), _hex_to_rgb(second)
-    if not first_rgb or not second_rgb:
+def _colors_similar(first, second):
+    a, b = _rgb(first), _rgb(second)
+    if not a or not b:
         return first == second
-    if first_rgb == second_rgb:
+    if a == b:
         return True
-
-    first_hsv = colorsys.rgb_to_hsv(*(channel / 255 for channel in first_rgb))
-    second_hsv = colorsys.rgb_to_hsv(*(channel / 255 for channel in second_rgb))
-    hue_gap = abs(first_hsv[0] - second_hsv[0])
-    hue_gap = min(hue_gap, 1 - hue_gap)
-
-    # Near-identical hue families are hard to distinguish as overlapping thin
-    # traces even when one is modestly lighter or more saturated.
-    return (
-        hue_gap <= (28 / 360)
-        and abs(first_hsv[1] - second_hsv[1]) <= 0.48
-        and abs(first_hsv[2] - second_hsv[2]) <= 0.42
-    )
+    hsv_a = colorsys.rgb_to_hsv(*(channel / 255 for channel in a))
+    hsv_b = colorsys.rgb_to_hsv(*(channel / 255 for channel in b))
+    hue_gap = abs(hsv_a[0] - hsv_b[0])
+    return min(hue_gap, 1 - hue_gap) <= 28 / 360 and abs(hsv_a[1] - hsv_b[1]) <= 0.48 and abs(hsv_a[2] - hsv_b[2]) <= 0.42
 
 
 def _distinct_comparison_colors(primary, secondary):
-    """Keep team colors unless the selected pair is visually ambiguous."""
-    if not _colors_are_visually_similar(primary, secondary):
+    if not _colors_similar(primary, secondary):
         return primary, secondary
-    for candidate in _COMPARISON_SECONDARY_COLORS:
-        if not _colors_are_visually_similar(primary, candidate):
-            return primary, candidate
-    return primary, '#FFFFFF'
+    candidate = next((color for color in _SECONDARY_COLORS if not _colors_similar(primary, color)), "#FFFFFF")
+    return primary, candidate
 
 
 def distinct_plot_colors(colors):
-    """Return plot colors with later near-duplicates moved to signal colors.
-
-    This is for multi-driver charts, where several team colors can belong to
-    the same red or blue family. The earliest color remains canonical and each
-    ambiguous later trace receives the first available contrasting color.
-    """
     resolved = []
-    candidates = _COMPARISON_SECONDARY_COLORS + _COLOR_FALLBACK_PALETTE + ('#FFFFFF',)
+    candidates = _SECONDARY_COLORS + _COLOR_PALETTE + ("#FFFFFF",)
     for color in colors:
-        if not any(_colors_are_visually_similar(color, existing) for existing in resolved):
+        if not any(_colors_similar(color, existing) for existing in resolved):
             resolved.append(color)
-            continue
-        replacement = next(
-            (
-                candidate for candidate in candidates
-                if not any(_colors_are_visually_similar(candidate, existing) for existing in resolved)
-            ),
-            '#FFFFFF',
-        )
-        resolved.append(replacement)
+        else:
+            resolved.append(next((candidate for candidate in candidates if not any(_colors_similar(candidate, existing) for existing in resolved)), "#FFFFFF"))
     return resolved
 
 
-def _team_color_key(team_name):
-    return re.sub(r'[^a-z0-9]+', '', str(team_name or '').lower())
-
-
-def _stable_fallback_color(identifier):
-    digest = hashlib.sha1(str(identifier or 'unknown').encode('utf-8')).hexdigest()
-    return _COLOR_FALLBACK_PALETTE[int(digest[:2], 16) % len(_COLOR_FALLBACK_PALETTE)]
-
-
 def resolve_team_color(team_name, session=None, raw_color=None, fallback_identifier=None):
-    """Resolve a readable team color even when live FastF1 metadata omits TeamColor."""
-    raw = _normalize_color_value(raw_color)
-    if raw and raw.lower() != '#ffffff':
-        return raw
+    normalized = _normalize_color(raw_color)
+    if normalized:
+        return normalized
+    return TEAM_COLOR_FALLBACKS.get(_team_color_key(team_name)) or _stable_fallback_color(fallback_identifier or team_name)
 
-    team_key = _team_color_key(team_name)
-    mapped = TEAM_COLOR_FALLBACKS.get(team_key)
-    if mapped:
-        return mapped
 
-    if team_name:
-        try:
-            import fastf1.plotting
-            plotted = _normalize_color_value(
-                fastf1.plotting.get_team_color(str(team_name), session=session)
-            )
-            if plotted and plotted.lower() != '#ffffff':
-                return plotted
-        except Exception:
-            pass
-
-    if raw:
-        return raw
-    return _stable_fallback_color(fallback_identifier or team_name)
+def _driver_row(session: SessionBundle, driver_abbr: str):
+    if session is None or session.drivers.empty:
+        return None
+    rows = session.drivers[session.drivers["abbreviation"] == driver_abbr]
+    return rows.iloc[0] if not rows.empty else None
 
 
 def resolve_driver_color(driver_abbr, session):
-    """Resolve a driver's team color with production-safe fallbacks."""
-    team = ''
-    raw_color = None
-    try:
-        if getattr(session, 'results', None) is not None and not session.results.empty:
-            row = session.results[session.results['Abbreviation'] == driver_abbr]
-            if not row.empty:
-                team = row.iloc[0].get('TeamName', '')
-                raw_color = row.iloc[0].get('TeamColor', None)
-    except Exception:
-        pass
-
-    color = resolve_team_color(team, session=session, raw_color=raw_color, fallback_identifier=driver_abbr)
-    if color and color.lower() != '#ffffff':
-        return color
-
-    try:
-        import fastf1.plotting
-        plotted = _normalize_color_value(fastf1.plotting.get_driver_color(driver_abbr, session))
-        if plotted and plotted.lower() != '#ffffff':
-            return plotted
-    except Exception:
-        pass
-
-    return color or _stable_fallback_color(driver_abbr)
-
-
-def setup_cache():
-    """Enable FastF1 disk cache once per process."""
-    global _CACHE_READY
-    if _CACHE_READY:
-        return
-
-    with _CACHE_SETUP_LOCK:
-        if _CACHE_READY:
-            return
-        import fastf1
-        if not os.path.exists(_CACHE_DIR):
-            os.makedirs(_CACHE_DIR)
-        fastf1.Cache.enable_cache(_CACHE_DIR)
-        _CACHE_READY = True
-
-
-def _ensure_cache_ready():
-    """Ensure FastF1 cache is enabled before any data calls."""
-    if not _CACHE_READY:
-        setup_cache()
-
-
-def _env_bool(name, default=False):
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
-
-
-def background_preload_enabled():
-    """Return whether callbacks should wait for background session preload jobs."""
-    configured = os.getenv('ENABLE_BACKGROUND_PRELOAD')
-    if configured is not None:
-        return _env_bool('ENABLE_BACKGROUND_PRELOAD', default=True)
-    return not is_serverless()
-
-
-@lru_cache(maxsize=EVENT_SCHEDULE_CACHE_MAXSIZE)
-def get_event_schedule_cached(year):
-    """LRU-cached event schedule. Historical years never change, current year rarely."""
-    _ensure_cache_ready()
-    import fastf1
-    return fastf1.get_event_schedule(year, include_testing=False)
-
-
-def get_latest_race_session_default(now=None, first_year=2018):
-    """Return the latest past race-session default from the static schedule."""
-    latest = get_latest_static_race_session(now=now, first_year=first_year)
-    if not latest:
-        return None
-    year, race, session_type = latest['year'], latest['race'], latest['session_type']
-    logging.info("[latest_default] year=%s race=%s session=%s", year, race, session_type)
-    return latest
-
-
-def _session_has_usable_car_telemetry(session):
-    """Return whether FastF1 loaded car-speed samples for at least one car.
-
-    ``Session.load(telemetry=True)`` can complete without raising when the F1
-    timing endpoint returns an incomplete car-data payload. Treating that as a
-    successful session load poisons the in-process cache: every selected lap
-    then appears to have no speed trace until the Vercel instance is replaced.
-    """
-    try:
-        car_data = session.car_data
-        traces = car_data.values() if hasattr(car_data, 'values') else ()
-    except Exception:
-        return False
-
-    for trace in traces:
-        try:
-            if trace is None or 'Speed' not in trace.columns:
-                continue
-            speeds = pd.to_numeric(trace['Speed'], errors='coerce')
-            if int(speeds.notna().sum()) >= 6:
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def _session_has_lap_data(session):
-    """Return whether a telemetry-fallback candidate still has valid laps."""
-    try:
-        laps = session.laps
-        return bool(len(laps)) and 'DriverNumber' in laps.columns and 'LapNumber' in laps.columns
-    except Exception:
-        return False
-
-
-def _set_missing_optional_streams(session, weather=False, messages=False):
-    """Give soft-failed FastF1 optional streams a safe empty representation.
-
-    FastF1 deliberately swallows errors from some upstream endpoints. In that
-    case ``Session.load(weather=True)`` returns normally, but accessing
-    ``session.weather_data`` later raises ``DataNotLoadedError``. Charts should
-    still render their timing-based analysis when weather or race-control data
-    is unavailable, so normalize those optional streams at the loading
-    boundary rather than leaving a partially initialized session in the cache.
-    """
-    if weather:
-        try:
-            session.weather_data
-        except Exception:
-            session._weather_data = pd.DataFrame()
-            session._weather_unavailable = True
-    if messages:
-        try:
-            session.race_control_messages
-        except Exception:
-            session._race_control_messages = pd.DataFrame()
-            session._messages_unavailable = True
-    return session
-
-
-def _require_requested_lap_data(session):
-    """Reject a silently partial FastF1 session before it reaches a chart."""
-    if not _session_has_lap_data(session):
-        raise RuntimeError(
-            'No lap data was loaded for this session. FastF1 returned only partial session metadata.'
-        )
-    return session
-
-
-def _openf1_fallback_enabled():
-    """Return whether the selected-lap OpenF1 fallback may be used."""
-    return str(os.getenv('OPENF1_FALLBACK_ENABLED', '1')).lower() not in {
-        '0', 'false', 'no', 'off'
-    }
-
-
-def _shared_lap_cache_key(year, race, session_name):
-    source = f'{int(year)}|{str(race)}|{str(session_name)}'.encode('utf-8')
-    digest = hashlib.sha256(source).hexdigest()
-    return f'f1-analyzer:fastf1-laps:v{_SHARED_LAP_CACHE_SCHEMA_VERSION}:{digest}'
-
-
-def _lap_value_to_wire(column, value):
-    if pd.isna(value):
-        return None
-    if column in _SHARED_LAP_TIME_COLUMNS:
-        seconds = pd.to_timedelta(value, errors='coerce').total_seconds()
-        return None if pd.isna(seconds) else float(seconds)
-    if isinstance(value, (bool, int, float, str)):
-        return value
-    try:
-        return value.item()
-    except (AttributeError, ValueError):
-        return str(value)
-
-
-def _store_shared_lap_payload(session, year, race, session_name):
-    """Store bounded, derived FastF1 laps for serverless archive recovery."""
-    try:
-        laps = session.laps
-        if not _session_has_lap_data(session) or len(laps) > 4000:
-            return False
-        columns = [column for column in _SHARED_LAP_CACHE_COLUMNS if column in laps.columns]
-        if not {'DriverNumber', 'LapNumber'}.issubset(columns):
-            return False
-        rows = [
-            {column: _lap_value_to_wire(column, row[column]) for column in columns}
-            for _, row in laps.loc[:, columns].iterrows()
-        ]
-        from shared_cache import set_json
-        return set_json(
-            _shared_lap_cache_key(year, race, session_name),
-            {'schema': _SHARED_LAP_CACHE_SCHEMA_VERSION, 'columns': columns, 'rows': rows},
-            31_536_000,
-        )
-    except Exception as exc:
-        logging.warning('shared_fastf1_laps_store_failed year=%s race=%s session=%s cause_type=%s',
-                        year, race, session_name, type(exc).__name__)
-        return False
-
-
-def _shared_lap_recovery_enabled():
-    """Return whether an optional shared cache can recover a known-good lap payload.
-
-    This is useful on any ephemeral host, including Render Free after a sleep,
-    as well as on persistent hosts after a restart.  It does not replace a
-    normal FastF1 load: it only restores a bounded payload that FastF1
-    previously validated and wrote to the configured shared cache.
-    """
-    # Preserve Vercel's existing fast-path semantics. ``get_json`` remains a
-    # no-op without credentials, while Render and other persistent hosts only
-    # take this pre-load path when a shared cache is actually configured.
-    if is_serverless():
-        return True
-    try:
-        from shared_cache import is_configured
-        return is_configured()
-    except ImportError:
-        return False
-
-
-def _restore_shared_lap_payload(session, year, race, session_name):
-    """Attach a previously validated FastF1 lap payload to a partial Session."""
-    try:
-        from shared_cache import get_json
-        payload = get_json(_shared_lap_cache_key(year, race, session_name))
-        if not isinstance(payload, dict) or payload.get('schema') != _SHARED_LAP_CACHE_SCHEMA_VERSION:
-            return None
-        columns, rows = payload.get('columns'), payload.get('rows')
-        if not isinstance(columns, list) or not isinstance(rows, list) or not rows:
-            return None
-        if not {'DriverNumber', 'LapNumber'}.issubset(columns) or len(rows) > 4000:
-            return None
-        laps = pd.DataFrame(rows, columns=columns)
-        for column in _SHARED_LAP_TIME_COLUMNS.intersection(laps.columns):
-            laps[column] = pd.to_timedelta(laps[column], unit='s', errors='coerce')
-        for column in ('LapNumber', 'Stint', 'TyreLife', 'Position', 'SpeedI1', 'SpeedI2', 'SpeedFL', 'SpeedST'):
-            if column in laps.columns:
-                laps[column] = pd.to_numeric(laps[column], errors='coerce')
-        from fastf1.core import Laps
-        session._laps = Laps(laps, session=session, _force_default_cols=True)
-        if not _session_has_lap_data(session):
-            return None
-        session._fastf1_laps_from_shared_cache = True
-        logging.warning('shared_fastf1_laps_restored year=%s race=%s session=%s',
-                        year, race, session_name)
-        return session
-    except Exception as exc:
-        logging.warning('shared_fastf1_laps_restore_failed year=%s race=%s session=%s cause_type=%s',
-                        year, race, session_name, type(exc).__name__)
-        return None
-
-
-@lru_cache(maxsize=SESSION_CACHE_MAXSIZE)
-def _load_session_granular_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
-    """LRU-cached session loader with selective streams and telemetry retries.
-
-    A telemetry request must either return a telemetry-capable Session or fail.
-    Returning a lap-only Session marked as telemetry-unavailable poisoned the
-    cache after one transient upstream failure and made every later telemetry
-    view fail until the process restarted.
-    """
-    _ensure_cache_ready()
-    import fastf1
-
-    def _new_session():
-        return fastf1.get_session(int(year), str(race), str(session_name))
-
-    def _load(session, include_telemetry):
-        session.load(
-            laps=bool(laps),
-            telemetry=bool(include_telemetry),
-            weather=bool(weather),
-            messages=bool(messages),
-        )
-        return session
-
-    # A cache hit can avoid a known-bad upstream request on Vercel, Render, or
-    # another host. The shared payload is bounded derived lap data, never a
-    # serialized Session or a raw FastF1 cache file.
-    if laps and _shared_lap_recovery_enabled():
-        cached_session = _new_session()
-        restored_laps = _restore_shared_lap_payload(
-            cached_session, year, race, session_name,
-        )
-        if restored_laps is not None:
-            if telemetry:
-                # The session payload contains FastF1 timing/lap data, not
-                # raw car telemetry. telemetry_prep can still use an already
-                # warmed FastF1 trace, and otherwise shows its normal clear
-                # telemetry-unavailable state without triggering the archive.
-                restored_laps._fastf1_telemetry_unavailable = True
-            return _set_missing_optional_streams(
-                restored_laps, weather=weather, messages=messages,
-            )
-
-    # FastF1's cache is process-local on Vercel. A retry with a fresh Session
-    # object is cheap relative to surfacing a permanent false-negative after a
-    # one-off timing endpoint/cache failure.
-    with _GRANULAR_LOAD_LOCK:
-        if telemetry:
-            failures = []
-            cache_renewed = False
-            lap_cache_recovery_attempted = False
-            last_loaded_session = None
-            # On Vercel, an empty FastF1 car stream has repeatedly been a
-            # deterministic egress/content problem rather than a one-off
-            # request blip. A second 8+ MB download only increases callback
-            # time; the selected-lap OpenF1 fallback below is better suited to
-            # that exact failure. Non-serverless deployments retain retries.
-            attempt_count = (
-                1 if is_serverless() and _openf1_fallback_enabled()
-                else TELEMETRY_LOAD_ATTEMPTS
-            )
-            try:
-                attempt = 0
-                while attempt < attempt_count:
-                    if attempt:
-                        # FastF1 can cache a syntactically valid but empty car
-                        # data response. On the retry, bypass both cache stages
-                        # so a new Session does not simply consume that payload
-                        # again. The cache is restored below after this one
-                        # recovery attempt.
-                        fastf1.Cache.enable_cache(_CACHE_DIR, force_renew=True)
-                        cache_renewed = True
-                    session = _new_session()
-                    try:
-                        loaded = _load(session, include_telemetry=True)
-                        last_loaded_session = loaded
-                        if laps:
-                            _require_requested_lap_data(loaded)
-                        _set_missing_optional_streams(loaded, weather=weather, messages=messages)
-                        if not _session_has_usable_car_telemetry(loaded):
-                            raise RuntimeError(
-                                'FastF1 completed the session load but returned no usable car-speed data.'
-                            )
-                        _store_shared_lap_payload(loaded, year, race, session_name)
-                        return loaded
-                    except Exception as exc:
-                        failures.append(exc)
-                        logging.warning(
-                            "Telemetry load failed (attempt %s/%s) for %s %s %s: %s",
-                            attempt + 1, attempt_count, year, race, session_name, exc,
-                        )
-                        # Missing laps are distinct from the serverless
-                        # car-stream condition handled by the OpenF1 fallback:
-                        # without laps there is no selected-lap metadata to
-                        # preserve. FastF1 can cache a valid-looking but empty
-                        # timing response, so renew it once even on Vercel.
-                        if (
-                            laps
-                            and not lap_cache_recovery_attempted
-                            and last_loaded_session is not None
-                            and not _session_has_lap_data(last_loaded_session)
-                        ):
-                            lap_cache_recovery_attempted = True
-                            attempt_count = max(attempt_count, attempt + 2)
-                            logging.warning(
-                                "lap_payload_empty_retrying_with_renewed_cache year=%s race=%s session=%s",
-                                year, race, session_name,
-                            )
-                        if attempt + 1 < attempt_count:
-                            time.sleep(0.15 * (attempt + 1))
-                        attempt += 1
-            finally:
-                if cache_renewed:
-                    # Return later requests to normal cached operation. The
-                    # successfully renewed response remains on disk.
-                    fastf1.Cache.enable_cache(_CACHE_DIR)
-            root_cause = failures[-1]
-            restored_laps = _restore_shared_lap_payload(
-                last_loaded_session, year, race, session_name,
-            ) if last_loaded_session is not None else None
-            if restored_laps is not None:
-                # Car data remains unavailable from the blocked archive. The
-                # existing selected-lap shared trace cache can satisfy a
-                # warmed comparison without another FastF1 request.
-                restored_laps._fastf1_telemetry_unavailable = True
-                return restored_laps
-            if _openf1_fallback_enabled() and _session_has_lap_data(last_loaded_session):
-                # Do not discard FastF1's trustworthy event/lap metadata when
-                # only its car stream is empty. telemetry_prep will ask OpenF1
-                # for the same selected driver/lap and cache the normalized
-                # result in Redis. Marking the session avoids treating this as
-                # a normal FastF1 success in diagnostics.
-                last_loaded_session._fastf1_telemetry_unavailable = True
-                logging.warning(
-                    "telemetry_primary_unavailable year=%s race=%s session=%s "
-                    "cause_type=%s fallback=openf1",
-                    year, race, session_name, type(root_cause).__name__,
-                )
-                return last_loaded_session
-            # One stable ERROR-level line is much easier to find in Vercel Logs
-            # than the many FastF1 request messages emitted during a cold load.
-            # Keep it free of request headers and response bodies.
-            logging.error(
-                "telemetry_load_exhausted year=%s race=%s session=%s attempts=%s "
-                "cause_type=%s cause=%s",
-                year,
-                race,
-                session_name,
-                attempt_count,
-                type(root_cause).__name__,
-                root_cause,
-            )
-            raise RuntimeError(
-                "FastF1 could not load telemetry after "
-                f"{TELEMETRY_LOAD_ATTEMPTS} attempt(s)."
-            ) from root_cause
-
-        session = _new_session()
-        cache_renewed = False
-        try:
-            loaded = _load(session, include_telemetry=False)
-            if laps:
-                _require_requested_lap_data(loaded)
-            loaded = _set_missing_optional_streams(loaded, weather=weather, messages=messages)
-            if laps:
-                _store_shared_lap_payload(loaded, year, race, session_name)
-            return loaded
-        except Exception as exc:
-            logging.warning(
-                "Session profile load failed (laps=%s weather=%s messages=%s) for %s %s %s: %s",
-                laps, weather, messages, year, race, session_name, exc,
-            )
-            # A cached empty timing stream is recoverable. Renew it once
-            # before surfacing a data-unavailable message, particularly on a
-            # fresh Vercel instance where FastF1's local cache is ephemeral.
-            if laps and not _session_has_lap_data(session):
-                try:
-                    fastf1.Cache.enable_cache(_CACHE_DIR, force_renew=True)
-                    cache_renewed = True
-                    renewed_session = _new_session()
-                    renewed_loaded = _load(renewed_session, include_telemetry=False)
-                    _require_requested_lap_data(renewed_loaded)
-                    logging.warning(
-                        "lap_payload_recovered_after_cache_renewal year=%s race=%s session=%s",
-                        year, race, session_name,
-                    )
-                    renewed_loaded = _set_missing_optional_streams(
-                        renewed_loaded, weather=weather, messages=messages,
-                    )
-                    _store_shared_lap_payload(renewed_loaded, year, race, session_name)
-                    return renewed_loaded
-                except Exception as renewed_exc:
-                    logging.warning(
-                        "lap_payload_recovery_failed year=%s race=%s session=%s cause_type=%s",
-                        year, race, session_name, type(renewed_exc).__name__,
-                    )
-                finally:
-                    if cache_renewed:
-                        fastf1.Cache.enable_cache(_CACHE_DIR)
-            # Non-telemetry tabs can still offer useful metadata if ancillary
-            # data feeds fail. This fallback is deliberately not used for
-            # telemetry requests above.
-            fallback = _new_session()
-            try:
-                fallback.load(laps=bool(laps), telemetry=False, weather=False, messages=False)
-                if laps:
-                    _require_requested_lap_data(fallback)
-                if weather:
-                    fallback._weather_data = pd.DataFrame()
-                    fallback._weather_unavailable = True
-                if messages:
-                    fallback._race_control_messages = pd.DataFrame()
-                    fallback._messages_unavailable = True
-                return fallback
-            except Exception as fallback_exc:
-                if laps:
-                    restored_laps = _restore_shared_lap_payload(session, year, race, session_name)
-                    if restored_laps is not None:
-                        return _set_missing_optional_streams(
-                            restored_laps, weather=weather, messages=messages,
-                        )
-                    raise RuntimeError(
-                        'No lap data was loaded for this session. FastF1 returned only partial session metadata.'
-                    ) from fallback_exc
-                metadata = _new_session()
-                metadata.load(laps=False, telemetry=False, weather=False, messages=False)
-                metadata._laps_unavailable = True
-                metadata._weather_unavailable = bool(weather)
-                return metadata
-
-
-@lru_cache(maxsize=SESSION_SUMMARY_CACHE_MAXSIZE)
-def _load_session_summary_cached(year, race, session_name, include_laps):
-    """LRU-cached lightweight session loader for sidebar data and labels."""
-    _ensure_cache_ready()
-    import fastf1
-    session = fastf1.get_session(year, race, session_name)
-    try:
-        session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=bool(include_laps))
-    except (KeyError, ValueError, Exception) as e:
-        logging.warning("Failed to load session summary with laps/messages: %s. Retrying with laps only.", e)
-        try:
-            session.load(laps=bool(include_laps), telemetry=False, weather=False, messages=False)
-        except (KeyError, ValueError, Exception) as e2:
-            logging.warning("Failed to load session summary with laps: %s. Retrying metadata only.", e2)
-            try:
-                session.load(laps=False, telemetry=False, weather=False, messages=False)
-            except Exception as e3:
-                logging.error("Failed to load even summary session metadata: %s", e3)
-    return session
-
-
-def _session_cache_key(year, race, session_name):
-    return int(year), str(race), str(session_name)
-
-
-def _session_preload_key(year, race, session_name, laps, telemetry, weather, messages):
-    return (
-        int(year), str(race), str(session_name),
-        bool(laps), bool(telemetry), bool(weather), bool(messages)
+    row = _driver_row(session, driver_abbr)
+    return resolve_team_color(
+        row.get("team_name") if row is not None else "",
+        raw_color=row.get("team_colour") if row is not None else None,
+        fallback_identifier=driver_abbr,
     )
-
-
-def _preload_job_id(key):
-    return "|".join(str(part) for part in key)
-
-
-def _preload_profile(laps, telemetry, weather, messages):
-    if telemetry and weather and messages:
-        return "ai-context"
-    if telemetry:
-        return "telemetry"
-    if weather:
-        return "weather"
-    if laps:
-        return "laps"
-    return "summary"
-
-
-def _cleanup_preload_jobs_locked(now=None):
-    now = now or time.time()
-    if len(_SESSION_PRELOAD_JOBS) <= _MAX_TRACKED_PRELOAD_JOBS:
-        return
-    stale = [
-        job_id for job_id, job in _SESSION_PRELOAD_JOBS.items()
-        if now - float(job.get('updated_at', job.get('created_at', now))) > _PRELOAD_JOB_TTL_SECONDS
-        and job.get('status') in ('ready', 'error')
-    ]
-    for job_id in stale:
-        _SESSION_PRELOAD_JOBS.pop(job_id, None)
-    if len(_SESSION_PRELOAD_JOBS) > _MAX_TRACKED_PRELOAD_JOBS:
-        ordered = sorted(
-            _SESSION_PRELOAD_JOBS.items(),
-            key=lambda item: float(item[1].get('updated_at', item[1].get('created_at', 0)))
-        )
-        overflow = len(_SESSION_PRELOAD_JOBS) - _MAX_TRACKED_PRELOAD_JOBS
-        for job_id, _ in ordered[:overflow]:
-            _SESSION_PRELOAD_JOBS.pop(job_id, None)
-
-
-def _ensure_preload_job_locked(key, status='queued', future=None):
-    now = time.time()
-    job_id = _preload_job_id(key)
-    job = _SESSION_PRELOAD_JOBS.get(job_id)
-    if job is None:
-        job = {
-            'id': job_id,
-            'year': key[0],
-            'race': key[1],
-            'session': key[2],
-            'laps': key[3],
-            'telemetry': key[4],
-            'weather': key[5],
-            'messages': key[6],
-            'profile': _preload_profile(key[3], key[4], key[5], key[6]),
-            'status': status,
-            'created_at': now,
-            'updated_at': now,
-            'error': '',
-        }
-        _SESSION_PRELOAD_JOBS[job_id] = job
-    else:
-        job['status'] = status
-        job['updated_at'] = now
-    if future is not None:
-        job['future'] = future
-    return job
-
-
-def _safe_job_view(job):
-    if not job:
-        return {'status': 'idle'}
-    clean = {
-        key: value for key, value in job.items()
-        if key != 'future'
-    }
-    return clean
-
-
-def _run_preload_job(key):
-    job_id = _preload_job_id(key)
-    with _SESSION_PRELOAD_LOCK:
-        job = _SESSION_PRELOAD_JOBS.get(job_id)
-        if job is not None:
-            job['status'] = 'loading'
-            job['updated_at'] = time.time()
-    try:
-        from perf_monitor import record_session_event
-        record_session_event('preload', key=job_id, status='loading')
-    except Exception:
-        pass
-
-    try:
-        result = _load_session_granular_cached(
-            key[0], key[1], key[2], key[3], key[4], key[5], key[6]
-        )
-        with _SESSION_PRELOAD_LOCK:
-            job = _SESSION_PRELOAD_JOBS.get(job_id)
-            if job is not None:
-                job['status'] = 'ready'
-                job['updated_at'] = time.time()
-                job['error'] = ''
-        try:
-            from perf_monitor import record_session_event
-            record_session_event('preload', key=job_id, status='ready')
-        except Exception:
-            pass
-        return result
-    except Exception as exc:
-        with _SESSION_PRELOAD_LOCK:
-            job = _SESSION_PRELOAD_JOBS.get(job_id)
-            if job is not None:
-                job['status'] = 'error'
-                job['updated_at'] = time.time()
-                job['error'] = str(exc)[:240]
-        try:
-            from perf_monitor import record_session_event
-            record_session_event('preload', key=job_id, status='error', error=exc)
-        except Exception:
-            pass
-        raise
-
-
-def preload_session(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
-    """Start loading a session profile in the background."""
-    if not all([year, race, session_name]):
-        return None
-    if not background_preload_enabled():
-        return None
-
-    key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
-    with _SESSION_PRELOAD_LOCK:
-        _cleanup_preload_jobs_locked()
-        if len(_SESSION_PRELOAD_FUTURES) > _MAX_TRACKED_PRELOAD_FUTURES:
-            done_keys = [k for k, fut in _SESSION_PRELOAD_FUTURES.items() if fut.done()]
-            for old_key in done_keys[: len(_SESSION_PRELOAD_FUTURES) - _MAX_TRACKED_PRELOAD_FUTURES]:
-                _SESSION_PRELOAD_FUTURES.pop(old_key, None)
-        future = _SESSION_PRELOAD_FUTURES.get(key)
-        # If no future or previous failed, start requested profile preload.
-        if future is None or (future.done() and future.exception() is not None):
-            _ensure_preload_job_locked(key, status='queued')
-            future = _SESSION_PRELOAD_EXECUTOR.submit(_run_preload_job, key)
-            _SESSION_PRELOAD_FUTURES[key] = future
-            _ensure_preload_job_locked(key, status='queued', future=future)
-            if LOG_SESSION_LOADING:
-                logging.info(
-                    "[session] preload started "
-                    f"year={key[0]} race={key[1]} session={key[2]} "
-                    f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
-                )
-        elif future.done() and future.exception() is None:
-            _ensure_preload_job_locked(key, status='ready', future=future)
-        elif LOG_SESSION_LOADING:
-            _ensure_preload_job_locked(key, status='loading', future=future)
-            logging.info(
-                "[session] preload reused "
-                f"year={key[0]} race={key[1]} session={key[2]} "
-                f"laps={key[3]} telemetry={key[4]} weather={key[5]} messages={key[6]}"
-            )
-        return future
-
-
-def _load_session_profile_singleflight(year, race, session_name, laps, telemetry, weather, messages):
-    """Load one cold profile once, while concurrent callbacks wait for it.
-
-    Dash starts the telemetry chart, mini-map, and G-force callbacks together.
-    ``lru_cache`` does not coalesce concurrent cache misses, so without this
-    gate each callback could independently construct and load the same FastF1
-    session on a Vercel cold start.
-    """
-    profile_key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
-    with _DIRECT_PROFILE_LOCK:
-        future = _DIRECT_PROFILE_FUTURES.get(profile_key)
-        leader = future is None
-        if leader:
-            future = Future()
-            _DIRECT_PROFILE_FUTURES[profile_key] = future
-
-    if not leader:
-        return future.result()
-
-    try:
-        session = _load_session_granular_cached(
-            profile_key[0], profile_key[1], profile_key[2],
-            profile_key[3], profile_key[4], profile_key[5], profile_key[6],
-        )
-    except BaseException as exc:
-        future.set_exception(exc)
-        raise
-    else:
-        future.set_result(session)
-        return session
-    finally:
-        # The LRU cache owns successful sessions; the Future only exists to
-        # coordinate the initial miss. Failed profiles are also removable so a
-        # later user action can retry them.
-        with _DIRECT_PROFILE_LOCK:
-            if _DIRECT_PROFILE_FUTURES.get(profile_key) is future:
-                _DIRECT_PROFILE_FUTURES.pop(profile_key, None)
-
-
-def load_session_with_preload(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
-    """Return a session with specific data streams, reusing preloaded object when possible."""
-    key = _session_cache_key(year, race, session_name)
-    preload_key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
-    with _SESSION_PRELOAD_LOCK:
-        exact_future = _SESSION_PRELOAD_FUTURES.get(preload_key)
-        if exact_future is not None and exact_future.done():
-            try:
-                failed = exact_future.exception() is not None
-            except Exception:
-                failed = True
-            if failed:
-                _SESSION_PRELOAD_FUTURES.pop(preload_key, None)
-                exact_future = None
-
-    # If matching preload is in-flight, reuse it directly.
-    if exact_future is not None:
-        if LOG_SESSION_LOADING:
-            logging.info(
-                "[session] waiting on exact preload "
-                f"year={key[0]} race={key[1]} session={key[2]} "
-                f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
-            )
-        return exact_future.result()
-
-    if bool(laps) and background_preload_enabled():
-        future = preload_session(*key, bool(laps), bool(telemetry), bool(weather), bool(messages))
-        if future is not None:
-            if LOG_SESSION_LOADING:
-                logging.info(
-                    "[session] waiting on started preload "
-                    f"year={key[0]} race={key[1]} session={key[2]} "
-                    f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
-                )
-            return future.result()
-
-    if LOG_SESSION_LOADING:
-        logging.info(
-            "[session] granular load "
-            f"year={key[0]} race={key[1]} session={key[2]} "
-            f"laps={bool(laps)} telemetry={bool(telemetry)} weather={bool(weather)} messages={bool(messages)}"
-        )
-    return _load_session_profile_singleflight(
-        key[0], key[1], key[2], laps, telemetry, weather, messages
-    )
-
-
-def get_preload_status(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False):
-    """Return a JSON-safe status for a preload profile without loading data."""
-    if not all([year, race, session_name]):
-        return {'status': 'idle'}
-    key = _session_preload_key(year, race, session_name, laps, telemetry, weather, messages)
-    job_id = _preload_job_id(key)
-    with _SESSION_PRELOAD_LOCK:
-        job = _SESSION_PRELOAD_JOBS.get(job_id)
-        if job is None:
-            future = _SESSION_PRELOAD_FUTURES.get(key)
-            if future is None:
-                return {
-                    'id': job_id,
-                    'year': key[0],
-                    'race': key[1],
-                    'session': key[2],
-                    'laps': key[3],
-                    'telemetry': key[4],
-                    'weather': key[5],
-                    'messages': key[6],
-                    'profile': _preload_profile(key[3], key[4], key[5], key[6]),
-                    'status': 'idle',
-                    'error': '',
-                }
-            status = 'ready' if future.done() and future.exception() is None else 'loading'
-            job = _ensure_preload_job_locked(key, status=status, future=future)
-        elif job.get('future') is not None:
-            future = job['future']
-            if future.done():
-                try:
-                    future.exception()
-                except Exception:
-                    pass
-                job['status'] = 'ready' if future.exception() is None else 'error'
-                job['updated_at'] = time.time()
-        return _safe_job_view(job)
-
-
-def get_preload_status_for_tab(params, active_tab):
-    """Map a dashboard tab to the profile it should preload/load."""
-    if not params:
-        return {'status': 'idle'}
-    kwargs = get_preload_kwargs_for_tab(active_tab)
-    if not background_preload_enabled():
-        return {
-            'status': 'direct',
-            'profile': _preload_profile(
-                kwargs['laps'],
-                kwargs['telemetry'],
-                kwargs['weather'],
-                kwargs['messages']
-            ),
-            'error': '',
-        }
-    return get_preload_status(
-        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-    )
-
-
-def get_preload_kwargs_for_tab(active_tab):
-    """Return the session stream profile required by a dashboard tab."""
-    kwargs = {'laps': True, 'telemetry': False, 'weather': False, 'messages': False}
-    if active_tab in ('tab-telemetry', 'tab-trackmap'):
-        kwargs['telemetry'] = True
-    elif active_tab in ('tab-strategy', 'tab-racepace'):
-        kwargs['weather'] = True
-    elif active_tab == 'tab-ai':
-        kwargs.update({'telemetry': True, 'weather': True, 'messages': True})
-    return kwargs
-
-
-def ensure_preload_for_tab(params, active_tab):
-    """Start the active tab's data profile in the background and return its status."""
-    if not params:
-        return {'status': 'idle'}
-    kwargs = get_preload_kwargs_for_tab(active_tab)
-    if not background_preload_enabled():
-        return {
-            'status': 'direct',
-            'profile': _preload_profile(
-                kwargs['laps'],
-                kwargs['telemetry'],
-                kwargs['weather'],
-                kwargs['messages']
-            ),
-            'error': '',
-        }
-    status = get_preload_status(
-        params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-    )
-    if status.get('status') in ('idle', 'error'):
-        preload_session(
-            params.get('year'),
-            params.get('race'),
-            params.get('session_type'),
-            **kwargs
-        )
-        return get_preload_status(
-            params.get('year'), params.get('race'), params.get('session_type'), **kwargs
-        )
-    return status
-
-
-def get_preload_registry_snapshot():
-    """Return a compact snapshot of tracked preload jobs."""
-    with _SESSION_PRELOAD_LOCK:
-        jobs = [_safe_job_view(job) for job in _SESSION_PRELOAD_JOBS.values()]
-    jobs.sort(key=lambda item: float(item.get('updated_at', item.get('created_at', 0))), reverse=True)
-    return jobs[:_MAX_TRACKED_PRELOAD_JOBS]
-
-
-def get_cache_stats():
-    """Return cheap cache stats for the admin perf panel."""
-    stats = {
-        'cache_dir': _CACHE_DIR,
-        'cache_ready': _CACHE_READY,
-        'cache_size_bytes': 0,
-        'session_cache': _load_session_granular_cached.cache_info()._asdict(),
-        'summary_cache': _load_session_summary_cached.cache_info()._asdict(),
-        'schedule_cache': get_event_schedule_cached.cache_info()._asdict(),
-    }
-    try:
-        from telemetry_prep import get_selected_lap_cache_stats
-        stats['selected_lap_cache'] = get_selected_lap_cache_stats()
-    except Exception:
-        pass
-    try:
-        if os.path.exists(_CACHE_DIR):
-            stats['cache_size_bytes'] = _cache_size_bytes(_CACHE_DIR)
-    except Exception:
-        stats['cache_size_bytes'] = 0
-    return stats
-
-
-def load_session_summary(year, race, session_name, include_laps=False):
-    """Return a lightweight session object without telemetry/weather/messages.
-    
-    If include_laps=True, it loads laps and messages (for leaderboard/AI).
-    """
-    return _load_session_summary_cached(int(year), str(race), str(session_name), bool(include_laps))
-
-
-@lru_cache(maxsize=16)
-def _load_drivers_fast(year, race, session_name):
-    """Fast cache to get driver info ordered by session results or fastest laps."""
-    try:
-        session = load_session_summary(year, race, session_name, include_laps=False)
-        return get_driver_info(session)
-    except Exception as e:
-        logging.error(f"Error in _load_drivers_fast: {e}")
-        return []
-
-
-def get_track_status_events(session):
-    """Returns (sc_laps, vsc_laps, red_laps) sets extracted from session laps."""
-    sc_laps, vsc_laps, red_laps = set(), set(), set()
-    try:
-        all_laps = session.laps
-        sc_laps.update(
-            all_laps[all_laps['TrackStatus'].astype(str).str.contains('4', na=False)]['LapNumber'].dropna().tolist())
-        vsc_laps.update(
-            all_laps[all_laps['TrackStatus'].astype(str).str.contains('6', na=False)]['LapNumber'].dropna().tolist())
-        red_laps.update(
-            all_laps[all_laps['TrackStatus'].astype(str).str.contains('5', na=False)]['LapNumber'].dropna().tolist())
-    except Exception:
-        pass
-    return sc_laps, vsc_laps, red_laps
-
-
-def get_driver_info(session):
-    """Returns a list of dicts with driver abbreviation, full name, team, and color."""
-    drivers = []
-    if getattr(session, 'results', None) is None or session.results.empty:
-        return drivers
-
-    for _, row in session.results.iterrows():
-        abbr = row.get('Abbreviation', '')
-        if not isinstance(abbr, str) or len(abbr) != 3:
-            continue
-
-        full_name = f"{row.get('FirstName', '')} {row.get('LastName', '')}".strip()
-        team = row.get('TeamName', '')
-
-        color = resolve_team_color(
-            team,
-            session=session,
-            raw_color=row.get('TeamColor', None),
-            fallback_identifier=abbr,
-        )
-
-        drivers.append({
-            'abbr': abbr,
-            'name': full_name if full_name else abbr,
-            'team': team if isinstance(team, str) else '',
-            'color': color
-        })
-    return drivers
-
-
-def get_teammate_from_info(driver_abbr, driver_info):
-    """Return the teammate abbreviation from preloaded driver info."""
-    driver_team = None
-    for d in driver_info:
-        if d['abbr'] == driver_abbr:
-            driver_team = d['team']
-            break
-    if not driver_team:
-        return None
-    for d in driver_info:
-        if d['team'] == driver_team and d['abbr'] != driver_abbr:
-            return d['abbr']
-    return None
-
-
-def get_best_lap(session, driver_abbr):
-    """
-    Returns the 'official' best lap object for a driver.
-    For Qualifying/Shootout, it prioritizes Q3 > Q2 > Q1 times from session.results.
-    For other sessions (Practice, Race), it uses pick_fastest().
-    """
-    try:
-        if not hasattr(session, 'laps') or session.laps.empty:
-            return None
-
-        # Determine if this is a qualifying session
-        session_name = getattr(session, 'name', '')
-        is_qualy = any(q in session_name for q in ['Qualifying', 'Shootout'])
-
-        # If qualy, try to match official leaderboard time from results
-        if is_qualy and getattr(session, 'results', None) is not None and not session.results.empty:
-            res = session.results[session.results['Abbreviation'] == driver_abbr]
-            if not res.empty:
-                row = res.iloc[0]
-                best_time = None
-                for col in ['Q3', 'Q2', 'Q1', 'SQ3', 'SQ2', 'SQ1']:
-                    if col in row.index and pd.notna(row[col]):
-                        best_time = row[col]
-                        break
-                
-                if best_time is not None:
-                    drv_laps = session.laps.pick_drivers(driver_abbr)
-                    drv_laps = drv_laps[pd.notna(drv_laps['LapTime'])]
-                    if not drv_laps.empty:
-                        # Match within 50ms — timing sources can differ by a few milliseconds
-                        diffs = (drv_laps['LapTime'] - best_time).abs()
-                        if diffs.min() <= pd.Timedelta('0.05s'):
-                            return drv_laps.loc[diffs.idxmin()]
-
-        # Fallback to literal fastest lap
-        return session.laps.pick_drivers(driver_abbr).pick_fastest()
-    except Exception:
-        try:
-            return session.laps.pick_drivers(driver_abbr).pick_fastest()
-        except Exception:
-            return None
 
 
 def get_single_driver_color(driver_abbr, session):
-    """Fetch a single driver's team color with fallback."""
     return resolve_driver_color(driver_abbr, session)
 
 
+def background_preload_enabled():
+    configured = os.getenv("ENABLE_BACKGROUND_PRELOAD")
+    if configured is not None:
+        return str(configured).strip().casefold() in {"1", "true", "yes", "on"}
+    return not is_serverless()
+
+
+@lru_cache(maxsize=12)
+def get_event_schedule_cached(year):
+    return tuple(_get_schedule(int(year)))
+
+
+def get_event_schedule(year):
+    return [dict(event) for event in get_event_schedule_cached(int(year))]
+
+
+def get_latest_race_session_default(now=None, first_year=2023):
+    latest = latest_completed_race(now=now)
+    return latest if latest and latest["year"] >= int(first_year) else None
+
+
+def _profile_key(year, race, session_name, laps, telemetry, weather, messages, results, strategy, race_context, circuit):
+    return (int(year), str(race), str(session_name), bool(laps), bool(telemetry), bool(weather), bool(messages), bool(results), bool(strategy), bool(race_context), bool(circuit))
+
+
+def _clone_bundle(bundle: SessionBundle) -> SessionBundle:
+    return SessionBundle(
+        bundle.ref,
+        *[frame.copy(deep=True) for frame in (
+            bundle.drivers, bundle.results, bundle.grid, bundle.laps, bundle.stints,
+            bundle.pits, bundle.weather, bundle.messages, bundle.positions,
+            bundle.intervals, bundle.circuit_corners,
+        )],
+        quality=deepcopy(bundle.quality),
+    )
+
+
 @lru_cache(maxsize=16)
-def _compute_labels_colors(year, race, session_type, d1, d2):
-    """LRU-cached driver labels (with finishing position) and team colors.
+def _load_bundle_cached(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False, results=True, strategy=False, race_context=False, circuit=False):
+    from session_data import resolve_session_ref
 
-    Separated from session loading so that different data-stream
-    combinations (telemetry vs. weather) share a single cache entry.
-    """
-    session = load_session_summary(year, race, session_type, include_laps=False)
-
-    c1, c2 = _distinct_comparison_colors(
-        resolve_driver_color(d1, session),
-        resolve_driver_color(d2, session),
+    ref = resolve_session_ref(year, race, session_name)
+    include_strategy = bool(strategy or weather)
+    include_race = bool(race_context or messages)
+    return load_session_bundle(
+        ref,
+        laps=bool(laps or telemetry or strategy or race_context),
+        results=bool(results), strategy=include_strategy,
+        race_context=include_race, circuit=bool(circuit),
     )
-    try:
-        if session.results is not None and not session.results.empty:
-            res1 = session.results[session.results['Abbreviation'] == d1]
-            p1 = res1['Position'].values[0] if not res1.empty else None
-            lbl1 = f"{d1} (P{int(p1)})" if pd.notna(p1) else d1
-
-            res2 = session.results[session.results['Abbreviation'] == d2]
-            p2 = res2['Position'].values[0] if not res2.empty else None
-            lbl2 = f"{d2} (P{int(p2)})" if pd.notna(p2) else d2
-        else:
-            lbl1, lbl2 = d1, d2
-    except (IndexError, KeyError):
-        lbl1, lbl2 = d1, d2
-
-    return lbl1, lbl2, c1, c2
 
 
-def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False):
-    """Loads session with granular control and computes shared labels/colors."""
-    year, race, session_type = params['year'], params['race'], params['session_type']
-    d1, d2 = params['driver1'], params['driver2']
-    session = load_session_with_preload(
-        year, race, session_type,
-        laps=laps, telemetry=telemetry, weather=weather, messages=messages
+def _load_bundle(*args, **kwargs):
+    return _clone_bundle(_load_bundle_cached(*args, **kwargs))
+
+
+def _profile_from_key(key):
+    return ", ".join(name for name, enabled in zip(("laps", "telemetry", "weather", "messages", "results", "strategy", "race context", "circuit"), key[3:]) if enabled) or "metadata"
+
+
+def _preload_key(year, race, session_name, **kwargs):
+    return _profile_key(
+        year, race, session_name,
+        kwargs.get("laps", True), kwargs.get("telemetry", False),
+        kwargs.get("weather", False), kwargs.get("messages", False),
+        kwargs.get("results", True), kwargs.get("strategy", False),
+        kwargs.get("race_context", False), kwargs.get("circuit", False),
     )
-    lbl1, lbl2, c1, c2 = _compute_labels_colors(year, race, session_type, d1, d2)
-    return session, d1, d2, lbl1, lbl2, c1, c2
 
 
-@lru_cache(maxsize=10)
-def get_pit_stop_data(year, round_number):
-    """Load official Ergast pit-stop durations for a race weekend.
-    
-    Falls back gracefully if the Ergast API is unavailable (deprecated).
-    """
+def _job_view(key, job):
+    return {
+        "year": key[0], "race": key[1], "session": key[2],
+        "profile": _profile_from_key(key[3:]), "status": job.get("status", "idle"),
+        "started_at": job.get("started_at"), "finished_at": job.get("finished_at"),
+        "error": job.get("error"), "mode": "on-demand" if is_serverless() else "background",
+    }
+
+
+def _run_preload(key):
+    year, race, session_name, laps, telemetry, weather, messages, results, strategy, race_context, circuit = key
     try:
-        from fastf1.ergast import Ergast
-        ergast = Ergast(result_type='pandas', auto_cast=True)
-        result = ergast.get_pit_stops(season=int(year), round=int(round_number))
-        if not result.content:
-            return pd.DataFrame()
-        return result.content[0].copy()
+        _load_bundle(year, race, session_name, laps, telemetry, weather, messages, results, strategy, race_context, circuit)
+        status, error = "ready", None
+    except Exception as exc:
+        status, error = "error", type(exc).__name__
+        logging.warning("session_preload_failed year=%s race=%s session=%s error_type=%s", year, race, session_name, type(exc).__name__)
+    with _PRELOAD_LOCK:
+        job = _PRELOAD_JOBS.setdefault(key, {})
+        job.update(status=status, finished_at=time.time(), error=error)
+    return status
+
+
+def preload_session(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False, results=True, strategy=False, race_context=False, circuit=False):
+    key = _preload_key(year, race, session_name, laps=laps, telemetry=telemetry, weather=weather, messages=messages, results=results, strategy=strategy, race_context=race_context, circuit=circuit)
+    if not background_preload_enabled():
+        return None
+    with _PRELOAD_LOCK:
+        existing = _PRELOAD_FUTURES.get(key)
+        if existing and not existing.done():
+            return existing
+        _PRELOAD_JOBS[key] = {"status": "queued", "started_at": time.time(), "finished_at": None, "error": None}
+        future = _PRELOAD_EXECUTOR.submit(_run_preload, key)
+        _PRELOAD_FUTURES[key] = future
+        while len(_PRELOAD_JOBS) > _MAX_PRELOAD_JOBS:
+            oldest = next(iter(_PRELOAD_JOBS))
+            if oldest in _PRELOAD_FUTURES and not _PRELOAD_FUTURES[oldest].done():
+                break
+            _PRELOAD_JOBS.pop(oldest, None)
+            _PRELOAD_FUTURES.pop(oldest, None)
+        return future
+
+
+def load_session_with_preload(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False, results=True, strategy=False, race_context=False, circuit=False):
+    args = (int(year), str(race), str(session_name), bool(laps), bool(telemetry), bool(weather), bool(messages), bool(results), bool(strategy), bool(race_context), bool(circuit))
+    session = _load_bundle(*args)
+    key = args
+    with _PRELOAD_LOCK:
+        _PRELOAD_JOBS[key] = {"status": "ready", "started_at": time.time(), "finished_at": time.time(), "error": None}
+    return session
+
+
+def get_preload_status(year, race, session_name, laps=True, telemetry=False, weather=False, messages=False, results=True, strategy=False, race_context=False, circuit=False):
+    key = _preload_key(year, race, session_name, laps=laps, telemetry=telemetry, weather=weather, messages=messages, results=results, strategy=strategy, race_context=race_context, circuit=circuit)
+    with _PRELOAD_LOCK:
+        job = _PRELOAD_JOBS.get(key)
+        if not job:
+            return {"status": "idle", "profile": _profile_from_key(key[3:]), "mode": "on-demand" if is_serverless() else "background"}
+        return _job_view(key, job)
+
+
+def get_preload_kwargs_for_tab(active_tab):
+    return {
+        "tab-telemetry": {"laps": True, "telemetry": True},
+        "tab-trackmap": {"laps": True, "telemetry": True, "circuit": True},
+        "tab-strategy": {"laps": True, "weather": True, "strategy": True},
+        "tab-racepace": {"laps": True, "weather": True, "strategy": True, "race_context": True},
+    }.get(active_tab, {"laps": True})
+
+
+def get_preload_status_for_tab(params, active_tab):
+    if not params:
+        return {"status": "idle", "mode": "on-demand" if is_serverless() else "background"}
+    return get_preload_status(params["year"], params["race"], params["session_type"], **get_preload_kwargs_for_tab(active_tab))
+
+
+def ensure_preload_for_tab(params, active_tab):
+    if not params:
+        return {"status": "idle", "mode": "on-demand" if is_serverless() else "background"}
+    kwargs = get_preload_kwargs_for_tab(active_tab)
+    current = get_preload_status(params["year"], params["race"], params["session_type"], **kwargs)
+    if background_preload_enabled() and current.get("status") == "idle":
+        preload_session(params["year"], params["race"], params["session_type"], **kwargs)
+    return get_preload_status_for_tab(params, active_tab)
+
+
+def get_preload_registry_snapshot():
+    with _PRELOAD_LOCK:
+        return [_job_view(key, job) for key, job in list(_PRELOAD_JOBS.items())[-_MAX_PRELOAD_JOBS:]]
+
+
+def get_cache_stats():
+    from session_data import provider_stats
+    from shared_cache import get_stats
+
+    try:
+        from telemetry_prep import get_selected_lap_cache_stats
+        selected_lap = get_selected_lap_cache_stats()
     except Exception:
-        # Ergast API may be offline (deprecated) — return empty to trigger fallback
-        return pd.DataFrame()
+        selected_lap = {}
+    return {
+        "cache_size_bytes": 0,
+        "session_cache": _load_bundle_cached.cache_info()._asdict(),
+        "summary_cache": _load_bundle_cached.cache_info()._asdict(),
+        "provider": provider_stats(),
+        "selected_lap_cache": selected_lap,
+        "shared_cache": get_stats(),
+    }
 
 
-def _cache_size_bytes(cache_path):
-    total_size = 0
-    for root, _, files in os.walk(cache_path):
-        for filename in files:
-            total_size += os.path.getsize(os.path.join(root, filename))
-    return total_size
+def load_session_summary(year, race, session_name, include_laps=False):
+    return load_session_with_preload(year, race, session_name, laps=bool(include_laps), telemetry=False, results=True)
 
 
-def maybe_prune_cache(max_size_gb=2.0, min_interval_seconds=3600):
-    """Production-safe cache pruning with a best-effort cross-worker file lock."""
-    import fastf1
-
-    os.makedirs(_CACHE_DIR, exist_ok=True)
-    now = time.time()
-
-    if os.path.exists(_CACHE_PRUNE_STAMP):
-        try:
-            if now - os.path.getmtime(_CACHE_PRUNE_STAMP) < min_interval_seconds:
-                return
-        except OSError:
-            pass
-
-    lock_handle = None
+@lru_cache(maxsize=32)
+def _load_drivers_fast(year, race, session_name):
     try:
-        lock_handle = open(_CACHE_PRUNE_LOCKFILE, 'a+', encoding='utf-8')
-        if fcntl is not None:
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
-                return
+        return tuple(get_driver_info(load_session_summary(year, race, session_name, include_laps=False)))
+    except Exception as exc:
+        logging.warning("driver_metadata_load_failed year=%s race=%s session=%s error_type=%s", year, race, session_name, type(exc).__name__)
+        return ()
 
-        if os.path.exists(_CACHE_PRUNE_STAMP):
-            try:
-                if now - os.path.getmtime(_CACHE_PRUNE_STAMP) < min_interval_seconds:
-                    return
-            except OSError:
-                pass
 
-        total_size = _cache_size_bytes(_CACHE_DIR)
-        if total_size > max_size_gb * 1024 ** 3:
-            logging.warning(f"[cache] pruning FastF1 cache at {total_size / 1024 ** 3:.2f} GB")
-            shutil.rmtree(_CACHE_DIR, ignore_errors=True)
-            os.makedirs(_CACHE_DIR, exist_ok=True)
-            fastf1.Cache.enable_cache(_CACHE_DIR)
+def get_driver_info(session):
+    drivers = session.drivers.copy(deep=True) if isinstance(session, SessionBundle) else pd.DataFrame()
+    if drivers.empty:
+        return []
+    result_positions = {}
+    if not session.results.empty:
+        result_positions = dict(zip(session.results["driver_number"], session.results["position"]))
+    if not session.laps.empty:
+        fastest = session.laps.dropna(subset=["lap_duration"]).groupby("driver_number")["lap_duration"].min().to_dict()
+    else:
+        fastest = {}
+    drivers["result_position"] = drivers["driver_number"].map(result_positions)
+    drivers["fastest_lap"] = drivers["driver_number"].map(fastest)
+    drivers = drivers.sort_values(["result_position", "fastest_lap", "abbreviation"], na_position="last", kind="stable")
+    return [{
+        "abbr": row["abbreviation"], "name": row["full_name"], "team": row["team_name"],
+        "color": resolve_team_color(row["team_name"], raw_color=row["team_colour"], fallback_identifier=row["abbreviation"]),
+        "driver_number": row["driver_number"],
+    } for _, row in drivers.iterrows()]
 
-        with open(_CACHE_PRUNE_STAMP, 'w', encoding='utf-8') as stamp:
-            stamp.write(str(int(now)))
-    finally:
-        if lock_handle is not None and fcntl is not None:
-            try:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
-        if lock_handle is not None:
-            lock_handle.close()
+
+def get_teammate_from_info(driver_abbr, driver_info):
+    driver_team = next((row.get("team") for row in driver_info if row.get("abbr") == driver_abbr), None)
+    if not driver_team:
+        return None
+    return next((row.get("abbr") for row in driver_info if row.get("team") == driver_team and row.get("abbr") != driver_abbr), None)
+
+
+def get_best_lap(session, driver_abbr):
+    if not isinstance(session, SessionBundle) or session.laps.empty:
+        return None
+    driver_laps = session.laps[
+        (session.laps["abbreviation"] == driver_abbr)
+        & pd.to_numeric(session.laps["lap_duration"], errors="coerce").notna()
+    ].copy()
+    if driver_laps.empty:
+        return None
+    if is_qualifying(session.ref.session_name) and not session.results.empty:
+        result = session.results[session.results["abbreviation"] == driver_abbr]
+        if not result.empty:
+            row = result.iloc[0]
+            best = row.get("best_lap_time")
+            if best is not None and pd.notna(best):
+                diffs = (driver_laps["lap_duration"].astype(float) - float(best)).abs()
+                if not diffs.empty and diffs.min() <= 0.05:
+                    return driver_laps.loc[diffs.idxmin()].copy()
+    return driver_laps.sort_values("lap_duration", kind="stable").iloc[0].copy()
+
+
+def _status_laps(bundle: SessionBundle) -> tuple[set, set, set, set]:
+    safety, vsc, red, yellow = set(), set(), set(), set()
+    if bundle.messages.empty:
+        return safety, vsc, red, yellow
+    laps = bundle.laps.dropna(subset=["lap_number", "date_start", "lap_duration"]).copy()
+    if laps.empty:
+        return safety, vsc, red, yellow
+    message_records = bundle.messages.dropna(subset=["timestamp"]).sort_values("timestamp").to_dict("records")
+    statuses = {"safety": safety, "vsc": vsc, "red": red, "yellow": yellow}
+    active: dict[str, object] = {}
+
+    def apply_interval(kind, start, end=None):
+        if start is None or pd.isna(start):
+            return
+        lap_ends = laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")
+        overlaps = lap_ends >= start
+        if end is not None and not pd.isna(end):
+            overlaps &= laps["date_start"] <= end
+        statuses[kind].update(pd.to_numeric(laps.loc[overlaps, "lap_number"], errors="coerce").dropna().astype(int).tolist())
+
+    for event in message_records:
+        text = " ".join(str(event.get(key) or "") for key in ("category", "flag", "message")).casefold()
+        event_time = event["timestamp"]
+        clear = any(token in text for token in (
+            "in this lap", "withdrawn", "ended", "green flag", "track clear",
+            "session resumed", "session restarted", "all clear", "vsc ending",
+        ))
+        if clear:
+            if "safety car" in text:
+                closing = {"safety"}
+            elif "virtual safety" in text or "vsc" in text:
+                closing = {"vsc"}
+            else:
+                closing = set(active)
+            for kind, start in list(active.items()):
+                if kind not in closing:
+                    continue
+                apply_interval(kind, start, event_time)
+                active.pop(kind, None)
+            continue
+        kind = (
+            "red" if _is_red_flag_event(event, text) else
+            "vsc" if "virtual safety" in text or "vsc" in text else
+            "safety" if "safety car" in text or "safetycar" in text else
+            "yellow" if "yellow" in text else None
+        )
+        explicit_lap = event.get("lap_number")
+        if kind and pd.notna(explicit_lap):
+            statuses[kind].add(int(explicit_lap))
+        scope = str(event.get("scope") or "").casefold()
+        starts_interval = kind and (
+            (kind == "yellow" and ("yellow flag" in text or "full course" in text or scope in {"track", "all"}))
+            or any(token in text for token in ("deployed", "out", "red flag", "yellow flag"))
+        )
+        if starts_interval:
+            active[kind] = event_time
+    # Race-control rows can identify the lap directly even if a status end
+    # message is absent. This remains an explicit derived heuristic.
+    last_lap_end = (laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")).max()
+    for kind, start in active.items():
+        apply_interval(kind, start, last_lap_end)
+    return safety, vsc, red, yellow
+
+
+def get_track_status_events(session):
+    if not isinstance(session, SessionBundle):
+        return set(), set(), set(), set()
+    return _status_laps(session)
+
+
+def _compute_labels_colors(year, race, session_type, d1, d2):
+    session = load_session_summary(year, race, session_type, include_laps=False)
+    color1, color2 = _distinct_comparison_colors(resolve_driver_color(d1, session), resolve_driver_color(d2, session))
+
+    def label(driver):
+        rows = session.results[session.results["abbreviation"] == driver] if not session.results.empty else pd.DataFrame()
+        position = pd.to_numeric(rows.iloc[0].get("position"), errors="coerce") if not rows.empty else None
+        return f"{driver} (P{int(position)})" if position is not None and pd.notna(position) else driver
+
+    return label(d1), label(d2), color1, color2
+
+
+@lru_cache(maxsize=24)
+def _cached_labels_colors(year, race, session_type, d1, d2):
+    return _compute_labels_colors(year, race, session_type, d1, d2)
+
+
+def get_shared_data(params, laps=True, telemetry=False, weather=False, messages=False, strategy=False, race_context=False, circuit=False):
+    session = load_session_with_preload(
+        params["year"], params["race"], params["session_type"],
+        laps=laps, telemetry=telemetry, weather=weather, messages=messages,
+        results=True, strategy=strategy, race_context=race_context, circuit=circuit,
+    )
+    labels = _cached_labels_colors(
+        int(params["year"]), str(params["race"]), str(params["session_type"]),
+        str(params["driver1"]), str(params["driver2"]),
+    )
+    return session, params["driver1"], params["driver2"], *labels
+
+
+def session_summary_payload(year, race, session_name):
+    session = load_session_summary(year, race, session_name, include_laps=False)
+    return {
+        "year": session.ref.year, "race": session.ref.event_name,
+        "session": session.ref.session_name,
+        "drivers": get_driver_info(session),
+        "results": session.results[[column for column in ("abbreviation", "position", "team_name", "status", "source") if column in session.results]].to_dict("records"),
+        "quality": session.quality,
+    }

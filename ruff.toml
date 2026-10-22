@@ -3,10 +3,8 @@ line-length = 120
 extend-exclude = [
     "ai_cache",
     "dist",
-    "f1_cache",
     "feedback",
     "node_modules",
-    "static_schedule.py",
 ]
 
 [lint]

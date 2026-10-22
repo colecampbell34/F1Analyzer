@@ -4,8 +4,8 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    # FastF1 cold telemetry requests can legitimately take several minutes.
-    # Keep one worker to avoid duplicating a large in-memory session cache.
+    # Keep one worker so the process-local response cache and rate limiter are
+    # shared by all concurrent dashboard requests in this service instance.
     startCommand: gunicorn app:server --bind 0.0.0.0:$PORT --worker-class gthread --workers 1 --threads 4 --timeout 300 --graceful-timeout 30 --max-requests 200 --max-requests-jitter 25
     healthCheckPath: /healthz
     envVars:

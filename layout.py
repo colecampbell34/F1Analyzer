@@ -2,7 +2,7 @@ from dash import dcc, html
 import dash_bootstrap_components as dbc
 from graph_config import GRAPH_CONFIG
 from ai_config import AI_ENABLED
-from static_schedule import get_static_years
+from session_data import get_supported_years
 from callbacks_shared import ANALYSIS_VIEW_OPTIONS
 
 
@@ -19,7 +19,7 @@ TAB_HEIGHTS = {
 
 # Displayed once above the active view instead of repeating inside every panel.
 DATA_AVAILABILITY_NOTE = html.Span(
-    "Note: F1 data can occasionally be missing or incomplete for specific stints/laps due to session recording issues.",
+    "Historical sessions from 2023 onward are available after the source marks them complete. OpenF1 samples telemetry at about 3.7 Hz; individual laps or optional result, weather, and position data can be incomplete.",
     className='data-availability-note',
 )
 
@@ -63,7 +63,7 @@ def _empty_state(graph_id, height='68vh'):
                 'xaxis': {'visible': False},
                 'yaxis': {'visible': False},
                 'annotations': [{
-                    'text': 'Choose a session and two drivers,<br>then click "Load analysis"<br><br><span style="font-size: 13px; color: #888;"><i>Loading a session for the first time<br>may take up to a minute while telemetry is cached.</i></span>',
+                    'text': 'Choose a completed 2023+ session and two drivers,<br>then click "Load analysis"<br><br><span style="font-size: 13px; color: #888;"><i>Selected-lap telemetry is loaded on demand.</i></span>',
                     'showarrow': False,
                     'font': {'size': 15, 'color': '#ccc'},
                     'xref': 'paper', 'yref': 'paper', 'x': 0.5, 'y': 0.5
@@ -127,7 +127,7 @@ def _control_field(label, child, extra_class=''):
     ], className=f"sidebar-control-field {extra_class}".strip())
 
 
-YEAR_LABEL = _label_with_tip("Year", "Choose the F1 season to load. Older seasons usually load faster after they are cached.")
+YEAR_LABEL = _label_with_tip("Year", "Choose a season with completed sessions in the 2023+ OpenF1 historical archive.")
 RACE_LABEL = _label_with_tip("Grand Prix", "Choose the race weekend. Each weekend contains practice, qualifying, sprint, or race sessions depending on the format.")
 SESSION_LABEL = _label_with_tip("Session", "Choose which part of the weekend to analyze. Race and Sprint unlock strategy and gap views.")
 
@@ -157,8 +157,8 @@ sidebar = html.Div([
             ], className='workflow-heading'),
             _control_field(YEAR_LABEL, dcc.Dropdown(
                 id='year-dropdown',
-                options=[{'label': str(y), 'value': y} for y in get_static_years()],
-                value=max(get_static_years()),
+                options=[{'label': str(y), 'value': y} for y in get_supported_years()],
+                value=max(get_supported_years()),
                 persistence=True, persistence_type='session',
                 searchable=True,
                 style={'color': 'black', 'fontSize': '0.9rem'}
@@ -401,7 +401,6 @@ content = html.Main([
                             html.Div(className='live-stats', children=[
                                 html.Div([html.Span(id='live-d1-speed', className='stat-val', children='--'), html.Small(" KM/H")], className='stat-item'),
                                 html.Div([html.Span(id='live-d1-gear', className='stat-val', children='--'), html.Small(" G")], className='stat-item'),
-                                html.Div([html.Span(id='live-d1-rpm', className='stat-val', children='--'), html.Small(" RPM")], className='stat-item'),
                             ])
                         ]),
                         html.Div(id='live-delta-row', className='live-delta-row', children=[
@@ -413,7 +412,6 @@ content = html.Main([
                             html.Div(className='live-stats', children=[
                                 html.Div([html.Span(id='live-d2-speed', className='stat-val', children='--'), html.Small(" KM/H")], className='stat-item'),
                                 html.Div([html.Span(id='live-d2-gear', className='stat-val', children='--'), html.Small(" G")], className='stat-item'),
-                                html.Div([html.Span(id='live-d2-rpm', className='stat-val', children='--'), html.Small(" RPM")], className='stat-item'),
                             ])
                         ]),
                     ]),

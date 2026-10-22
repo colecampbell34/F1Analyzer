@@ -6,7 +6,6 @@ __pycache__/
 .ruff_cache/
 node_modules/
 dist/
-f1_cache/
 feedback/
 .idea/
 .DS_Store

@@ -34,7 +34,7 @@ META_TAGS = [
     {"name": "apple-mobile-web-app-title", "content": "F1 Analyzer"},
     {"name": "description", "content": "A technical Formula 1 analysis desk for telemetry, race pace, track position, and strategy."},
     {"property": "og:title", "content": "F1 Analyzer"},
-    {"property": "og:description", "content": "Compare Formula 1 laps, race pace, strategy, and track position using FastF1 live timing data."},
+    {"property": "og:description", "content": "Compare historical Formula 1 laps, race pace, strategy, and track position using OpenF1 timing data."},
     {"property": "og:type", "content": "website"},
     {"name": "theme-color", "content": "#0a0b0d"}
 ]
@@ -116,11 +116,8 @@ def _init_runtime_background():
         if _RUNTIME_INIT_DONE:
             return
         try:
-            import data
             from feedback import setup_feedback_storage
 
-            data.setup_cache()
-            threading.Thread(target=data.maybe_prune_cache, daemon=True).start()
             setup_feedback_storage()
         finally:
             _RUNTIME_INIT_DONE = True
@@ -198,7 +195,7 @@ def warmup():
     return jsonify({
         'status': 'direct-load' if is_serverless() else 'warming',
         'message': (
-            'Serverless instances load FastF1 data on demand.' if is_serverless()
+            'Serverless instances load historical OpenF1 data on demand.' if is_serverless()
             else 'Local runtime initialization has started.'
         ),
     }), 200
@@ -243,15 +240,16 @@ def api_session_summary():
         results = []
         if getattr(session, 'results', None) is not None and not session.results.empty:
             for _, row in session.results.iterrows():
-                abbr = row.get('Abbreviation')
+                abbr = row.get('abbreviation')
                 if not isinstance(abbr, str) or len(abbr) != 3:
                     continue
-                pos = row.get('Position')
+                pos = row.get('position')
                 results.append({
                     'abbr': abbr,
                     'position': int(pos) if pd.notna(pos) else None,
-                    'team': row.get('TeamName') if isinstance(row.get('TeamName'), str) else '',
-                    'status': row.get('Status') if isinstance(row.get('Status'), str) else '',
+                    'team': row.get('team_name') if isinstance(row.get('team_name'), str) else '',
+                    'status': row.get('status') if isinstance(row.get('status'), str) else '',
+                    'source': row.get('source') if isinstance(row.get('source'), str) else '',
                 })
         return jsonify({
             'year': year,
@@ -261,8 +259,8 @@ def api_session_summary():
             'results': results[:24],
         })
     except Exception as exc:
-        logging.warning("[api] session-summary failed: %s", exc)
-        return jsonify({'error': str(exc)}), 502
+        logging.warning("[api] session-summary failed error_type=%s", type(exc).__name__)
+        return jsonify({'error': 'Session data is temporarily unavailable.'}), 502
 
 
 @server.route('/api/preload-session', methods=['POST'])
@@ -326,4 +324,4 @@ dash_app.layout = app_layout
 register_callbacks(dash_app)
 
 if __name__ == '__main__':
-    dash_app.run(host='0.0.0.0', port=8090)
+    dash_app.run(host='0.0.0.0', port=8000)

@@ -602,7 +602,7 @@ div[class*="tab-container"] {
 }
 
 /* A prompt visual acknowledgement is especially important when a lazy view
-   needs a cold FastF1 profile. It deliberately does not block changing view. */
+   needs a cold provider profile. It deliberately does not block changing view. */
 .analysis-workspace { position: relative; }
 .view-loading-overlay {
     position: absolute;

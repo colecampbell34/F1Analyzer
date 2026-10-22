@@ -1,5 +1,4 @@
 """Race, strategy, degradation, and race-gap graph builders."""
-
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,334 +9,304 @@ from graphs_common import _add_driver_legend_entries
 from ui_utils import _apply_base_layout
 
 
-def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Builds the Race Pace, Pits, Tyres & Weather dual-axis strategy plot."""
-    from plotly.subplots import make_subplots
+def _driver_laps(session, driver):
+    if session is None or session.laps.empty:
+        return pd.DataFrame()
+    return session.laps[session.laps["abbreviation"] == driver].copy()
 
-    # 1. Fetch unfiltered laps
-    unf_1 = session.laps.pick_drivers(driver1).reset_index(drop=True)
-    unf_2 = session.laps.pick_drivers(driver2).reset_index(drop=True)
 
-    clean_1 = unf_1.pick_wo_box().pick_track_status('1')
-    clean_2 = unf_2.pick_wo_box().pick_track_status('1')
-    all_laps1 = clean_1[clean_1['LapNumber'] > 1].reset_index(drop=True)
-    all_laps2 = clean_2[clean_2['LapNumber'] > 1].reset_index(drop=True)
+def _timed_laps(laps, *, clean=False, racing_only=False):
+    if laps.empty:
+        return laps
+    frame = laps.copy()
+    frame["lap_duration"] = pd.to_numeric(frame["lap_duration"], errors="coerce")
+    frame = frame.dropna(subset=["lap_duration"])
+    if clean and "is_pit_out_lap" in frame:
+        pit_out = frame["is_pit_out_lap"].map(lambda value: False if pd.isna(value) else bool(value))
+        frame = frame[~pit_out]
+    if clean and "pit_in" in frame:
+        pit_in = frame["pit_in"].map(lambda value: False if pd.isna(value) else bool(value))
+        frame = frame[~pit_in]
+    if racing_only:
+        frame = frame[frame["lap_number"] > 1]
+    return frame.sort_values("lap_number", kind="stable")
 
-    # 3. Calculate seconds, fallback for red flags (NaT)
-    for laps_df in [all_laps1, all_laps2]:
-        laps_df['LapTime_Sec'] = laps_df['LapTime'].dt.total_seconds()
-        laps_df['LapTime_Sec'] = laps_df['LapTime_Sec'].fillna(
-            (laps_df['Time'] - laps_df['LapStartTime']).dt.total_seconds())
 
-    fig = make_subplots(
-        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.75, 0.25], subplot_titles=("", "Track Temperature (°C)")
-    )
-
-    comp_drawn = set()
-
-    # 4. Plot Pace & Tyres
-    for lap_data, drv, lbl, col, unf in [(all_laps1, driver1, lbl1, c1, unf_1),
-                                          (all_laps2, driver2, lbl2, c2, unf_2)]:
-        if 'Compound' in lap_data.columns and 'Stint' in lap_data.columns:
-            for stint in lap_data['Stint'].dropna().unique():
-                stint_subset = lap_data[lap_data['Stint'] == stint].sort_values(by='LapNumber')
-                if stint_subset.empty:
-                    continue
-
-                comp = stint_subset['Compound'].iloc[0]
-                comp_drawn.add(comp)
-
-                fig.add_trace(go.Scatter(
-                    x=stint_subset['LapNumber'], y=stint_subset['LapTime_Sec'],
-                    mode='lines+markers', name=f'{drv} {comp}',
-                    line=dict(color=col, width=2),
-                    marker=dict(color=COMPOUND_COLORS.get(comp, 'grey'), size=10, symbol='circle', line=dict(width=0)),
-                    showlegend=False
-                ), row=1, col=1)
-
-        pit_laps = unf[unf['PitInTime'].notna()]['LapNumber'].tolist()
-        for pl in pit_laps:
-            fig.add_vline(x=pl, line_width=1.5, line_dash="dot", line_color=col, opacity=0.6,
-                          row='all', col='all')
-
-    # 5. Overlay SC/VSC/Red Flag areas
-    sc_laps, vsc_laps, red_laps = get_track_status_events(session)
-
-    lines = [(sc_laps, 'orange', 'SC / YF'), (vsc_laps, 'yellow', 'VSC'), (red_laps, 'red', 'Red Flag')]
-    for laps, color, name in lines:
-        for start_lap, end_lap in _collapse_lap_ranges(laps):
-            fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.15,
-                          layer="below", line_width=0, row='all', col='all')
-        if laps:
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                                     marker=dict(color=color, symbol='square', size=12, opacity=0.5),
-                                     name=name, showlegend=False, legend='legend'), row=1, col=1)
-
-    # General Legend additions
-    _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=1, col=1)
-    for comp in comp_drawn:
-        if comp in COMPOUND_COLORS:
-            fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers', name=comp,
-                                     marker=dict(color=COMPOUND_COLORS[comp], size=10),
-                                     showlegend=False, legend='legend'), row=1, col=1)
-
-    # 6. Weather & Rain Overlay
-    weather_data = session.weather_data
-    if not weather_data.empty and not session.laps.empty:
-        try:
-            laps_with_times = session.laps.dropna(subset=['LapNumber', 'Time']).copy()
-            weather_sorted = weather_data.dropna(subset=['Time']).sort_values('Time')
-
-            if not laps_with_times.empty and not weather_sorted.empty:
-                if 'LapStartTime' in laps_with_times.columns:
-                    laps_with_times['LapWeatherStart'] = laps_with_times['LapStartTime']
-                elif 'LapTime' in laps_with_times.columns:
-                    laps_with_times['LapWeatherStart'] = laps_with_times['Time'] - laps_with_times['LapTime']
-                else:
-                    laps_with_times['LapWeatherStart'] = laps_with_times['Time']
-
-                lap_bounds = (
-                    laps_with_times
-                    .dropna(subset=['LapWeatherStart'])
-                    .groupby('LapNumber')
-                    .agg({'LapWeatherStart': 'min', 'Time': 'max'})
-                    .reset_index()
-                )
-                
-                # Track Temp plotting (nearest point is fine for a line)
-                if not lap_bounds.empty and 'TrackTemp' in weather_sorted.columns:
-                    lap_times_for_temp = lap_bounds[['LapNumber', 'Time']].copy()
-                    temp_weather = weather_sorted[['Time', 'TrackTemp']].dropna(subset=['TrackTemp'])
-                    if not temp_weather.empty:
-                        merged_temp = pd.merge_asof(
-                            lap_times_for_temp.sort_values('Time'),
-                            temp_weather,
-                            on='Time',
-                            direction='nearest'
-                        ).dropna(subset=['TrackTemp'])
-
-                        if not merged_temp.empty:
-                            fig.add_trace(go.Scatter(
-                                x=merged_temp['LapNumber'], y=merged_temp['TrackTemp'],
-                                mode='lines+markers', name='Track Temp (°C)',
-                                line=dict(color='white', width=2), marker=dict(size=4), showlegend=False
-                            ), row=2, col=1)
-
-                # Rain detection: Check if ANY rainfall occurred within the lap's time window
-                rain_laps = []
-                rain_weather = (
-                    weather_sorted[weather_sorted['Rainfall'].fillna(False).astype(bool)]
-                    if 'Rainfall' in weather_sorted.columns else pd.DataFrame()
-                )
-                
-                if not rain_weather.empty:
-                    for _, lap in lap_bounds.iterrows():
-                        # If any rain timestamp falls between StartTime and Time (end) of the lap
-                        has_rain = rain_weather[(rain_weather['Time'] >= lap['LapWeatherStart']) &
-                                                (rain_weather['Time'] <= lap['Time'])].any().any()
-                        if has_rain:
-                            rain_laps.append(lap['LapNumber'])
-
-                for lap in rain_laps:
-                    fig.add_vrect(x0=lap - 0.5, x1=lap + 0.5, fillcolor="blue", opacity=0.2, layer="below",
-                                  line_width=0, row='all', col='all')
-                
-                if rain_laps:
-                    fig.add_trace(go.Scatter(x=[None], y=[None], mode='markers',
-                                             marker=dict(color='blue', opacity=0.5, symbol='square', size=15), name='Rain',
-                                             showlegend=False, legend='legend'), row=1, col=1)
-        except Exception:
-            pass
-
-    _apply_base_layout(
-        fig,
-        title="Strategy & Weather",
-        legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)),
-        uirevision='strategy'
-    )
-    fig.update_xaxes(title_text="Lap Number", row=2, col=1)
-    fig.update_yaxes(title_text="Pace (s)", row=1, col=1, autorange="reversed")
-    fig.update_yaxes(title_text="Temp (°C)", row=2, col=1)
-
-    return fig
-def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Fuel-corrected tyre degradation analysis per stint, side-by-side."""
-    from plotly.subplots import make_subplots
-    FUEL_CORRECTION = 0.06
-
-    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(lbl1, lbl2),
-                        horizontal_spacing=0.05)
-
-    for col_idx, (drv, lbl, color) in enumerate([(driver1, lbl1, c1), (driver2, lbl2, c2)], 1):
-        try:
-            all_laps = session.laps.pick_drivers(drv).reset_index(drop=True)
-            clean_laps = all_laps.pick_wo_box().pick_track_status('1')
-            racing_laps = clean_laps[clean_laps['LapNumber'] > 1].reset_index(drop=True)
-            racing_laps['LapTime_Sec'] = racing_laps['LapTime'].dt.total_seconds()
-            racing_laps = racing_laps.dropna(subset=['LapTime_Sec'])
-
-            if 'Stint' not in racing_laps.columns or racing_laps.empty:
-                continue
-
-            for stint in sorted(racing_laps['Stint'].dropna().unique()):
-                stint_data = racing_laps[racing_laps['Stint'] == stint].sort_values('LapNumber').copy()
-                if len(stint_data) < 2:
-                    continue
-
-                comp = stint_data['Compound'].iloc[0] if 'Compound' in stint_data.columns else 'Unknown'
-                stint_data['StintLap'] = range(1, len(stint_data) + 1)
-
-                stint_data['CorrectedTime'] = stint_data['LapTime_Sec'] + FUEL_CORRECTION * stint_data['StintLap']
-                marker_color = COMPOUND_COLORS.get(comp, 'grey')
-
-                fig.add_trace(go.Scatter(
-                    x=stint_data['StintLap'], y=stint_data['CorrectedTime'],
-                    mode='lines+markers', name=f'{drv} {comp} (Stint {int(stint)})',
-                    marker=dict(color=marker_color, size=7),
-                    line=dict(color=marker_color, width=1.5),
-                    showlegend=False,
-                    hovertemplate=f'{drv} Stint {int(stint)} ({comp})<br>'
-                                  f'Stint Lap %{{x}}<br>Corrected: %{{y:.3f}}s<extra></extra>'
-                ), row=1, col=col_idx)
-
-                fit_data = stint_data.dropna(subset=['StintLap', 'CorrectedTime'])
-                if len(fit_data) >= 3:
-                    slope, intercept = np.polyfit(
-                        fit_data['StintLap'].values.astype(float),
-                        fit_data['CorrectedTime'].values, 1)
-
-                    x_fit = [fit_data['StintLap'].min(), fit_data['StintLap'].max()]
-                    y_fit = [slope * x + intercept for x in x_fit]
-                    fig.add_trace(go.Scatter(
-                        x=x_fit, y=y_fit, mode='lines',
-                        line=dict(dash='dash', color=marker_color, width=2),
-                        name=f'{drv} {comp} [{slope:+.3f}s/lap]',
-                        showlegend=False
-                    ), row=1, col=col_idx)
-        except Exception:
+def _remove_lap_time_outliers(laps):
+    """Drop isolated pace outliers within each tyre stint using an IQR fence."""
+    if laps.empty or len(laps) < 5:
+        return laps
+    groups = laps.groupby("stint_number", dropna=False, sort=False) if "stint_number" in laps else [(None, laps)]
+    keep_indexes = []
+    for _, group in groups:
+        values = pd.to_numeric(group["lap_duration"], errors="coerce")
+        if len(group) < 5 or values.notna().sum() < 5:
+            keep_indexes.extend(group.index[values.notna()].tolist())
             continue
+        lower_quartile, upper_quartile = values.quantile([0.25, 0.75])
+        spread = upper_quartile - lower_quartile
+        if pd.isna(spread):
+            keep = values.notna()
+        elif spread <= 1e-9:
+            keep = values == values.median()
+        else:
+            keep = values.between(lower_quartile - 1.5 * spread, upper_quartile + 1.5 * spread)
+        keep_indexes.extend(group.index[keep.fillna(False)].tolist())
+    return laps.loc[keep_indexes].sort_values("lap_number", kind="stable")
 
-    _apply_base_layout(
-        fig,
-        title='Tyre Deg Analysis (Fuel-Corrected)<br><sup>+ = more degradation, - = pace improving</sup>',
-        margin=dict(l=40, r=40, t=80, b=40),
-        showlegend=False,
-        uirevision='degradation'
-    )
-    fig.update_yaxes(title_text='Fuel-Corrected Lap Time (s)', row=1, col=1, autorange='reversed')
-    fig.update_xaxes(title_text='Stint Lap', row=1, col=1)
-    fig.update_xaxes(title_text='Stint Lap', row=1, col=2)
 
+def _strategy_laps(session, driver):
+    laps = _timed_laps(_driver_laps(session, driver), clean=True, racing_only=True)
+    if laps.empty:
+        return laps
+    safety_laps, vsc_laps, red_laps, _yellow_laps = get_track_status_events(session)
+    interrupted = safety_laps | vsc_laps | red_laps
+    if interrupted:
+        laps = laps[~pd.to_numeric(laps["lap_number"], errors="coerce").isin(interrupted)]
+    pit_records = getattr(session, "pits", pd.DataFrame())
+    if not pit_records.empty:
+        pit_laps = pd.to_numeric(
+            pit_records.loc[pit_records["abbreviation"] == driver, "lap_number"], errors="coerce",
+        ).dropna().unique()
+        if len(pit_laps):
+            laps = laps[~pd.to_numeric(laps["lap_number"], errors="coerce").isin(pit_laps)]
+    # One-lap stints cannot establish their own distribution fence. Apply a
+    # conservative driver-wide ceiling first to catch gross timing anomalies
+    # such as a multi-minute lap, without excluding slower wet-weather pace.
+    durations = pd.to_numeric(laps["lap_duration"], errors="coerce")
+    if not durations.empty:
+        global_ceiling = durations.median() * 1.25
+        laps = laps[durations <= global_ceiling]
+    return _remove_lap_time_outliers(laps)
+
+
+def _compound_name(value):
+    name = str(value or "").strip().upper()
+    return "UNAVAILABLE" if name in {"", "UNKNOWN", "NONE", "NAN", "NULL"} else name
+
+
+def _pit_laps(session, driver):
+    pits = getattr(session, "pits", pd.DataFrame())
+    if pits.empty:
+        return []
+    return sorted(pd.to_numeric(pits.loc[pits["abbreviation"] == driver, "lap_number"], errors="coerce").dropna().astype(int).unique().tolist())
+
+
+def _add_status_regions(fig, session):
+    sc_laps, vsc_laps, red_laps, yellow_laps = get_track_status_events(session)
+    for lap_set, color in ((sc_laps, "orange"), (vsc_laps, "yellow"), (red_laps, "red"), (yellow_laps, "#e4c84a")):
+        for start_lap, end_lap in _collapse_lap_ranges(lap_set):
+            fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.14, layer="below", line_width=0, row="all", col="all")
+    return bool(sc_laps or vsc_laps or red_laps or yellow_laps)
+
+
+def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
+    """Plot stint pace, pit changes, and available weather samples."""
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05,
+                        row_heights=[0.75, 0.25], subplot_titles=("", "Track temperature (°C)"))
+    compound_drawn = set()
+    for driver, label, color in ((driver1, lbl1, c1), (driver2, lbl2, c2)):
+        laps = _strategy_laps(session, driver)
+        if not laps.empty:
+            if "stint_number" in laps and "compound" in laps:
+                for stint in laps["stint_number"].dropna().unique():
+                    stint_laps = laps[laps["stint_number"] == stint]
+                    if stint_laps.empty:
+                        continue
+                    compound = _compound_name(stint_laps.iloc[0].get("compound"))
+                    compound_drawn.add(compound)
+                    fig.add_trace(go.Scatter(
+                        x=stint_laps["lap_number"], y=stint_laps["lap_duration"],
+                        mode="lines+markers", name=f"{driver} {compound}",
+                        line=dict(color=color, width=2),
+                        marker=dict(color=COMPOUND_COLORS.get(compound, "#737980"), size=8),
+                        showlegend=False,
+                        hovertemplate=f"{driver} · {compound}<br>Lap %{{x}} · %{{y:.3f}}s<extra></extra>",
+                    ), row=1, col=1)
+        for pit_lap in _pit_laps(session, driver):
+            fig.add_vline(x=pit_lap, line_width=1.5, line_dash="dot", line_color=color, opacity=0.65, row="all", col="all")
+
+    has_status = _add_status_regions(fig, session)
+    _add_driver_legend_entries(fig, [(driver1, c1), (driver2, c2)], row=1, col=1)
+    for compound in compound_drawn:
+        if compound in COMPOUND_COLORS:
+            fig.add_trace(go.Scatter(x=[None], y=[None], mode="markers", name=compound,
+                                     marker=dict(color=COMPOUND_COLORS[compound], size=9),
+                                     showlegend=False, legend="legend"), row=1, col=1)
+
+    weather = getattr(session, "weather", pd.DataFrame())
+    laps = session.laps.dropna(subset=["date_start", "lap_duration", "lap_number"]).copy() if session is not None and not session.laps.empty else pd.DataFrame()
+    if not weather.empty and not laps.empty and "timestamp" in weather:
+        laps["lap_end_time"] = laps["date_start"] + pd.to_timedelta(laps["lap_duration"], unit="s", errors="coerce")
+        weather_sorted = weather.dropna(subset=["timestamp"]).sort_values("timestamp")
+        lap_ends = (
+            laps[["lap_number", "lap_end_time"]]
+            .dropna()
+            .groupby("lap_number", as_index=False, sort=True)["lap_end_time"]
+            .median()
+            .sort_values("lap_end_time")
+        )
+        if "track_temperature" in weather_sorted:
+            temp = weather_sorted[["timestamp", "track_temperature"]].dropna(subset=["track_temperature"])
+            if not temp.empty and not lap_ends.empty:
+                aligned = pd.merge_asof(lap_ends, temp, left_on="lap_end_time", right_on="timestamp", direction="nearest")
+                aligned = aligned.sort_values("lap_number", kind="stable")
+                aligned["track_temperature"] = aligned["track_temperature"].rolling(window=3, center=True, min_periods=1).median()
+                fig.add_trace(go.Scatter(
+                    x=aligned["lap_number"], y=aligned["track_temperature"], mode="lines",
+                    name="Track temp", line=dict(color="white", width=2.5, shape="spline", smoothing=0.5), showlegend=False,
+                ), row=2, col=1)
+        if "rainfall" in weather_sorted:
+            rain = weather_sorted[weather_sorted["rainfall"].fillna(False).astype(bool)]
+            if not rain.empty:
+                rain_laps = []
+                for lap in laps.itertuples():
+                    if ((rain["timestamp"] >= lap.date_start) & (rain["timestamp"] <= lap.lap_end_time)).any():
+                        rain_laps.append(int(lap.lap_number))
+                for lap_number in sorted(set(rain_laps)):
+                    fig.add_vrect(x0=lap_number - 0.5, x1=lap_number + 0.5, fillcolor="blue", opacity=0.18, layer="below", line_width=0, row="all", col="all")
+
+    if not has_status:
+        messages_state = session.quality.get("endpoints", {}).get("race_control", {}).get("state")
+        note = "Race-control intervals are unavailable." if messages_state == "unavailable" else "No mapped SC/VSC/red-flag interval was found."
+        fig.add_annotation(text=note, x=0.01, y=0.98, xref="paper", yref="paper", xanchor="left", yanchor="top", showarrow=False, font=dict(size=10, color="#9ba0a6"))
+
+    _apply_base_layout(fig, title="Strategy & Weather", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)), uirevision="strategy")
+    fig.update_xaxes(title_text="Lap number", row=2, col=1)
+    fig.update_yaxes(title_text="Lap time (s)", row=1, col=1, autorange="reversed")
+    fig.update_yaxes(title_text="Track temp (°C)", row=2, col=1)
     return fig
+
+
+def _build_deg_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
+    """Estimate within-stint pace change after the existing fuel correction."""
+    from plotly.subplots import make_subplots
+
+    fuel_correction = 0.06
+    fig = make_subplots(rows=1, cols=2, shared_yaxes=True, subplot_titles=(lbl1, lbl2), horizontal_spacing=0.05)
+    for column, (driver, color) in enumerate(((driver1, c1), (driver2, c2)), 1):
+        laps = _strategy_laps(session, driver)
+        if laps.empty or "stint_number" not in laps:
+            continue
+        for stint in sorted(laps["stint_number"].dropna().unique()):
+            stint_laps = laps[laps["stint_number"] == stint].sort_values("lap_number").copy()
+            # Short stints produce noisy, misleading degradation slopes.
+            if len(stint_laps) < 6:
+                continue
+            compound = _compound_name(stint_laps.iloc[0].get("compound"))
+            stint_start = stint_laps["lap_number"].iloc[0]
+            stint_laps["stint_lap"] = stint_laps["lap_number"] - stint_start + 1
+            stint_laps["corrected_time"] = stint_laps["lap_duration"] + fuel_correction * stint_laps["stint_lap"]
+            marker_color = COMPOUND_COLORS.get(compound, "#737980")
+            fig.add_trace(go.Scatter(
+                x=stint_laps["stint_lap"], y=stint_laps["corrected_time"], mode="lines+markers",
+                name=f"{driver} {compound} stint {int(stint)}", marker=dict(color=marker_color, size=7),
+                line=dict(color=marker_color, width=1.5), showlegend=False,
+                hovertemplate=f"{driver} · stint {int(stint)} ({compound})<br>Stint lap %{{x}}<br>Fuel-corrected estimate: %{{y:.3f}}s<extra></extra>",
+            ), row=1, col=column)
+            if len(stint_laps) >= 3:
+                slope, intercept = np.polyfit(stint_laps["stint_lap"].astype(float), stint_laps["corrected_time"].astype(float), 1)
+                x_fit = [stint_laps["stint_lap"].min(), stint_laps["stint_lap"].max()]
+                fig.add_trace(go.Scatter(x=x_fit, y=[slope * x + intercept for x in x_fit], mode="lines",
+                                         line=dict(dash="dash", color=marker_color, width=2),
+                                         name=f"{driver} {compound} {slope:+.3f}s/lap", showlegend=False), row=1, col=column)
+    _apply_base_layout(fig, title="Tyre Degradation Estimate (Fuel-Corrected)<br><sup>Relative trend; the 0.06 s/lap fuel correction is an estimate.</sup>", margin=dict(l=40, r=40, t=80, b=40), showlegend=False, uirevision="degradation")
+    fig.update_yaxes(title_text="Fuel-corrected lap time (s)", row=1, col=1, autorange="reversed")
+    fig.update_xaxes(title_text="Stint lap", row=1, col=1)
+    fig.update_xaxes(title_text="Stint lap", row=1, col=2)
+    return fig
+
+
+def _gap_value(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return np.nan
 
 
 def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
-    """Builds the gap-between-drivers chart over race laps."""
+    """Plot observed intervals where available, otherwise a labeled estimate."""
     from plotly.subplots import make_subplots
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                        row_heights=[0.7, 0.3])
-    last_lap = 1.0
 
-    try:
-        laps1 = session.laps.pick_drivers(driver1).sort_values('LapNumber').dropna(subset=['Time'])
-        laps2 = session.laps.pick_drivers(driver2).sort_values('LapNumber').dropna(subset=['Time'])
-
-        merged = pd.merge(
-            laps1[['LapNumber', 'Time', 'Position']].rename(columns={'Time': 'Time1', 'Position': 'Pos1'}),
-            laps2[['LapNumber', 'Time', 'Position']].rename(columns={'Time': 'Time2', 'Position': 'Pos2'}),
-            on='LapNumber', how='inner'
-        )
-
-        if merged.empty:
-            raise ValueError("No common laps between drivers")
-
-        merged['Gap'] = (merged['Time1'] - merged['Time2']).dt.total_seconds()
-
-        fig.add_trace(go.Scatter(
-            x=merged['LapNumber'], y=merged['Gap'], mode='lines',
-            fill='tozeroy', line=dict(color='white', width=2),
-            fillcolor='rgba(255,255,255,0.1)',
-            name='Gap',
-            showlegend=False,
-            hovertemplate='Lap %{x}<br>Gap: %{y:.3f}s<extra></extra>'
-        ), row=1, col=1)
-
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
+    laps1, laps2 = _driver_laps(session, driver1), _driver_laps(session, driver2)
+    if laps1.empty or laps2.empty:
+        fig.add_annotation(text="Race lap timing is unavailable for one selected driver.", showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
+        _apply_base_layout(fig, title="Race Gap & Position Analysis", uirevision="gaps")
+        return fig
+    columns = ["lap_number", "lap_duration", "position", "gap_to_leader"]
+    merged = pd.merge(
+        laps1[[column for column in columns if column in laps1]].rename(columns={"lap_duration": "lap_time_1", "position": "position_1", "gap_to_leader": "leader_gap_1"}),
+        laps2[[column for column in columns if column in laps2]].rename(columns={"lap_duration": "lap_time_2", "position": "position_2", "gap_to_leader": "leader_gap_2"}),
+        on="lap_number", how="outer", suffixes=("_1", "_2"),
+    ).sort_values("lap_number")
+    gap_label = "Gap to leader difference (s)"
+    has_observed_gap = False
+    gap_start_note = ""
+    if {"leader_gap_1", "leader_gap_2"}.issubset(merged.columns):
+        first = merged["leader_gap_1"].map(_gap_value)
+        second = merged["leader_gap_2"].map(_gap_value)
+        observed = first - second
+        has_observed_gap = bool(np.isfinite(observed.to_numpy(dtype=float)).any())
+        if has_observed_gap:
+            merged["gap"] = observed
+            gap_label = "Observed relative gap to leader (s)"
+    if not has_observed_gap:
+        merged["cum_1"] = pd.to_numeric(merged.get("lap_time_1"), errors="coerce").cumsum()
+        merged["cum_2"] = pd.to_numeric(merged.get("lap_time_2"), errors="coerce").cumsum()
+        merged["gap"] = merged["cum_1"] - merged["cum_2"]
+        gap_label = "Derived cumulative lap-time gap (s)"
+    finite = merged[np.isfinite(pd.to_numeric(merged["gap"], errors="coerce"))]
+    if not finite.empty:
+        gap_x = finite["lap_number"].tolist()
+        gap_y = finite["gap"].tolist()
+        first_observed_lap = min(gap_x)
+        if first_observed_lap > 1:
+            # Start the relative-gap trace at the race start. The source does
+            # not publish leader intervals for every opening lap, so use a
+            # neutral zero baseline until its first observed sample.
+            gap_x.insert(0, 0)
+            gap_y.insert(0, 0.0)
+            gap_start_note = " Opening lap intervals are unavailable; trace starts at a neutral grid baseline."
+        fig.add_trace(go.Scatter(x=gap_x, y=gap_y, mode="lines", fill="tozeroy",
+                                 line=dict(color="white", width=2), fillcolor="rgba(255,255,255,0.1)", showlegend=False,
+                                 hovertemplate="Lap %{x}<br>Relative gap: %{y:.3f}s<extra></extra>"), row=1, col=1)
         fig.add_hline(y=0, line_dash="dash", line_color="grey", opacity=0.5, row=1, col=1)
-
-        fig.add_annotation(xref="paper", yref="y domain", x=1.02, y=0.95,
-                           text=f"↑ {driver2} ahead", showarrow=False, font=dict(size=11, color=c2),
-                           xanchor="left", row=1, col=1)
-        fig.add_annotation(xref="paper", yref="y domain", x=1.02, y=0.05,
-                           text=f"↓ {driver1} ahead", showarrow=False, font=dict(size=11, color=c1),
-                           xanchor="left", row=1, col=1)
-
-        grid1, grid2 = None, None
-        if getattr(session, 'results', None) is not None and not session.results.empty:
-            res1 = session.results[session.results['Abbreviation'] == driver1]
-            if not res1.empty:
-                grid1 = pd.to_numeric(res1.iloc[0].get('GridPosition'), errors='coerce')
-            res2 = session.results[session.results['Abbreviation'] == driver2]
-            if not res2.empty:
-                grid2 = pd.to_numeric(res2.iloc[0].get('GridPosition'), errors='coerce')
-
-        last_lap = float(merged['LapNumber'].max())
-
-        if 'Pos1' in merged.columns:
-            x_vals = merged['LapNumber'].tolist()
-            y_vals = merged['Pos1'].astype(float).tolist()
-            if pd.notna(grid1) and grid1 > 0:
-                x_vals = [0] + x_vals
-                y_vals = [float(grid1)] + y_vals
-            
-            fig.add_trace(go.Scatter(
-                x=x_vals, y=y_vals, mode='lines+markers',
-                name=f'{lbl1} Pos', line=dict(color=c1, width=2),
-                marker=dict(color=c1, size=5), showlegend=False,
-                hovertemplate='Grid / lap %{x}<br>Position: P%{y}<extra></extra>',
-            ), row=2, col=1)
-
-        if 'Pos2' in merged.columns:
-            x_vals = merged['LapNumber'].tolist()
-            y_vals = merged['Pos2'].astype(float).tolist()
-            if pd.notna(grid2) and grid2 > 0:
-                x_vals = [0] + x_vals
-                y_vals = [float(grid2)] + y_vals
-
-            fig.add_trace(go.Scatter(
-                x=x_vals, y=y_vals, mode='lines+markers',
-                name=f'{lbl2} Pos', line=dict(color=c2, width=2),
-                marker=dict(color=c2, size=5), showlegend=False,
-                hovertemplate='Grid / lap %{x}<br>Position: P%{y}<extra></extra>',
-            ), row=2, col=1)
-
-        for drv, color, laps_df in [(driver1, c1, laps1), (driver2, c2, laps2)]:
-            pit_laps = laps_df[laps_df['PitInTime'].notna()]['LapNumber'].tolist()
-            for pl in pit_laps:
-                fig.add_vline(x=pl, line_width=1.5, line_dash="dot", line_color=color, opacity=0.6,
-                              row='all', col='all')
-
-        sc_laps, vsc_laps, red_laps = get_track_status_events(session)
-        for laps_set, color, name in [(sc_laps, 'orange', 'SC'), (vsc_laps, 'yellow', 'VSC'),
-                                      (red_laps, 'red', 'Red Flag')]:
-            for start_lap, end_lap in _collapse_lap_ranges(laps_set):
-                fig.add_vrect(x0=start_lap - 0.5, x1=end_lap + 0.5, fillcolor=color, opacity=0.1,
-                              layer="below", line_width=0, row='all', col='all')
-
-    except Exception as e:
-        fig.add_annotation(text=f"Race gap data unavailable: {e}", showarrow=False,
-                           font=dict(size=16, color='#ff4444'), xref="paper", yref="paper", x=0.5, y=0.5)
-
+    result_frame = session.results if session is not None else pd.DataFrame()
+    grid = dict(zip(result_frame.get("abbreviation", []), result_frame.get("grid_position", []))) if not result_frame.empty else {}
+    for driver, color, column in ((driver1, c1, "position_1"), (driver2, c2, "position_2")):
+        if column not in merged:
+            continue
+        positions = pd.to_numeric(merged[column], errors="coerce")
+        x_values, y_values = merged["lap_number"].tolist(), positions.tolist()
+        grid_position = pd.to_numeric(grid.get(driver), errors="coerce")
+        if pd.notna(grid_position) and grid_position > 0:
+            x_values.insert(0, 0)
+            y_values.insert(0, float(grid_position))
+        fig.add_trace(go.Scatter(x=x_values, y=y_values, mode="lines+markers", name=driver,
+                                 line=dict(color=color, width=2), marker=dict(color=color, size=5), showlegend=False,
+                                 connectgaps=True,
+                                 hovertemplate="Grid / lap %{x}<br>Position: P%{y}<extra></extra>"), row=2, col=1)
+    for driver, color in ((driver1, c1), (driver2, c2)):
+        for pit_lap in _pit_laps(session, driver):
+            fig.add_vline(x=pit_lap, line_width=1.5, line_dash="dot", line_color=color, opacity=0.6, row="all", col="all")
+    _add_status_regions(fig, session)
+    for name, color in (("SC", "orange"), ("VSC", "yellow"), ("Red flag", "red")):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=name,
+            marker=dict(color=color, symbol="square", size=9),
+            hoverinfo="skip", showlegend=True,
+        ), row=1, col=1)
+    max_lap = float(merged["lap_number"].max()) if not merged.empty else 1.0
     _apply_base_layout(
-        fig,
-        title='Race Gap & Position Analysis',
-        margin=dict(l=40, r=18, t=70, b=40),
-        showlegend=False,
-        uirevision='gaps'
+        fig, title=f"Race Gap & Position Analysis<br><sup>{gap_label}; pit and race-control context shown when published.{gap_start_note}</sup>",
+        margin=dict(l=40, r=18, t=70, b=40), showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="right", x=1, font=dict(size=9)),
+        uirevision="gaps",
     )
-    fig.update_yaxes(title_text='Gap (seconds)', row=1, col=1)
-    fig.update_yaxes(title_text='Position', row=2, col=1, autorange='reversed',
-                     tickvals=list(range(1, 21)))
-    fig.update_xaxes(title_text='Lap Number', range=[0, last_lap + 0.5], row=2, col=1)
-
+    fig.update_yaxes(title_text="Relative gap (s)", row=1, col=1)
+    fig.update_yaxes(title_text="Position", row=2, col=1, autorange="reversed", tickvals=list(range(1, 21)))
+    fig.update_xaxes(title_text="Lap number", range=[0, max_lap + 0.5], row=2, col=1)
     return fig

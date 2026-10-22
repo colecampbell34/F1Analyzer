@@ -50,21 +50,15 @@ def _not_applicable_figure(message):
 
 
 def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
-    t1 = lap1['LapTime'].total_seconds()
-    t2 = lap2['LapTime'].total_seconds()
+    t1 = float(lap1['lap_duration'])
+    t2 = float(lap2['lap_duration'])
     data1 = (d1, tel1, c1, t1, lap1, lbl1)
     data2 = (d2, tel2, c2, t2, lap2, lbl2)
     return (data1, data2) if t1 <= t2 else (data2, data1)
 
 
 def _telemetry_delta_fallback(reference_tel, compare_tel):
-    """Compute a distance-normalized delta when FastF1's merged delta fails.
-
-    ``fastf1.utils.delta_time`` needs a fully merged car-and-position trace.
-    A car trace alone still has reliable elapsed time and distance, which is
-    enough for an honest, approximate gap chart and keeps speed analysis
-    usable when GPS samples are partial.
-    """
+    """Compute an approximate delta by aligning sampled traces on lap progress."""
     import numpy as np
     import pandas as pd
 
@@ -96,20 +90,7 @@ def _telemetry_delta_fallback(reference_tel, compare_tel):
 
 
 def _compute_lap_delta(reference_lap, compare_lap, reference_tel=None, compare_tel=None):
-    """Return FastF1's lap delta, with a car-data fallback when supplied."""
-    try:
-        import fastf1.utils
-        delta_time, ref_tel, comp_tel = fastf1.utils.delta_time(reference_lap, compare_lap)
-    except Exception:
-        if reference_tel is None or compare_tel is None:
-            raise
-        return _telemetry_delta_fallback(reference_tel, compare_tel)
-
-    if not ref_tel.empty:
-        ref_tel = ref_tel.copy()
-        ref_tel['Distance'] -= ref_tel['Distance'].min()
-    if not comp_tel.empty:
-        comp_tel = comp_tel.copy()
-        comp_tel['Distance'] -= comp_tel['Distance'].min()
-
-    return delta_time, ref_tel, comp_tel
+    """Return a distance-aligned delta from the normalized selected traces."""
+    if reference_tel is None or compare_tel is None:
+        raise ValueError("Both normalized traces are required for lap delta.")
+    return _telemetry_delta_fallback(reference_tel, compare_tel)

@@ -5,7 +5,6 @@ from dash import ClientsideFunction
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 import flask
-import random
 
 from ai_config import AI_ENABLED, GEMINI_API_KEY, GEMINI_MODELS
 from ai_cache import USER_DAILY_LIMIT
@@ -45,59 +44,54 @@ def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fast
     from data import load_session_with_preload
     from data import get_best_lap
     from ai_utils import _gather_session_context
-    from telemetry_prep import _usable_lap_and_trace
 
     year, race, session_type = params['year'], params['race'], params['session_type']
     driver1, driver2 = params['driver1'], params['driver2']
-    telemetry_loaded = True
-    try:
-        session = load_session_with_preload(
-            year, race, session_type, laps=True, telemetry=True, weather=True, messages=True
-        )
-    except Exception as telemetry_load_error:
-        # Race results, lap times, sectors, strategy and messages remain useful
-        # AI context. Do not make the entire assistant depend on the optional
-        # high-volume telemetry feed.
-        logging.warning('AI context continuing without telemetry: %s', telemetry_load_error)
-        telemetry_loaded = False
-        session = load_session_with_preload(
-            year, race, session_type, laps=True, telemetry=False, weather=True, messages=True
-        )
+    # The session summary is useful even when selected-lap telemetry is absent.
+    # Keep the optional trace request separate so a sparse telemetry response
+    # cannot erase classification, strategy, weather, or race-control context.
+    session = load_session_with_preload(
+        year, race, session_type, laps=True, weather=True, messages=True,
+        results=True, strategy=True, race_context=True,
+    )
     d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
     d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
     lap1 = _pick_driver_lap(session, driver1, d1_mode, d1_lap_num, get_best_lap)
     lap2 = _pick_driver_lap(session, driver2, d2_mode, d2_lap_num, get_best_lap)
-    if not _has_valid_lap(lap1, pd):
-        raise ValueError(f"{driver1} did not set a valid lap.")
-    if not _has_valid_lap(lap2, pd):
-        raise ValueError(f"{driver2} did not set a valid lap.")
+    lap1_valid = _has_valid_lap(lap1, pd)
+    lap2_valid = _has_valid_lap(lap2, pd)
     tel1 = tel2 = None
     telemetry_note = ''
-    if telemetry_loaded:
+    if lap1_valid and lap2_valid:
         try:
-            # Use the same trace-selection logic as the Telemetry tab. This
-            # avoids an AI answer being based on a nominal fastest lap whose
-            # trace FastF1 did not publish while the dashboard selected a
-            # viable nearby lap.
-            lap1, tel1, d1_fallback = _usable_lap_and_trace(
-                session, driver1, lap1, d1_mode, d1_lap_num
+            from telemetry_prep import prepare_selected_lap_comparison
+            comparison = prepare_selected_lap_comparison(
+                {"year": year, "race": race, "session_type": session_type, "driver1": driver1, "driver2": driver2},
+                d1_mode, d2_mode, d1_lap_num, d2_lap_num,
             )
-            lap2, tel2, d2_fallback = _usable_lap_and_trace(
-                session, driver2, lap2, d2_mode, d2_lap_num
-            )
-            if d1_fallback or d2_fallback:
-                telemetry_note = (
-                    'Telemetry note: FastF1 did not publish a complete trace for one or more '
-                    'selected fastest laps; the nearest valid telemetry-bearing lap was used.'
-                )
+            lap1, lap2 = comparison["lap1"], comparison["lap2"]
+            tel1, tel2 = comparison["tel1"], comparison["tel2"]
+            fallback_notes = []
+            if "telemetry L" in comparison.get("lbl1", ""):
+                fallback_notes.append(f"{driver1} fastest lap had no usable trace; a valid lap {lap1.get('lap_number')} trace was substituted.")
+            if "telemetry L" in comparison.get("lbl2", ""):
+                fallback_notes.append(f"{driver2} fastest lap had no usable trace; a valid lap {lap2.get('lap_number')} trace was substituted.")
+            telemetry_note = " ".join(fallback_notes)
         except Exception as telemetry_error:
-            # Preserve the complete non-telemetry session context and tell the
-            # model not to make unsupported telemetry claims.
-            logging.warning('AI context telemetry unavailable: %s', telemetry_error)
+            # Preserve the full session summary and never ask the model to infer
+            # trace-derived claims when selected-lap data is unavailable.
+            logging.warning('AI context telemetry unavailable: %s', type(telemetry_error).__name__)
+            tel1 = tel2 = None
             telemetry_note = (
-                'Telemetry note: FastF1 did not return a usable speed trace for the selected '
-                'comparison. Do not infer speed, braking, throttle, gear, GPS, or delta details.'
+                'No usable OpenF1 selected-lap telemetry trace was available. '
+                'Do not infer speed, braking, throttle, gear, GPS, or lap-delta details.'
             )
+    else:
+        telemetry_note = (
+            'No valid timed lap is available for one or both selected drivers. '
+            'Session classification, strategy, weather, and race-control context may still be used; '
+            'do not infer lap-time or telemetry comparisons.'
+        )
     context = _gather_session_context(
         session,
         session_type,
@@ -108,7 +102,7 @@ def _build_ai_session_context(params, d1_lap_value='fastest', d2_lap_value='fast
             'lap2': lap2,
             'tel1': tel1,
             'tel2': tel2,
-            'label': f"Selected dashboard laps: {driver1} {_ai_lap_label(d1_lap_value)} vs {driver2} {_ai_lap_label(d2_lap_value)}",
+            'label': f"{driver1} {_ai_lap_label(d1_lap_value)} vs {driver2} {_ai_lap_label(d2_lap_value)}",
         }
     )
     if telemetry_note:
@@ -295,12 +289,12 @@ def register_ai_callbacks(app):
                     return new_history, '', len(new_history) - 1, ''
 
                 except Exception as e:
-                    last_error = str(e)
-                    logging.warning(f"AI model failed; trying fallback model={model_name} error={last_error}")
+                    last_error = type(e).__name__
+                    logging.warning(f"AI model failed; trying fallback model={model_name} error_type={last_error}")
                     # Try next model on failure.
                     continue
 
             # All models failed.
-            err = f"❌ **AI Analysis encountered an error after trying multiple models.**\n\n```text\n{last_error}\n```\nPlease try again in a moment."
+            err = "❌ **AI Analysis is temporarily unavailable.** Please try again in a moment."
             new_history = _trim_history(history + [{'question': question, 'answer': err}])
             return new_history, '', len(new_history) - 1, ''
