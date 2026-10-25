@@ -625,11 +625,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
             // Update Live Dashboard on every replay frame.
             const deltaRef = (miniStore.delta && miniStore.delta.reference === 'd1') ? miniStore.d1 : miniStore.d2;
-            const playbackProgress = interpMetric(
-                deltaRef,
-                Math.min(tSec, deltaRef.lap_s || tSec),
-                'dist'
-            );
+            const playbackProgress = tSec >= deltaRef.lap_s
+                ? 1
+                : interpMetric(deltaRef, Math.min(tSec, deltaRef.lap_s || tSec), 'dist');
             window.dash_clientside.clientside.updateLiveDashboard(tSec, miniStore, false, playbackProgress);
 
             // 1. Update Mini Map
@@ -803,8 +801,8 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const deltaLabelEl = document.querySelector('.delta-label');
 
             if (deltaEl && deltaLabelEl && delta !== null) {
-                deltaLabelEl.innerText = `${primaryName || 'D1'} GAP TO ${secondaryName || 'D2'}`;
-                deltaEl.innerText = (delta >= 0 ? '-' : '+') + Math.abs(delta).toFixed(3) + 's';
+                deltaLabelEl.innerText = `${primaryName || 'D1'} VS ${secondaryName || 'D2'}`;
+                deltaEl.innerText = (delta >= 0 ? '+' : '-') + Math.abs(delta).toFixed(3) + 's';
                 deltaEl.style.color = delta >= 0 ? '#00ff00' : '#ff4444';
             }
         },

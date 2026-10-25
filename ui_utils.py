@@ -364,7 +364,15 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
 
                 color = resolve_driver_color(abbr, session)
 
-                raw_time = row.get('race_time') if is_race else row.get('best_lap_time')
+                if is_race:
+                    raw_time = row.get('race_time')
+                else:
+                    best_lap = get_best_lap(session, abbr)
+                    raw_time = (
+                        best_lap.get('lap_duration')
+                        if best_lap is not None
+                        else row.get('best_lap_time')
+                    )
 
                 if raw_time is not None:
                     if leader_time is None:

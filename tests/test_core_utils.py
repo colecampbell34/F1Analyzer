@@ -15,6 +15,7 @@ import callbacks
 import callbacks_shared
 import callbacks_tabs
 import data
+import graph_shared
 import graphs
 import graphs_pace
 import graphs_race
@@ -220,6 +221,67 @@ class TestLeaderboardColors(unittest.TestCase):
 
 
 class TestNormalizedDashboardWorkflows(unittest.TestCase):
+    def test_telemetry_delta_ends_at_selected_lap_time_difference(self):
+        progress = np.linspace(0.0, 1.0, 16)
+
+        def trace(distance_span, sampled_duration):
+            return pd.DataFrame({
+                "Distance": progress * distance_span,
+                "Time": pd.to_timedelta(progress * sampled_duration, unit="s"),
+                "Speed": np.linspace(100.0, 300.0, len(progress)),
+                "Throttle": np.linspace(10.0, 90.0, len(progress)),
+                "Brake": np.zeros(len(progress)),
+                "nGear": np.ones(len(progress)),
+            })
+
+        driver1_lap = {"lap_duration": 94.035}
+        driver2_lap = {"lap_duration": 94.214}
+        driver1_trace = trace(4000.0, 92.8)
+        driver2_trace = trace(4200.0, 93.1)
+
+        raw_delta, _, _ = graph_shared._compute_lap_delta(
+            driver2_lap, driver1_lap,
+            reference_tel=driver2_trace, compare_tel=driver1_trace,
+        )
+        np.testing.assert_allclose(raw_delta[-1], -0.179, atol=1e-9)
+
+        figure = graphs._build_telemetry_fig(
+            ("ANT", driver1_trace, "#00D7B6", 94.035, driver1_lap, "ANT"),
+            ("VER", driver2_trace, "#4781D7", 94.214, driver2_lap, "VER"),
+            ("ANT", driver1_lap),
+            ("VER", driver2_lap),
+        )
+        ant_ahead = next(item for item in figure.data if item.name == "ANT ahead")
+        self.assertAlmostEqual(float(ant_ahead.y[-1]), 0.179, places=9)
+
+        default_figure = graphs._build_telemetry_fig(
+            ("ANT", driver1_trace, "#00D7B6", 94.035, driver1_lap, "ANT"),
+            ("VER", driver2_trace, "#4781D7", 94.214, driver2_lap, "VER"),
+        )
+        default_ant_ahead = next(
+            item for item in default_figure.data if item.name == "ANT ahead"
+        )
+        self.assertAlmostEqual(float(default_ant_ahead.y[-1]), 0.179, places=9)
+
+    def test_qualifying_leaderboard_uses_the_selected_lap_time_source(self):
+        session = type("Session", (), {})()
+        session.drivers = pd.DataFrame()
+        session.laps = pd.DataFrame([{"abbreviation": "ANT"}, {"abbreviation": "VER"}])
+        session.results = pd.DataFrame([
+            {"abbreviation": "ANT", "position": 1, "best_lap_time": 94.100},
+            {"abbreviation": "VER", "position": 2, "best_lap_time": 94.400},
+        ])
+        lap_times = {"ANT": 94.035, "VER": 94.214}
+
+        def selected_lap(_session, abbreviation):
+            return pd.Series({"lap_duration": lap_times[abbreviation]})
+
+        with patch.object(data, "get_best_lap", side_effect=selected_lap):
+            children = ui_utils._build_leaderboard_children(session, "Qualifying")
+
+        self.assertEqual(children[1].children[2].children, "1:34.035")
+        self.assertEqual(children[2].children[2].children, "+0.179s")
+
     def test_loaded_selection_match_checks_every_sidebar_field(self):
         loaded = {
             "year": 2026,

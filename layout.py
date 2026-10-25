@@ -411,7 +411,7 @@ content = html.Main([
                             ])
                         ]),
                         html.Div(id='live-delta-row', className='live-delta-row', children=[
-                            html.Span("GAP", className='delta-label'),
+                            html.Span("D1 VS D2", className='delta-label'),
                             html.Span(id='live-delta-value', className='delta-value', children='--')
                         ]),
                         html.Div(className='live-driver-row d2-row', children=[

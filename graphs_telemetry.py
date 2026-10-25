@@ -77,8 +77,8 @@ def _build_telemetry_fig(fast_data, slow_data, driver1_delta_data=None, driver2_
     slow_driver, slow_tel, slow_c, slow_t, slow_lap, slow_lbl = slow_data
 
     if driver1_delta_data is None or driver2_delta_data is None:
-        driver1, driver1_lap = slow_driver, slow_lap
-        driver2, driver2_lap = fast_driver, fast_lap
+        driver1, driver1_lap = fast_driver, fast_lap
+        driver2, driver2_lap = slow_driver, slow_lap
     else:
         driver1, driver1_lap = driver1_delta_data
         driver2, driver2_lap = driver2_delta_data

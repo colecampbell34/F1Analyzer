@@ -57,27 +57,57 @@ def _sort_fastest_driver(d1, tel1, c1, lap1, d2, tel2, c2, lap2, lbl1, lbl2):
     return (data1, data2) if t1 <= t2 else (data2, data1)
 
 
-def _telemetry_delta_fallback(reference_tel, compare_tel):
-    """Compute an approximate delta by aligning sampled traces on lap progress."""
+def _normalize_trace_time_to_lap(telemetry, lap):
+    """Scale a selected trace's relative time to its recorded lap duration."""
     import numpy as np
     import pandas as pd
 
-    def _prepare(telemetry):
-        if telemetry is None or telemetry.empty or not {'Distance', 'Time'}.issubset(telemetry.columns):
-            raise ValueError("No usable distance/time trace is available for delta calculation.")
-        frame = telemetry.loc[:, ['Distance', 'Time']].copy()
-        frame['Distance'] = pd.to_numeric(frame['Distance'], errors='coerce')
+    if telemetry is None or telemetry.empty or not {'Distance', 'Time'}.issubset(telemetry.columns):
+        raise ValueError("No usable distance/time trace is available for delta calculation.")
+    duration = pd.to_numeric(
+        pd.Series([lap.get('lap_duration') if lap is not None else None]),
+        errors='coerce',
+    ).iloc[0]
+    if pd.isna(duration) or not np.isfinite(float(duration)) or float(duration) <= 0:
+        raise ValueError("A valid selected lap time is required for delta calculation.")
+
+    frame = telemetry.copy(deep=True)
+    frame['Distance'] = pd.to_numeric(frame['Distance'], errors='coerce')
+    frame['TimeSeconds'] = pd.to_timedelta(frame['Time'], errors='coerce').dt.total_seconds()
+    frame = (
+        frame.replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=['Distance', 'TimeSeconds'])
+        .sort_values('Distance', kind='stable')
+        .drop_duplicates('Distance', keep='last')
+    )
+    if len(frame) < 6 or frame['Distance'].iloc[-1] <= frame['Distance'].iloc[0]:
+        raise ValueError("Distance/time trace is too short for delta calculation.")
+    frame['Distance'] -= frame['Distance'].iloc[0]
+    frame['TimeSeconds'] -= frame['TimeSeconds'].iloc[0]
+    elapsed = float(frame['TimeSeconds'].iloc[-1])
+    if not np.isfinite(elapsed) or elapsed <= 0:
+        raise ValueError("Distance/time trace does not cover a usable lap time.")
+    frame['Time'] = pd.to_timedelta(
+        frame['TimeSeconds'] * (float(duration) / elapsed),
+        unit='s',
+    )
+    return frame.drop(columns='TimeSeconds').reset_index(drop=True)
+
+
+def _telemetry_delta_fallback(reference_tel, compare_tel, reference_lap, compare_lap):
+    """Compute an approximate delta by aligning lap-duration-scaled traces."""
+    import numpy as np
+    import pandas as pd
+
+    def _prepare(telemetry, lap):
+        frame = _normalize_trace_time_to_lap(telemetry, lap)
         frame['TimeSeconds'] = pd.to_timedelta(frame['Time'], errors='coerce').dt.total_seconds()
-        frame = frame.replace([np.inf, -np.inf], np.nan).dropna().sort_values('Distance')
-        frame = frame.drop_duplicates('Distance', keep='first')
-        if len(frame) < 6 or frame['Distance'].iloc[-1] <= frame['Distance'].iloc[0]:
+        if len(frame) < 6 or frame['Distance'].iloc[-1] <= 0:
             raise ValueError("Distance/time trace is too short for delta calculation.")
-        frame['Distance'] -= frame['Distance'].iloc[0]
-        frame['TimeSeconds'] -= frame['TimeSeconds'].iloc[0]
         return frame
 
-    ref = _prepare(reference_tel)
-    comp = _prepare(compare_tel)
+    ref = _prepare(reference_tel, reference_lap)
+    comp = _prepare(compare_tel, compare_lap)
     points = min(1800, max(160, min(len(ref), len(comp))))
     progress = np.linspace(0.0, 1.0, points)
     ref_distance = ref['Distance'].to_numpy(dtype=float)
@@ -90,7 +120,9 @@ def _telemetry_delta_fallback(reference_tel, compare_tel):
 
 
 def _compute_lap_delta(reference_lap, compare_lap, reference_tel=None, compare_tel=None):
-    """Return a distance-aligned delta from the normalized selected traces."""
+    """Return compare-minus-reference time aligned to the selected lap times."""
     if reference_tel is None or compare_tel is None:
         raise ValueError("Both normalized traces are required for lap delta.")
-    return _telemetry_delta_fallback(reference_tel, compare_tel)
+    return _telemetry_delta_fallback(
+        reference_tel, compare_tel, reference_lap, compare_lap,
+    )

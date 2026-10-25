@@ -90,25 +90,21 @@ def register_telemetry_callbacks(app):
         try:
             import pandas as pd
             import plotly.graph_objects as go
-            from graph_shared import _compute_lap_delta
+            from graph_shared import _compute_lap_delta, _normalize_trace_time_to_lap
             from telemetry_prep import prepare_selected_lap_comparison
 
             d1_mode, d1_lap_num = _lap_dropdown_to_mode(d1_lap_value)
             d2_mode, d2_lap_num = _lap_dropdown_to_mode(d2_lap_value)
             cmp = prepare_selected_lap_comparison(
                 params, d1_mode, d2_mode, d1_lap_num, d2_lap_num,
-                drop_xy_time=True,
                 require_position=True,
             )
             d1, d2 = cmp['d1'], cmp['d2']
             c1, c2 = cmp['c1'], cmp['c2']
             lap1, lap2 = cmp['lap1'], cmp['lap2']
             tel1, tel2 = cmp['tel1'], cmp['tel2']
-            # Preserve integrated distances for the delta calculation. Replay
-            # uses normalized progress, while the comparison payload retains
-            # the derived distance axis and its provenance.
-            delta_tel1 = tel1.copy()
-            delta_tel2 = tel2.copy()
+            tel1 = _normalize_trace_time_to_lap(tel1, lap1)
+            tel2 = _normalize_trace_time_to_lap(tel2, lap2)
             
             lap1_dist_max = 0
             lap2_dist_max = 0
@@ -118,26 +114,10 @@ def register_telemetry_callbacks(app):
                 lap1_dist_max = tel1['Distance'].max()
                 if lap1_dist_max > 0: tel1['Distance'] /= lap1_dist_max
                 
-                tel1['Time'] -= tel1['Time'].min()
-                t_raw_max = tel1['Time'].max().total_seconds()
-                lap_time1 = float(lap1['lap_duration'])
-                if t_raw_max > 0:
-                    tel1['Time'] = (tel1['Time'].dt.total_seconds() / t_raw_max) * lap_time1
-                else:
-                    tel1['Time'] = tel1['Time'].dt.total_seconds()
-                
             if not tel2.empty:
                 tel2['Distance'] -= tel2['Distance'].min()
                 lap2_dist_max = tel2['Distance'].max()
                 if lap2_dist_max > 0: tel2['Distance'] /= lap2_dist_max
-                
-                tel2['Time'] -= tel2['Time'].min()
-                t_raw_max = tel2['Time'].max().total_seconds()
-                lap_time2 = float(lap2['lap_duration'])
-                if t_raw_max > 0:
-                    tel2['Time'] = (tel2['Time'].dt.total_seconds() / t_raw_max) * lap_time2
-                else:
-                    tel2['Time'] = tel2['Time'].dt.total_seconds()
 
             if tel1.empty or tel2.empty:
                 raise PreventUpdate
@@ -161,6 +141,8 @@ def register_telemetry_callbacks(app):
 
             replay_tel1 = _smooth_replay_positions(tel1)
             replay_tel2 = _smooth_replay_positions(tel2)
+            replay_tel1 = replay_tel1.dropna(subset=['X', 'Y', 'Distance', 'Time']).copy()
+            replay_tel2 = replay_tel2.dropna(subset=['X', 'Y', 'Distance', 'Time']).copy()
 
             def _sample_for_playback(tel):
                 n = len(tel)
@@ -169,7 +151,7 @@ def register_telemetry_callbacks(app):
                     'x': tel['X'].to_numpy(dtype=float)[::step].tolist(),
                     'y': tel['Y'].to_numpy(dtype=float)[::step].tolist(),
                     'dist': tel['Distance'].to_numpy(dtype=float)[::step].tolist(),
-                    't': tel['Time'].to_numpy(dtype=float)[::step].tolist(),
+                    't': pd.to_timedelta(tel['Time'], errors='coerce').dt.total_seconds().to_numpy(dtype=float)[::step].tolist(),
                     'speed': tel['Speed'].to_numpy(dtype=float)[::step].tolist(),
                     # Optional car channels can be absent without blocking replay.
                     'gear': tel['nGear'].fillna(0).to_numpy(dtype=int)[::step].tolist(),
@@ -183,8 +165,8 @@ def register_telemetry_callbacks(app):
             delta_time, ref_tel, _ = _compute_lap_delta(
                 lap2,
                 lap1,
-                reference_tel=delta_tel2,
-                compare_tel=delta_tel1,
+                reference_tel=tel2,
+                compare_tel=tel1,
             )
             delta_dist = ref_tel['Distance'].to_numpy(dtype=float)
             delta_vals = -pd.Series(delta_time).astype(float).to_numpy()
