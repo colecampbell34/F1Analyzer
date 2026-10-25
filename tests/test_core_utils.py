@@ -1,6 +1,7 @@
 """Behavior tests for the normalized provider facade and dashboard consumers."""
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -196,6 +197,26 @@ class TestUrlAndRuntimeContracts(unittest.TestCase):
             )
         self.assertEqual(failure.status_code, 502)
         self.assertNotIn("secret response body", failure.get_data(as_text=True))
+
+
+class TestLeaderboardColors(unittest.TestCase):
+    def test_classification_leaderboard_uses_session_driver_colors(self):
+        session = SimpleNamespace(
+            drivers=pd.DataFrame([
+                {"abbreviation": "PER", "team_name": "Cadillac", "team_colour": "#AABBCC"},
+                {"abbreviation": "BOT", "team_name": "Cadillac", "team_colour": "#AABBCC"},
+            ]),
+            results=pd.DataFrame([
+                {"abbreviation": "PER", "team_name": "Red Bull", "position": 1, "best_lap_time": 80.0},
+                {"abbreviation": "BOT", "team_name": "Mercedes", "position": 2, "best_lap_time": 81.0},
+            ]),
+            laps=pd.DataFrame(),
+        )
+
+        children = ui_utils._build_leaderboard_children(session, "Qualifying")
+
+        self.assertEqual(children[1].children[1].style["color"], "#AABBCC")
+        self.assertEqual(children[2].children[1].style["color"], "#AABBCC")
 
 
 class TestNormalizedDashboardWorkflows(unittest.TestCase):

@@ -269,7 +269,7 @@ def _build_perf_review_panel(snapshot, jobs, cache_stats):
 
 def _build_leaderboard_children(session, session_name, year=None, race=None):
     import pandas as pd
-    from data import get_best_lap, is_practice, resolve_team_color
+    from data import get_best_lap, is_practice, resolve_driver_color
 
     _is_practice = is_practice(session_name)
     _is_shootout = 'Shootout' in session_name
@@ -309,24 +309,7 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
             fastest_lap = get_best_lap(session, drv)
             lap_time = pd.to_numeric(fastest_lap.get('lap_duration'), errors='coerce') if fastest_lap is not None else float('nan')
 
-            team_name = ''
-            raw_color = None
-            if session is not None and not session.results.empty:
-                res_row = session.results[session.results['abbreviation'] == drv]
-                if not res_row.empty:
-                    team_name = res_row.iloc[0].get('team_name', '')
-                    raw_color = None
-            else:
-                driver_rows = session.drivers[session.drivers['abbreviation'] == drv]
-                if not driver_rows.empty:
-                    team_name = driver_rows.iloc[0].get('team_name', '')
-                    raw_color = driver_rows.iloc[0].get('team_colour')
-            color = resolve_team_color(
-                team_name,
-                session=session,
-                raw_color=raw_color,
-                fallback_identifier=drv,
-            )
+            color = resolve_driver_color(drv, session)
 
             drivers_data.append({'Abbreviation': drv, 'LapTime': lap_time, 'TeamColor': color})
 
@@ -379,12 +362,7 @@ def _build_leaderboard_children(session, session_name, year=None, race=None):
                 pos = row.get('position', '?')
                 pos_str = f"P{int(pos)}" if pd.notna(pos) else "N/A"
 
-                color = resolve_team_color(
-                    row.get('team_name', ''),
-                    session=session,
-                    raw_color=None,
-                    fallback_identifier=abbr,
-                )
+                color = resolve_driver_color(abbr, session)
 
                 raw_time = row.get('race_time') if is_race else row.get('best_lap_time')
 
