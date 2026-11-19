@@ -12,8 +12,9 @@ Render Free is useful for a low-traffic demo, but the service sleeps after
 inactivity and local files are not durable through restart or redeploy. Use a
 paid, always-on web service for a regularly used instance. The app itself does
 not require a persistent disk for OpenF1 session data because historical API
-responses are cached in process; feedback and AI response files remain
-ephemeral unless connected to managed storage.
+responses are cached in process. AI response files remain ephemeral unless
+connected to managed storage.
+<!-- Temporarily disabled: feedback files remain ephemeral unless connected to managed storage. -->
 
 ## Deploy
 
@@ -35,8 +36,9 @@ preloading because Render is persistent.
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph URL |
 | `GEMINI_API_KEY` | Optional | Enables AI analysis |
-| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints |
-| `AI_CACHE_DIR` / `FEEDBACK_DIR` | Optional | Override local runtime file paths |
+<!-- Temporarily disabled: | `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints | -->
+| `AI_CACHE_DIR` | Optional | Overrides the AI response cache path |
+<!-- Temporarily disabled: `FEEDBACK_DIR` overrides feedback storage. -->
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Optional | Shared selected-lap cache |
 | `ENABLE_BACKGROUND_PRELOAD` | Blueprint sets `1` | Persistent-process preloads |
 

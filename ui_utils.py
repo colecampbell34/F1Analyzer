@@ -1,6 +1,6 @@
-import os
-from datetime import datetime, timezone
-import flask
+# import os
+# from datetime import datetime, timezone
+# import flask
 from dash import html
 import dash_bootstrap_components as dbc
 
@@ -71,114 +71,114 @@ def _tab_label(tab_value):
     }
     return labels.get(tab_value, 'Unknown')
 
-def _feedback_admin_authorized():
-    token = os.getenv('FEEDBACK_ADMIN_TOKEN')
-    if not token:
-        return False
+# def _feedback_admin_authorized():
+#     token = os.getenv('FEEDBACK_ADMIN_TOKEN')
+#     if not token:
+#         return False
+#
+#     # Preferred auth channel: request header or cookie (not URL).
+#     supplied_header = flask.request.headers.get('X-Feedback-Admin-Token', '')
+#     if supplied_header == token:
+#         return True
+#
+#     supplied_cookie = flask.request.cookies.get('feedback_admin_token', '')
+#     if supplied_cookie == token:
+#         return True
+#
+#     return False
+#
+# def _format_feedback_time(timestamp):
+#     if not timestamp:
+#         return 'Unknown time'
+#     try:
+#         dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
+#         return dt.strftime('%Y-%m-%d %H:%M UTC')
+#     except ValueError:
+#         return str(timestamp)
+#
+# def _feedback_context_text(entry):
+#     session = entry.get('session') or {}
+#     parts = [
+#         session.get('year'),
+#         session.get('race'),
+#         session.get('session_type')
+#     ]
+#     session_text = ' | '.join(str(part) for part in parts if part)
+#     drivers = ' vs '.join(str(part) for part in [session.get('driver1'), session.get('driver2')] if part)
+#
+#     if session_text and drivers:
+#         return f"{session_text} | {drivers}"
+#     if session_text:
+#         return session_text
+#     return 'No session attached'
+#
+# def _build_feedback_card(entry):
+#     category = entry.get('category', 'general')
+#     badge_colors = {
+#         'bug': 'danger',
+#         'feature': 'info',
+#         'data': 'warning',
+#         'general': 'secondary'
+#     }
+#
+#     meta_bits = [
+#         f"Tab: {_tab_label(entry.get('active_tab'))}",
+#         f"Context attached: {'Yes' if entry.get('context_loaded') else 'No'}",
+#         f"Reporter: {entry.get('ip_hash', 'anonymous')}"
+#     ]
+#     if entry.get('contact'):
+#         meta_bits.append(f"Contact: {entry['contact']}")
+#
+#     return dbc.Card(
+#         dbc.CardBody([
+#             html.Div([
+#                 html.Div([
+#                     dbc.Badge(category.title(), color=badge_colors.get(category, 'secondary'),
+#                               className='me-2'),
+#                     dbc.Badge(f"{entry.get('rating', 0)}/5", color='light', text_color='dark')
+#                 ], style={'display': 'flex', 'gap': '0.4rem'}),
+#                 html.Small(_format_feedback_time(entry.get('submitted_at')), style={'color': '#999'})
+#             ], style={'display': 'flex', 'justifyContent': 'space-between', 'gap': '1rem', 'marginBottom': '0.75rem'}),
+#             html.P(entry.get('message', ''), style={'whiteSpace': 'pre-wrap', 'marginBottom': '0.75rem'}),
+#             html.Div(_feedback_context_text(entry), style={'fontSize': '0.85rem', 'color': '#bbb', 'marginBottom': '0.35rem'}),
+#             html.Div(' • '.join(meta_bits), style={'fontSize': '0.8rem', 'color': '#8f8f8f'})
+#         ]),
+#         className='mb-3'
+#     )
 
-    # Preferred auth channel: request header or cookie (not URL).
-    supplied_header = flask.request.headers.get('X-Feedback-Admin-Token', '')
-    if supplied_header == token:
-        return True
-
-    supplied_cookie = flask.request.cookies.get('feedback_admin_token', '')
-    if supplied_cookie == token:
-        return True
-
-    return False
-
-def _format_feedback_time(timestamp):
-    if not timestamp:
-        return 'Unknown time'
-    try:
-        dt = datetime.fromisoformat(str(timestamp).replace('Z', '+00:00'))
-        return dt.strftime('%Y-%m-%d %H:%M UTC')
-    except ValueError:
-        return str(timestamp)
-
-def _feedback_context_text(entry):
-    session = entry.get('session') or {}
-    parts = [
-        session.get('year'),
-        session.get('race'),
-        session.get('session_type')
-    ]
-    session_text = ' | '.join(str(part) for part in parts if part)
-    drivers = ' vs '.join(str(part) for part in [session.get('driver1'), session.get('driver2')] if part)
-
-    if session_text and drivers:
-        return f"{session_text} | {drivers}"
-    if session_text:
-        return session_text
-    return 'No session attached'
-
-def _build_feedback_card(entry):
-    category = entry.get('category', 'general')
-    badge_colors = {
-        'bug': 'danger',
-        'feature': 'info',
-        'data': 'warning',
-        'general': 'secondary'
-    }
-
-    meta_bits = [
-        f"Tab: {_tab_label(entry.get('active_tab'))}",
-        f"Context attached: {'Yes' if entry.get('context_loaded') else 'No'}",
-        f"Reporter: {entry.get('ip_hash', 'anonymous')}"
-    ]
-    if entry.get('contact'):
-        meta_bits.append(f"Contact: {entry['contact']}")
-
-    return dbc.Card(
-        dbc.CardBody([
-            html.Div([
-                html.Div([
-                    dbc.Badge(category.title(), color=badge_colors.get(category, 'secondary'),
-                              className='me-2'),
-                    dbc.Badge(f"{entry.get('rating', 0)}/5", color='light', text_color='dark')
-                ], style={'display': 'flex', 'gap': '0.4rem'}),
-                html.Small(_format_feedback_time(entry.get('submitted_at')), style={'color': '#999'})
-            ], style={'display': 'flex', 'justifyContent': 'space-between', 'gap': '1rem', 'marginBottom': '0.75rem'}),
-            html.P(entry.get('message', ''), style={'whiteSpace': 'pre-wrap', 'marginBottom': '0.75rem'}),
-            html.Div(_feedback_context_text(entry), style={'fontSize': '0.85rem', 'color': '#bbb', 'marginBottom': '0.35rem'}),
-            html.Div(' • '.join(meta_bits), style={'fontSize': '0.8rem', 'color': '#8f8f8f'})
-        ]),
-        className='mb-3'
-    )
-
-def _build_feedback_review_panel(entries):
-    total = len(entries)
-    bug_count = sum(1 for entry in entries if entry.get('category') == 'bug')
-    feature_count = sum(1 for entry in entries if entry.get('category') == 'feature')
-    recent_count = sum(
-        1
-        for entry in entries
-        if str(entry.get('submitted_at', ''))[:10] == datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    )
-
-    summary_cards = dbc.Row([
-        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Total", style={'color': '#999'}), html.H4(str(total))])), md=3, xs=6),
-        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Bugs", style={'color': '#999'}), html.H4(str(bug_count))])), md=3, xs=6),
-        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Features", style={'color': '#999'}), html.H4(str(feature_count))])), md=3, xs=6),
-        dbc.Col(dbc.Card(dbc.CardBody([html.Div("Today", style={'color': '#999'}), html.H4(str(recent_count))])), md=3, xs=6)
-    ], className='g-2 mb-3')
-
-    if not entries:
-        feedback_body = dbc.Alert("No feedback submitted yet.", color='dark')
-    else:
-        feedback_body = html.Div([_build_feedback_card(entry) for entry in entries[:25]])
-
-    return html.Div([
-        html.H5("Feedback Inbox", style={'marginTop': '0.5rem'}),
-        html.P(
-            "Newest submissions are shown here. Use an authorized browser session to unlock this panel.",
-            style={'color': '#888', 'fontSize': '0.85rem'}
-        ),
-        summary_cards,
-        feedback_body
-    ])
-
-
+# def _build_feedback_review_panel(entries):
+#     total = len(entries)
+#     bug_count = sum(1 for entry in entries if entry.get('category') == 'bug')
+#     feature_count = sum(1 for entry in entries if entry.get('category') == 'feature')
+#     recent_count = sum(
+#         1
+#         for entry in entries
+#         if str(entry.get('submitted_at', ''))[:10] == datetime.now(timezone.utc).strftime('%Y-%m-%d')
+#     )
+#
+#     summary_cards = dbc.Row([
+#         dbc.Col(dbc.Card(dbc.CardBody([html.Div("Total", style={'color': '#999'}), html.H4(str(total))])), md=3, xs=6),
+#         dbc.Col(dbc.Card(dbc.CardBody([html.Div("Bugs", style={'color': '#999'}), html.H4(str(bug_count))])), md=3, xs=6),
+#         dbc.Col(dbc.Card(dbc.CardBody([html.Div("Features", style={'color': '#999'}), html.H4(str(feature_count))])), md=3, xs=6),
+#         dbc.Col(dbc.Card(dbc.CardBody([html.Div("Today", style={'color': '#999'}), html.H4(str(recent_count))])), md=3, xs=6)
+#     ], className='g-2 mb-3')
+#
+#     if not entries:
+#         feedback_body = dbc.Alert("No feedback submitted yet.", color='dark')
+#     else:
+#         feedback_body = html.Div([_build_feedback_card(entry) for entry in entries[:25]])
+#
+#     return html.Div([
+#         html.H5("Feedback Inbox", style={'marginTop': '0.5rem'}),
+#         html.P(
+#             "Newest submissions are shown here. Use an authorized browser session to unlock this panel.",
+#             style={'color': '#888', 'fontSize': '0.85rem'}
+#         ),
+#         summary_cards,
+#         feedback_body
+#     ])
+#
+#
 def _format_bytes(num_bytes):
     try:
         value = float(num_bytes or 0)

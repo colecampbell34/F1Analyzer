@@ -98,5 +98,6 @@ For regular public traffic, a single persistent Render service is the
 recommended profile. One threaded Gunicorn worker shares the local endpoint
 cache and rate limiter across requests and can finish background preloads.
 Render Free sleeps and has ephemeral local storage; a paid service avoids
-sleeping. Add a managed store before promising durable feedback, global rate
-limits, analytics, authentication, or shared AI response caching.
+sleeping. Add a managed store before promising global rate limits, analytics,
+authentication, or shared AI response caching.
+<!-- Temporarily disabled: durable feedback requires a managed store. -->

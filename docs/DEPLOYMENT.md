@@ -16,9 +16,9 @@ Set these environment variables as needed:
 | --- | --- | --- |
 | `PUBLIC_BASE_URL` | Recommended | Canonical Open Graph URL |
 | `GEMINI_API_KEY` | Optional | Enables AI analysis |
-| `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints |
+<!-- Temporarily disabled: | `FEEDBACK_ADMIN_TOKEN` | Optional | Protects feedback review endpoints | -->
 | `AI_CACHE_DIR` | Optional | Overrides AI-response cache path |
-| `FEEDBACK_DIR` | Optional | Overrides feedback file path |
+<!-- Temporarily disabled: | `FEEDBACK_DIR` | Optional | Overrides feedback file path | -->
 | `KV_REST_API_URL` / `KV_REST_API_TOKEN` | Optional | Upstash REST connection for selected-lap cache |
 | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | Optional | Alternative Upstash REST variable names |
 | `ENABLE_BACKGROUND_PRELOAD` | Optional | Defaults off under Vercel; serverless loads are on demand |
@@ -59,7 +59,9 @@ background preload.
 
 ## Limitations
 
+<!-- Temporarily disabled feedback note:
 The function filesystem and memory are ephemeral and per-instance. Feedback,
+-->
 AI-response cache entries, API request counters, and local provider caches are
 not durable. Add a managed shared store before treating any of those as durable
 product data or a global rate-limit mechanism.

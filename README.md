@@ -57,8 +57,11 @@ it matters, and focused on explaining a performance delta.
   throttle, and braking samples so answers can explain where a driver gained
   time. These derived windows do not identify verified corner numbers or
   precise track locations.
+<!-- Temporarily disabled: feedback capture.
 - Bookmarkable URLs, feedback capture, chart downloads, and responsive
   desktop/mobile layouts.
+-->
+- Bookmarkable URLs, chart downloads, and responsive desktop/mobile layouts.
 
 ## Architecture
 
@@ -97,9 +100,10 @@ Optional environment variables (set secrets in the host environment; do not
 commit `.env`):
 
 - `GEMINI_API_KEY` enables AI analysis.
-- `FEEDBACK_ADMIN_TOKEN` protects feedback review and performance endpoints.
+<!-- Temporarily disabled: - `FEEDBACK_ADMIN_TOKEN` protects feedback review and performance endpoints. -->
 - `PUBLIC_BASE_URL` sets the Open Graph canonical URL.
-- `AI_CACHE_DIR` and `FEEDBACK_DIR` override local runtime file directories.
+- `AI_CACHE_DIR` overrides the local AI response cache directory.
+<!-- Temporarily disabled: `FEEDBACK_DIR` overrides feedback storage. -->
 - `ENABLE_BACKGROUND_PRELOAD` controls background session loads; it defaults
   off on Vercel and on for persistent, non-serverless processes.
 - `KV_REST_API_URL` / `KV_REST_API_TOKEN`,

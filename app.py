@@ -5,7 +5,7 @@ import dash_bootstrap_components as dbc
 from layout import app_layout
 from callbacks import register_callbacks
 from flask_compress import Compress
-import threading
+# import threading
 import atexit
 from flask import jsonify, request, send_from_directory
 from runtime import is_serverless, storage_scope
@@ -104,56 +104,56 @@ server = dash_app.server
 app = server
 server.config['SEND_FILE_MAX_AGE_DEFAULT'] = 31536000
 
-_RUNTIME_INIT_LOCK = threading.Lock()
-_RUNTIME_INIT_STARTED = False
-_RUNTIME_INIT_DONE = False
-
-
-def _init_runtime_background():
-    """Run non-critical startup tasks outside the first paint path."""
-    global _RUNTIME_INIT_DONE
-    with _RUNTIME_INIT_LOCK:
-        if _RUNTIME_INIT_DONE:
-            return
-        try:
-            from feedback import setup_feedback_storage
-
-            setup_feedback_storage()
-        finally:
-            _RUNTIME_INIT_DONE = True
-
-
-def _start_runtime_init_once():
-    """Start lazy runtime initialization once per process."""
-    global _RUNTIME_INIT_STARTED, _RUNTIME_INIT_DONE
-    if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
-        return
-    if is_serverless():
-        # Serverless runtimes should not rely on background work after a response.
-        # Data and feedback modules still initialize their writable /tmp storage on demand.
-        _RUNTIME_INIT_DONE = True
-        return
-
-    with _RUNTIME_INIT_LOCK:
-        if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
-            return
-        _RUNTIME_INIT_STARTED = True
-
-    threading.Thread(target=_init_runtime_background, daemon=True).start()
-
-
-@server.before_request
-def _ensure_runtime_initialized():
-    """Kick off deferred runtime initialization once, outside health/static probes."""
-    if request.path in ('/health', '/healthz') or request.path.startswith((
-        '/assets/',
-        '/_dash-component-suites/',
-        '/_favicon.ico',
-    )):
-        return
-    _start_runtime_init_once()
-
-
+# _RUNTIME_INIT_LOCK = threading.Lock()
+# _RUNTIME_INIT_STARTED = False
+# _RUNTIME_INIT_DONE = False
+#
+#
+# def _init_runtime_background():
+#     """Run non-critical startup tasks outside the first paint path."""
+#     global _RUNTIME_INIT_DONE
+#     with _RUNTIME_INIT_LOCK:
+#         if _RUNTIME_INIT_DONE:
+#             return
+#         try:
+#             from feedback import setup_feedback_storage
+#
+#             setup_feedback_storage()
+#         finally:
+#             _RUNTIME_INIT_DONE = True
+#
+#
+# def _start_runtime_init_once():
+#     """Start lazy runtime initialization once per process."""
+#     global _RUNTIME_INIT_STARTED, _RUNTIME_INIT_DONE
+#     if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
+#         return
+#     if is_serverless():
+#         # Serverless runtimes should not rely on background work after a response.
+#         # Data and feedback modules still initialize their writable /tmp storage on demand.
+#         _RUNTIME_INIT_DONE = True
+#         return
+#
+#     with _RUNTIME_INIT_LOCK:
+#         if _RUNTIME_INIT_STARTED or _RUNTIME_INIT_DONE:
+#             return
+#         _RUNTIME_INIT_STARTED = True
+#
+#     threading.Thread(target=_init_runtime_background, daemon=True).start()
+#
+#
+# @server.before_request
+# def _ensure_runtime_initialized():
+#     """Kick off deferred runtime initialization once, outside health/static probes."""
+#     if request.path in ('/health', '/healthz') or request.path.startswith((
+#         '/assets/',
+#         '/_dash-component-suites/',
+#         '/_favicon.ico',
+#     )):
+#         return
+#     _start_runtime_init_once()
+#
+#
 @server.after_request
 def _set_cache_headers(response):
     """Keep static payloads CDN-friendly without caching live Dash/API responses."""
@@ -190,13 +190,13 @@ def healthz():
 
 @server.route('/warmup')
 def warmup():
-    """Prime local runtime state when a persistent process is available."""
-    _start_runtime_init_once()
+    """Report whether this runtime loads historical data on demand."""
+    # Temporarily disabled: _start_runtime_init_once()
     return jsonify({
-        'status': 'direct-load' if is_serverless() else 'warming',
+        'status': 'direct-load' if is_serverless() else 'ready',
         'message': (
             'Serverless instances load historical OpenF1 data on demand.' if is_serverless()
-            else 'Local runtime initialization has started.'
+            else 'Historical data loads on demand.'
         ),
     }), 200
 
@@ -299,21 +299,21 @@ def api_preload_status():
     return jsonify(data.get_preload_status(year, race, session_name, **kwargs))
 
 
-@server.route('/api/perf')
-def api_perf():
-    import data
-    from perf_monitor import get_perf_snapshot
-    from ui_utils import _feedback_admin_authorized
-
-    if not _feedback_admin_authorized():
-        return jsonify({'error': 'admin token required'}), 403
-    return jsonify({
-        'perf': get_perf_snapshot(),
-        'preload_jobs': data.get_preload_registry_snapshot(),
-        'cache': data.get_cache_stats(),
-    })
-
-
+# @server.route('/api/perf')
+# def api_perf():
+#     import data
+#     from perf_monitor import get_perf_snapshot
+#     from ui_utils import _feedback_admin_authorized
+#
+#     if not _feedback_admin_authorized():
+#         return jsonify({'error': 'admin token required'}), 403
+#     return jsonify({
+#         'perf': get_perf_snapshot(),
+#         'preload_jobs': data.get_preload_registry_snapshot(),
+#         'cache': data.get_cache_stats(),
+#     })
+#
+#
 def _flush_ai_cache_on_exit():
     from ai_cache import flush_ai_cache
     flush_ai_cache()

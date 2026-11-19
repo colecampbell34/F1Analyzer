@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(
     ],
     ids=("desktop", "mobile"),
 )
-def test_url_restore_numbered_laps_replay_feedback_download_and_views(viewport, mobile):
+def test_url_restore_numbered_laps_replay_and_views(viewport, mobile):
     sync_api = pytest.importorskip("playwright.sync_api")
 
     base_url = os.getenv("F1_ANALYZER_BASE_URL", "http://127.0.0.1:8000")
@@ -95,10 +95,10 @@ def test_url_restore_numbered_laps_replay_feedback_download_and_views(viewport, 
                 timeout=30_000,
             )
 
-            feedback_button = page.locator("#mobile-open-feedback-modal-btn") if mobile else page.locator("#open-feedback-modal-btn")
-            feedback_button.click()
-            page.locator("#feedback-modal").wait_for(state="visible", timeout=10_000)
-            page.locator("#cancel-feedback-btn").click()
+#             feedback_button = page.locator("#mobile-open-feedback-modal-btn") if mobile else page.locator("#open-feedback-modal-btn")
+#             feedback_button.click()
+#             page.locator("#feedback-modal").wait_for(state="visible", timeout=10_000)
+#             page.locator("#cancel-feedback-btn").click()
 
             page.locator("#main-tabs").click()
             page.get_by_role("option", name="Track map", exact=True).click()

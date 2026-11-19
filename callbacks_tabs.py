@@ -208,39 +208,70 @@ def register_tab_callbacks(app):
                 )
 
                 # Build Driver DNA radar chart.
-                radar_fig, dna_legend = _build_driver_radar(d1, d2, c1, c2, tel1, tel2)
+                radar_fig, dna_legend = _build_driver_radar(
+                    d1,
+                    d2,
+                    c1,
+                    c2,
+                    tel1,
+                    tel2,
+                    circuit_corners=session.circuit_corners.to_dict('records'),
+                )
+                dna_labels = {
+                    'TS': 'Top speed',
+                    'CS': 'Corner speed',
+                    'FT': 'Full throttle',
+                    'TR': 'Throttle ramp',
+                    'BU': 'Brake usage',
+                    'GD': 'Gear diversity',
+                }
+                dna_explanations = {
+                    'TS': 'Who had the highest top speed.',
+                    'CS': 'Who was faster in the corners.',
+                    'FT': 'Who spent more time at full throttle.',
+                    'TR': 'Who picked up the throttle more sharply.',
+                    'BU': 'Who used the brakes more often.',
+                    'GD': 'Who distributed gear use more evenly.',
+                }
+                dna_details = {
+                    'TS': 'The highest speed sample recorded on the selected lap.',
+                    'CS': (
+                        'Average of each corner\'s minimum speed in a short window around its mapped turn point. '
+                        'When circuit points are unavailable, apexes are estimated from path curvature.'
+                    ),
+                    'FT': 'Share of lap samples at 99% throttle or higher.',
+                    'TR': (
+                        '90th percentile of positive throttle change between adjacent samples. '
+                        'Higher means sharper pickup; this is a per-sample step, not acceleration or a per-second rate.'
+                    ),
+                    'BU': 'Share of samples with the brake signal above 5%.',
+                    'GD': (
+                        'Shannon entropy of the sample share in each gear. Higher means gear use is spread more evenly, '
+                        'not better shifting.'
+                    ),
+                }
                 legend_ui = html.Div(
                     [
-                        html.Span([html.Strong(f"{letter}:"), f" {label}"])
+                        html.Div(
+                            [
+                                html.Span(letter, className='driver-dna-key'),
+                                html.Div(
+                                    [
+                                        html.Strong(dna_labels.get(letter, label)),
+                                        html.Span(f" — {dna_explanations.get(letter, '')}"),
+                                    ],
+                                    className='driver-dna-copy',
+                                ),
+                            ],
+                            className='driver-dna-row',
+                            role='listitem',
+                            title=dna_details.get(letter, label),
+                        )
                         for (letter, label) in (dna_legend or [])
                     ],
-                    style={
-                        'display': 'flex',
-                        'flexWrap': 'wrap',
-                        'gap': '4px 10px',
-                        'justifyContent': 'center',
-                        'color': '#bbb',
-                        'fontSize': '0.72rem',
-                        'lineHeight': '1.15',
-                        'marginBottom': '6px',
-                    }
-                )
-                norm_note = html.Div(
-                    [
-                        "Normalization: values are compressed around 50 based on relative differences between the two drivers.",
-                        html.Br(),
-                        "Small raw deltas can still be visible, but won't dominate the shape."
-                    ],
-                    style={
-                        'textAlign': 'center',
-                        'color': '#888',
-                        'fontSize': '0.70rem',
-                        'lineHeight': '1.15',
-                        'marginBottom': '6px',
-                        'whiteSpace': 'normal',
-                        'wordBreak': 'break-word',
-                        'maxWidth': '100%'
-                    }
+                    className='driver-dna-legend',
+                    role='list',
+                    **{'aria-label': 'Driver DNA metric definitions'},
                 )
                 dna_ui = html.Div(
                     [
@@ -257,13 +288,13 @@ def register_tab_callbacks(app):
                             }
                         ),
                         legend_ui,
-                        norm_note,
                         dcc.Graph(
                             figure=radar_fig,
                             config={'displayModeBar': False},
                             style={'flex': '1 1 auto', 'minHeight': 0}
                         )
                     ],
+                    className='driver-dna-panel',
                     style={
                         'backgroundColor': '#151515',
                         'borderRadius': '8px',

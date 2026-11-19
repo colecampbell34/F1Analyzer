@@ -4,7 +4,6 @@ Domain-specific callbacks are registered by sub-modules:
   - callbacks_telemetry  (telemetry tab)
   - callbacks_tabs       (track map, strategy, race, grid pace tabs)
   - callbacks_ai         (AI analysis)
-  - callbacks_feedback   (feedback system)
 """
 import dash
 from dash import html, ClientsideFunction
@@ -25,7 +24,7 @@ from callbacks_shared import (
 from callbacks_telemetry import register_telemetry_callbacks
 from callbacks_tabs import register_tab_callbacks
 from callbacks_ai import register_ai_callbacks
-from callbacks_feedback import register_feedback_callbacks
+# Temporarily disabled: from callbacks_feedback import register_feedback_callbacks
 
 
 def _loaded_selection_matches(params, year, race, session_type, driver1, driver2):
@@ -46,7 +45,7 @@ def register_callbacks(app):
     register_telemetry_callbacks(app)
     register_tab_callbacks(app)
     register_ai_callbacks(app)
-    register_feedback_callbacks(app)
+    # Temporarily disabled: register_feedback_callbacks(app)
 
 
 def _register_core_callbacks(app):

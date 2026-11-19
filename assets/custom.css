@@ -394,6 +394,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
         min-height: 44px;
     }
 
+/* Temporarily disabled feedback styles.
     .feedback-fab {
         position: static !important;
         display: block !important;
@@ -402,6 +403,7 @@ div:has(> .dash-spinner):not(#speed-graph-container):not(#mini-map-container) {
         border-radius: 8px;
         opacity: 1;
     }
+*/
 }
 
 /*
@@ -583,8 +585,8 @@ body,
 }
 
 .btn-danger,
-.btn-success,
-.feedback-fab {
+.btn-success
+/* .feedback-fab selector temporarily disabled */ {
     background: var(--f1-red) !important;
     border-color: var(--f1-red) !important;
     box-shadow: none !important;
@@ -884,6 +886,7 @@ div[class*="tab-container"] {
     padding: 0 !important;
 }
 
+/* Temporarily disabled feedback styles.
 .feedback-fab {
     position: fixed;
     right: 16px;
@@ -896,10 +899,13 @@ div[class*="tab-container"] {
     box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
     opacity: 0.8;
 }
+*/
 
+/* Temporarily disabled feedback styles.
 .feedback-fab:hover {
     opacity: 1;
 }
+*/
 
 .modal-content {
     background-color: #101010;
@@ -916,16 +922,20 @@ div[class*="tab-container"] {
     color: #f2f2f2;
 }
 
+/* Temporarily disabled feedback styles.
 #feedback-review-panel .card {
     background: linear-gradient(180deg, #171717 0%, #121212 100%);
     border: 1px solid #2d2d2d;
 }
+*/
 
+/* Temporarily disabled feedback styles.
 #feedback-review-panel .card-title,
 #feedback-review-panel .card-text,
 #feedback-review-panel .list-group-item {
     color: #e3e3e3;
 }
+*/
 
 .tab--disabled,
 .tab[disabled] {
@@ -934,6 +944,7 @@ div[class*="tab-container"] {
 }
 
 @media (max-width: 768px) {
+/* Temporarily disabled feedback styles.
     .feedback-fab {
         right: 12px;
         bottom: calc(12px + env(safe-area-inset-bottom, 0px));
@@ -943,6 +954,7 @@ div[class*="tab-container"] {
         font-size: 0.8rem;
         opacity: 0.92;
     }
+*/
 }
 
 /* Live Telemetry Dashboard Styling */
@@ -1479,10 +1491,12 @@ div[class*="tab-container"] {
     text-shadow: 0 0 16px currentColor;
 }
 
+/* Temporarily disabled feedback styles.
 .feedback-fab {
     background: linear-gradient(180deg, #ff4b52 0%, #a80f1f 100%) !important;
     border-color: transparent !important;
 }
+*/
 
 .modal-content {
     background: #0d1218;
@@ -1629,6 +1643,7 @@ div[class*="tab-container"] {
         min-width: 104px !important;
     }
 
+/* Temporarily disabled feedback styles.
     .feedback-fab {
         position: static !important;
         display: none !important;
@@ -1637,16 +1652,17 @@ div[class*="tab-container"] {
         border-radius: 8px !important;
         opacity: 1 !important;
     }
+*/
 
     .mobile-action-buttons,
-    #mobile-open-feedback-modal-btn,
+    /* #mobile-open-feedback-modal-btn temporarily disabled */
     #mobile-update-dashboard-btn {
         display: none !important;
     }
 
     .mobile-flow-loaded .mobile-action-buttons {
         display: grid !important;
-        grid-template-columns: repeat(3, minmax(58px, 1fr)) !important;
+        grid-template-columns: repeat(1, minmax(58px, 1fr)) !important;
         min-width: 204px;
     }
 
@@ -1656,9 +1672,9 @@ div[class*="tab-container"] {
         font-size: 0.76rem;
     }
 
-    .mobile-flow-loaded #mobile-open-feedback-modal-btn {
+    /* Temporarily disabled: .mobile-flow-loaded #mobile-open-feedback-modal-btn {
         display: block !important;
-    }
+    } */
 
     .sidebar-leaderboard-title,
     .sidebar-leaderboard-btn,
@@ -1746,7 +1762,7 @@ div[class*="tab-container"] {
 
     .mobile-flow-loaded .mobile-action-buttons {
         display: grid !important;
-        grid-template-columns: repeat(3, minmax(58px, 1fr)) !important;
+        grid-template-columns: repeat(1, minmax(58px, 1fr)) !important;
         min-width: 204px;
     }
 
@@ -1756,7 +1772,7 @@ div[class*="tab-container"] {
         font-size: 0.76rem;
     }
 
-    .mobile-flow-loaded #mobile-open-feedback-modal-btn,
+    /* .mobile-flow-loaded #mobile-open-feedback-modal-btn temporarily disabled */
     .mobile-flow-loaded #mobile-edit-selection-btn {
         display: block !important;
     }

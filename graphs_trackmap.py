@@ -1,5 +1,6 @@
 """Track map and Driver DNA graph builders."""
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 
 from graphs_common import _add_driver_legend_entries
@@ -8,15 +9,14 @@ from ui_utils import _apply_base_layout, _downsample, _hex_to_rgba
 
 DNA_CATEGORY_LABELS = [
     'Top Speed (km/h)',
-    'Corner Speed <220 (km/h)',
+    'Mean Corner Apex Speed (km/h)',
     'Full Throttle (%)',
     'Throttle Ramp (p90 Δ)',
     'Brake Usage (%)',
-    'Brake Intensity (avg %)',
     'Gear Diversity (entropy)',
 ]
 
-DNA_ABBRS = ['TS', 'CS', 'FT', 'TR', 'BU', 'BI', 'GD']
+DNA_ABBRS = ['TS', 'CS', 'FT', 'TR', 'BU', 'GD']
 
 
 def _identify_corners(tel1, tel2):
@@ -344,7 +344,154 @@ def _driver_dna_legend():
     return list(zip(abbrs, DNA_CATEGORY_LABELS))
 
 
-def _compute_driver_dna_raw(tel):
+def _driver_dna_trace_arrays(telemetry):
+    """Return finite distance, position, and speed arrays for corner analysis."""
+    required = {'Distance', 'X', 'Y', 'Speed'}
+    if telemetry is None or getattr(telemetry, 'empty', True) or not required.issubset(telemetry.columns):
+        return None
+    arrays = [
+        pd.to_numeric(telemetry[column], errors='coerce').to_numpy(dtype=float)
+        for column in ('Distance', 'X', 'Y', 'Speed')
+    ]
+    distance, x, y, speed = arrays
+    valid = np.isfinite(distance) & np.isfinite(x) & np.isfinite(y) & np.isfinite(speed)
+    if valid.sum() < 20:
+        return None
+    distance, x, y, speed = (values[valid] for values in arrays)
+    order = np.argsort(distance, kind='stable')
+    distance, x, y, speed = (values[order] for values in (distance, x, y, speed))
+    unique = np.concatenate(([True], np.diff(distance) > 1e-6))
+    distance, x, y, speed = (values[unique] for values in (distance, x, y, speed))
+    if len(distance) < 20 or distance[-1] <= distance[0]:
+        return None
+    return distance, x, y, speed
+
+
+def _circuit_corner_apex_speeds(telemetry, circuit_corners):
+    """Measure local apex speeds at mapped corners that align with the lap trace."""
+    arrays = _driver_dna_trace_arrays(telemetry)
+    corners = _validated_circuit_corners(circuit_corners, telemetry)
+    if arrays is None or not corners:
+        return {}
+    distance, x, y, speed = arrays
+    track_span = max(float(np.ptp(x)), float(np.ptp(y)), 1.0)
+    snap_limit = max(45.0, track_span * 0.02)
+    apex_speeds = {}
+    for corner in corners:
+        offsets = np.hypot(x - corner['x'], y - corner['y'])
+        nearest = int(np.argmin(offsets))
+        if offsets[nearest] > snap_limit:
+            continue
+        # Circuit points mark the turn location, not always its exact apex.
+        # Use a short derived-distance window to cover sparse position samples.
+        window = np.abs(distance - distance[nearest]) <= 35.0
+        local_speed = speed[window]
+        if len(local_speed):
+            key = (corner['number'], str(corner.get('letter') or ''))
+            apex_speeds[key] = float(np.min(local_speed))
+    return apex_speeds
+
+
+def _estimated_corner_progresses(telemetry):
+    """Estimate turn apex progress from smoothed path curvature when maps are absent."""
+    arrays = _driver_dna_trace_arrays(telemetry)
+    if arrays is None:
+        return []
+    distance, x, y, _ = arrays
+    start, end = float(distance[0]), float(distance[-1])
+    total = end - start
+    step = 10.0
+    if total < 500.0:
+        return []
+    grid = np.arange(start + 60.0, end - 60.0, step)
+    if len(grid) < 30:
+        return []
+    x_grid, y_grid = np.interp(grid, distance, x), np.interp(grid, distance, y)
+    # Position samples are noisy. Smooth a short distance window before looking
+    # for sustained direction changes; this does not depend on absolute origin.
+    kernel = np.ones(5, dtype=float) / 5.0
+    x_smooth = np.convolve(x_grid, kernel, mode='same')
+    y_smooth = np.convolve(y_grid, kernel, mode='same')
+    half_window = 5
+    centers = np.arange(half_window, len(grid) - half_window)
+    before_x = x_smooth[centers] - x_smooth[centers - half_window]
+    before_y = y_smooth[centers] - y_smooth[centers - half_window]
+    after_x = x_smooth[centers + half_window] - x_smooth[centers]
+    after_y = y_smooth[centers + half_window] - y_smooth[centers]
+    cross = before_x * after_y - before_y * after_x
+    dot = before_x * after_x + before_y * after_y
+    turn_angle = np.abs(np.arctan2(cross, dot))
+    turning = np.flatnonzero(turn_angle >= 0.18)
+    if not len(turning):
+        return []
+
+    # Join nearby curvature peaks into one turn, then keep the strongest point
+    # in each group as the estimated apex location.
+    groups = [[int(turning[0])]]
+    for index in turning[1:]:
+        index = int(index)
+        previous = groups[-1][-1]
+        if grid[centers[index]] - grid[centers[previous]] <= 90.0:
+            groups[-1].append(index)
+        else:
+            groups.append([index])
+    progresses = []
+    last_distance = -np.inf
+    for group in groups:
+        strongest = max(group, key=lambda index: turn_angle[index])
+        apex_distance = float(grid[centers[strongest]])
+        if apex_distance - last_distance < 100.0:
+            continue
+        progresses.append((apex_distance - start) / total)
+        last_distance = apex_distance
+    return progresses
+
+
+def _estimated_apex_speeds(telemetry, progresses):
+    arrays = _driver_dna_trace_arrays(telemetry)
+    if arrays is None or not progresses:
+        return []
+    distance, _, _, speed = arrays
+    total = float(distance[-1] - distance[0])
+    radius = max(30.0, total * 0.008)
+    apex_speeds = []
+    for progress in progresses:
+        center = distance[0] + float(progress) * total
+        local_speed = speed[np.abs(distance - center) <= radius]
+        if len(local_speed):
+            apex_speeds.append(float(np.min(local_speed)))
+    return apex_speeds
+
+
+def _driver_dna_corner_speeds(tel1, tel2, circuit_corners=None):
+    """Return comparable mean apex speeds, preferring aligned mapped turns."""
+    mapped1 = _circuit_corner_apex_speeds(tel1, circuit_corners)
+    mapped2 = _circuit_corner_apex_speeds(tel2, circuit_corners)
+    common_corners = sorted(set(mapped1).intersection(mapped2))
+    if len(common_corners) >= 4:
+        return (
+            float(np.mean([mapped1[number] for number in common_corners])),
+            float(np.mean([mapped2[number] for number in common_corners])),
+        )
+
+    # Circuit turn coordinates are optional. Derive candidate apex locations
+    # from both traces' path curvature and compare the same lap-progress points.
+    estimated = sorted(_estimated_corner_progresses(tel1) + _estimated_corner_progresses(tel2))
+    progress_groups = []
+    for progress in estimated:
+        if not progress_groups or progress - np.mean(progress_groups[-1]) > 0.025:
+            progress_groups.append([progress])
+        else:
+            progress_groups[-1].append(progress)
+    progresses = [float(np.mean(group)) for group in progress_groups]
+    speeds1 = _estimated_apex_speeds(tel1, progresses)
+    speeds2 = _estimated_apex_speeds(tel2, progresses)
+    if len(speeds1) < 4 or len(speeds2) < 4:
+        return np.nan, np.nan
+    return float(np.mean(speeds1)), float(np.mean(speeds2))
+
+
+def _compute_driver_dna_raw(tel, *, corner_speed=None):
     """Return raw Driver DNA metrics using the same source data as the radar chart."""
     if tel is None or getattr(tel, 'empty', False):
         return [0.0] * len(DNA_CATEGORY_LABELS)
@@ -353,19 +500,20 @@ def _compute_driver_dna_raw(tel):
     if not all(col in tel.columns for col in required):
         return [0.0] * len(DNA_CATEGORY_LABELS)
 
-    speed_under_220 = tel[tel['Speed'] < 220]['Speed']
-    brake_nonzero = tel[tel['Brake'] > 0.05]['Brake']
+    if corner_speed is None:
+        progresses = _estimated_corner_progresses(tel)
+        corner_speeds = _estimated_apex_speeds(tel, progresses)
+        corner_speed = float(np.mean(corner_speeds)) if len(corner_speeds) >= 4 else np.nan
     throttle = tel['Throttle'].to_numpy(dtype=float)
     throttle_smooth = np.clip(np.diff(throttle, prepend=throttle[0]), 0, None)
     gear_counts = tel['nGear'].value_counts(normalize=True, dropna=True)
     gear_entropy = float(-(gear_counts * np.log2(gear_counts)).sum()) if not gear_counts.empty else 0.0
     computed = {
         'Top Speed (km/h)': float(tel['Speed'].max()),
-        'Corner Speed <220 (km/h)': float(speed_under_220.mean()) if not speed_under_220.empty else 100.0,
+        'Mean Corner Apex Speed (km/h)': float(corner_speed),
         'Full Throttle (%)': float((tel['Throttle'] >= 99).mean() * 100.0),
         'Throttle Ramp (p90 Δ)': float(np.percentile(throttle_smooth, 90)),
         'Brake Usage (%)': float((tel['Brake'] > 0.05).mean() * 100.0),
-        'Brake Intensity (avg %)': float(brake_nonzero.mean() * 100.0) if not brake_nonzero.empty else 0.0,
         'Gear Diversity (entropy)': float(gear_entropy),
     }
     return [computed[name] for name in DNA_CATEGORY_LABELS]
@@ -381,6 +529,10 @@ def _normalize_driver_dna(raw1, raw2):
     amp = 32.0  # max deviation from 50 in either direction (keeps the plot less extreme)
     k = 0.08    # ~8% relative difference is "strong"
     for a, b in zip(raw1, raw2):
+        if not np.isfinite(a) or not np.isfinite(b):
+            norm1.append(50.0)
+            norm2.append(50.0)
+            continue
         scale = max(abs(a), abs(b), 1.0)
         rel = (a - b) / scale
         if abs(a - b) <= 0.005 * scale:
@@ -392,21 +544,22 @@ def _normalize_driver_dna(raw1, raw2):
     return norm1, norm2
 
 
-def _compute_driver_dna_summary(tel1, tel2):
+def _compute_driver_dna_summary(tel1, tel2, circuit_corners=None):
     """Return legend, raw values, and normalized chart values for Driver DNA."""
-    raw1 = _compute_driver_dna_raw(tel1)
-    raw2 = _compute_driver_dna_raw(tel2)
+    corner_speed1, corner_speed2 = _driver_dna_corner_speeds(tel1, tel2, circuit_corners)
+    raw1 = _compute_driver_dna_raw(tel1, corner_speed=corner_speed1)
+    raw2 = _compute_driver_dna_raw(tel2, corner_speed=corner_speed2)
     norm1, norm2 = _normalize_driver_dna(raw1, raw2)
     return _driver_dna_legend(), raw1, raw2, norm1, norm2
 
 
-def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
+def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2, circuit_corners=None):
     """Computes and builds a normalized Driver DNA radar chart.
 
     Returns:
         (fig, legend_map): Plotly figure + list of (letter, long_label) tuples for UI legend.
     """
-    legend_map, _, _, norm1, norm2 = _compute_driver_dna_summary(tel1, tel2)
+    legend_map, _, _, norm1, norm2 = _compute_driver_dna_summary(tel1, tel2, circuit_corners)
     abbrs = [abbr for abbr, _ in legend_map]
 
     # Close the loop explicitly so the first and last points connect around the horn.
@@ -429,14 +582,14 @@ def _build_driver_radar(driver1, driver2, c1, c2, tel1, tel2):
     fig.update_layout(
         title=dict(text='', x=0.5),
         polar=dict(
-            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=8), gridcolor='#333'),
-            angularaxis=dict(tickfont=dict(size=12)),
+            radialaxis=dict(visible=True, range=[0, 100], tickfont=dict(size=13), gridcolor='#333'),
+            angularaxis=dict(tickfont=dict(size=19)),
             bgcolor='rgba(0,0,0,0)'
         ),
         showlegend=True,
-        legend=dict(orientation='h', yanchor='bottom', y=1.22, xanchor='center', x=0.5, font=dict(size=10)),
+        legend=dict(orientation='h', yanchor='bottom', y=1.08, xanchor='center', x=0.5, font=dict(size=15)),
         paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=25, r=25, t=60, b=10),
+        margin=dict(l=32, r=32, t=40, b=18),
         autosize=True,
         template='plotly_dark'
     )

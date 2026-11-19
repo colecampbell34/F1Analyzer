@@ -13,13 +13,13 @@
         ggStore: null,
         t: 0,
         total: 0,
-        lastFrame: null,
+        clockOriginMs: null,
+        clockOriginT: 0,
         lastAuxiliaryFrame: 0,
         lastLabelFrame: 0,
         lastMapUpdate: 0,
-        lastMarkerUpdate: 0,
-        markerPositions: null,
         lastCameraUpdate: 0,
+        lastCameraRender: null,
         camera: null,
         trackBounds: null
     };
@@ -57,24 +57,16 @@
     const positionAt = function(series, time) {
         return [interpolate(series, time, 'x'), interpolate(series, time, 'y')];
     };
-    const smoothMarkerPosition = function(key, target, now) {
-        if (!state.markerPositions) state.markerPositions = {};
-        const previous = state.markerPositions[key];
-        const elapsed = Math.max(1, now - state.lastMarkerUpdate);
-        if (!previous) {
-            state.markerPositions[key] = target.slice();
-            return target;
+    const advanceReplayClock = function(now) {
+        if (state.clockOriginMs === null) {
+            state.clockOriginMs = now;
+            state.clockOriginT = state.t;
         }
-        // GPS samples can briefly resolve backwards along the circuit. A short
-        // time-based low-pass filter keeps marker movement legible while
-        // retaining the relative gaps between the two cars.
-        const ease = 1 - Math.exp(-elapsed / 220);
-        const smoothed = [
-            previous[0] + (target[0] - previous[0]) * ease,
-            previous[1] + (target[1] - previous[1]) * ease
-        ];
-        state.markerPositions[key] = smoothed;
-        return smoothed;
+        state.t = Math.min(
+            state.total,
+            state.clockOriginT + Math.max(0, now - state.clockOriginMs) / 1000
+        );
+        return state.t;
     };
     const updateText = function() {
         const timeLabel = document.getElementById('lap-playback-time-label');
@@ -130,6 +122,11 @@
             });
         }
         state.lastCameraUpdate = now;
+        // Axis relayouts are much more expensive than moving the car markers.
+        // Keep the camera smooth while avoiding a redraw request on every map
+        // frame, which can starve the replay clock on slower devices.
+        if (state.lastCameraRender !== null && now - state.lastCameraRender < 80) return;
+        state.lastCameraRender = now;
         pObj.relayout(mini, {
             'xaxis.range': [state.camera.x0, state.camera.x1],
             'yaxis.range': [state.camera.y0, state.camera.y1]
@@ -144,9 +141,11 @@
         state.lastMapUpdate = now;
         const rawP1 = positionAt(state.miniStore.d1, state.t);
         const rawP2 = positionAt(state.miniStore.d2, state.t);
-        const p1 = smoothMarkerPosition('d1', rawP1, now);
-        const p2 = smoothMarkerPosition('d2', rawP2, now);
-        state.lastMarkerUpdate = now;
+        // The server has already filtered noisy position samples. Keep the
+        // markers on the replay timestamp instead of applying another filter
+        // that would make them trail, especially through tight corners.
+        const p1 = rawP1;
+        const p2 = rawP2;
         pObj.restyle(mini, {
             x: [[p1[0]], [p2[0]]],
             y: [[p1[1]], [p2[1]]],
@@ -209,9 +208,7 @@
     };
     const draw = function(now) {
         if (!state.running || !state.miniStore) return;
-        if (state.lastFrame === null) state.lastFrame = now;
-        state.t = Math.min(state.total, state.t + Math.max(0, now - state.lastFrame) / 1000);
-        state.lastFrame = now;
+        advanceReplayClock(now);
         const pObj = plotly();
         if (pObj) {
             updateMap(pObj, now);
@@ -228,13 +225,14 @@
                 state.lastAuxiliaryFrame = now;
             }
         }
-        if (now - state.lastLabelFrame >= 90 || state.t >= state.total) {
+        if (now - state.lastLabelFrame >= 50 || state.t >= state.total) {
             updateText();
             state.lastLabelFrame = now;
         }
         if (state.t >= state.total) {
             state.running = false;
             state.frameId = null;
+            state.clockOriginMs = null;
             updateText();
             return;
         }
@@ -251,13 +249,13 @@
         if (!state.total) return false;
         if (restart || state.t >= state.total) state.t = 0;
         state.running = true;
-        state.lastFrame = null;
+        state.clockOriginMs = performance.now();
+        state.clockOriginT = state.t;
         state.lastAuxiliaryFrame = 0;
         state.lastLabelFrame = 0;
         state.lastMapUpdate = 0;
-        state.lastMarkerUpdate = 0;
-        state.markerPositions = null;
         state.lastCameraUpdate = 0;
+        state.lastCameraRender = null;
         state.camera = null;
         state.trackBounds = null;
         if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
@@ -270,7 +268,9 @@
         start: function(miniStore, ggStore) { return play(miniStore, ggStore, true); },
         toggle: function(miniStore, ggStore) {
             if (state.running) {
+                advanceReplayClock(performance.now());
                 state.running = false;
+                state.clockOriginMs = null;
                 if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
                 state.frameId = null;
                 updateText();
@@ -280,13 +280,17 @@
         },
         stop: function() {
             state.running = false;
+            state.clockOriginMs = null;
             if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
             state.frameId = null;
             updateText();
         }
     };
     document.addEventListener('visibilitychange', function() {
-        if (document.hidden && state.running) state.lastFrame = null;
+        if (document.hidden && state.running) {
+            advanceReplayClock(performance.now());
+            state.clockOriginMs = null;
+        }
     });
 })();
 
@@ -883,12 +887,12 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
 
 
 
-        toggleFeedbackModal: function(open_clicks, mobile_open_clicks, cancel_clicks, refresh_data, is_open) {
-            const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
-            if (trigger === 'open-feedback-modal-btn.n_clicks' || trigger === 'mobile-open-feedback-modal-btn.n_clicks') return true;
-            if (trigger.includes('cancel-feedback-btn') || trigger.includes('feedback-refresh-store')) return false;
-            return is_open;
-        },
+        //         toggleFeedbackModal: function(open_clicks, mobile_open_clicks, cancel_clicks, refresh_data, is_open) {
+        //             const trigger = window.dash_clientside.callback_context.triggered[0].prop_id;
+        //             if (trigger === 'open-feedback-modal-btn.n_clicks' || trigger === 'mobile-open-feedback-modal-btn.n_clicks') return true;
+        //             if (trigger.includes('cancel-feedback-btn') || trigger.includes('feedback-refresh-store')) return false;
+        //             return is_open;
+        //         },
 
         renderAIState: function(history, index) {
             if (!history || history.length === 0) {

@@ -321,8 +321,8 @@ mobile_companion = html.Div([
     ], className='mobile-companion-title'),
     _shortcut_buttons('mobile'),
     html.Div([
-        dbc.Button("Feedback", id='mobile-open-feedback-modal-btn', color='danger', size='sm', n_clicks=0,
-                   title='Send feedback'),
+#         dbc.Button("Feedback", id='mobile-open-feedback-modal-btn', color='danger', size='sm', n_clicks=0,
+#                    title='Send feedback'),
         dbc.Button("Edit", id='mobile-edit-selection-btn', color='secondary', size='sm', n_clicks=0,
                    title='Show or hide session controls'),
         dbc.Button("Load", id='mobile-update-dashboard-btn', color='danger', size='sm', n_clicks=0,
@@ -610,21 +610,21 @@ content = html.Main([
                 ], id='ai-history-nav',
                    style={'display': 'none', 'alignItems': 'center', 'justifyContent': 'center',
                           'marginTop': '0.75rem'}),
-                html.Hr(style={'borderColor': '#333'}),
-                html.Div([
-                    html.Div([
-                        dbc.Button("Refresh Inbox", id='refresh-feedback-review-btn', color='secondary',
-                                   outline=True, size='sm', n_clicks=0, className='me-2'),
-                        dbc.Button("Download CSV", id='download-feedback-btn', color='danger',
-                                   size='sm', n_clicks=0)
-                    ], id='feedback-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
-                    html.Div(id='feedback-review-panel'),
-                    html.Div([
-                        dbc.Button("Refresh Performance", id='refresh-perf-review-btn', color='secondary',
-                                   outline=True, size='sm', n_clicks=0)
-                    ], id='perf-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
-                    html.Div(id='perf-review-panel')
-                ]),
+#                 html.Hr(style={'borderColor': '#333'}),
+#                 html.Div([
+#                     html.Div([
+#                         dbc.Button("Refresh Inbox", id='refresh-feedback-review-btn', color='secondary',
+#                                    outline=True, size='sm', n_clicks=0, className='me-2'),
+#                         dbc.Button("Download CSV", id='download-feedback-btn', color='danger',
+#                                    size='sm', n_clicks=0)
+#                     ], id='feedback-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
+#                     html.Div(id='feedback-review-panel'),
+#                     html.Div([
+#                         dbc.Button("Refresh Performance", id='refresh-perf-review-btn', color='secondary',
+#                                    outline=True, size='sm', n_clicks=0)
+#                     ], id='perf-review-controls', style={'display': 'none', 'marginBottom': '1rem'}),
+#                     html.Div(id='perf-review-panel')
+#                 ]),
                 dcc.Store(id='session-context-store', data=''),
                 dcc.Store(id='ai-history-store', storage_type='session', data=[]),
                 dcc.Store(id='ai-history-index-store', storage_type='session', data=0)
@@ -646,72 +646,72 @@ app_layout = dbc.Container([
         dbc.Col(sidebar, xs=12, className='sidebar-col'),
         dbc.Col(content, xs=12, className='content-col')
     ], className='g-0'),
-    dbc.Button("Send Feedback", id='open-feedback-modal-btn', color='danger', n_clicks=0,
-               className='feedback-fab'),
-    dbc.Modal([
-        dbc.ModalHeader(dbc.ModalTitle("Send Feedback")),
-        dbc.ModalBody([
-            html.P(
-                "Tell me what broke, what felt confusing, or what you want added. "
-                "The current session and tab are attached automatically.",
-                style={'color': '#bbb', 'marginBottom': '1rem'}
-            ),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Label("Feedback Type", style={'fontSize': '0.85rem'}),
-                    dbc.Select(
-                        id='feedback-category',
-                        options=[
-                            {'label': 'Bug Report', 'value': 'bug'},
-                            {'label': 'Feature Request', 'value': 'feature'},
-                            {'label': 'Data Issue', 'value': 'data'},
-                            {'label': 'General Feedback', 'value': 'general'}
-                        ],
-                        value='bug',
-                        style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444'}
-                    )
-                ], md=7, xs=12),
-                dbc.Col([
-                    dbc.Label("Dashboard rating", style={'fontSize': '0.85rem'}),
-                    dbc.Select(
-                        id='feedback-rating',
-                        options=[
-                            {'label': '5 - Excellent', 'value': 5},
-                            {'label': '4 - Good', 'value': 4},
-                            {'label': '3 - Mixed', 'value': 3},
-                            {'label': '2 - Poor', 'value': 2},
-                            {'label': '1 - Broken', 'value': 1}
-                        ],
-                        value=3,
-                        style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444'}
-                    )
-                ], md=5, xs=12)
-            ], className='g-2'),
-            html.Div([
-                dbc.Label("What happened?", style={'fontSize': '0.85rem', 'marginTop': '1rem'}),
-                dbc.Textarea(
-                    id='feedback-message',
-                    placeholder='Example: The track map failed to load for 2025 Japan FP2 after I selected VER vs TSU.',
-                    style={'backgroundColor': '#1a1a1a', 'color': '#eee', 'border': '1px solid #444',
-                           'minHeight': '170px'}
-                )
-            ]),
-            html.Div([
-                dbc.Label("Contact (optional)", style={'fontSize': '0.85rem', 'marginTop': '1rem'}),
-                dbc.Input(
-                    id='feedback-contact',
-                    type='text',
-                    placeholder='Email if you want follow-up',
-                    style={'backgroundColor': '#1a1a1a', 'color': '#eee', 'border': '1px solid #444'}
-                )
-            ]),
-            dbc.Alert(id='feedback-submit-alert', is_open=False, duration=5000, style={'marginTop': '1rem'})
-        ]),
-        dbc.ModalFooter([
-            dbc.Button("Cancel", id='cancel-feedback-btn', color='secondary', outline=True, n_clicks=0),
-            dbc.Button("Submit Feedback", id='submit-feedback-btn', color='danger', n_clicks=0)
-        ])
-    ], id='feedback-modal', is_open=False, size='lg', centered=True),
+#     dbc.Button("Send Feedback", id='open-feedback-modal-btn', color='danger', n_clicks=0,
+#                className='feedback-fab'),
+#     dbc.Modal([
+#         dbc.ModalHeader(dbc.ModalTitle("Send Feedback")),
+#         dbc.ModalBody([
+#             html.P(
+#                 "Tell me what broke, what felt confusing, or what you want added. "
+#                 "The current session and tab are attached automatically.",
+#                 style={'color': '#bbb', 'marginBottom': '1rem'}
+#             ),
+#             dbc.Row([
+#                 dbc.Col([
+#                     dbc.Label("Feedback Type", style={'fontSize': '0.85rem'}),
+#                     dbc.Select(
+#                         id='feedback-category',
+#                         options=[
+#                             {'label': 'Bug Report', 'value': 'bug'},
+#                             {'label': 'Feature Request', 'value': 'feature'},
+#                             {'label': 'Data Issue', 'value': 'data'},
+#                             {'label': 'General Feedback', 'value': 'general'}
+#                         ],
+#                         value='bug',
+#                         style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444'}
+#                     )
+#                 ], md=7, xs=12),
+#                 dbc.Col([
+#                     dbc.Label("Dashboard rating", style={'fontSize': '0.85rem'}),
+#                     dbc.Select(
+#                         id='feedback-rating',
+#                         options=[
+#                             {'label': '5 - Excellent', 'value': 5},
+#                             {'label': '4 - Good', 'value': 4},
+#                             {'label': '3 - Mixed', 'value': 3},
+#                             {'label': '2 - Poor', 'value': 2},
+#                             {'label': '1 - Broken', 'value': 1}
+#                         ],
+#                         value=3,
+#                         style={'backgroundColor': '#1a1a1a', 'color': 'white', 'border': '1px solid #444'}
+#                     )
+#                 ], md=5, xs=12)
+#             ], className='g-2'),
+#             html.Div([
+#                 dbc.Label("What happened?", style={'fontSize': '0.85rem', 'marginTop': '1rem'}),
+#                 dbc.Textarea(
+#                     id='feedback-message',
+#                     placeholder='Example: The track map failed to load for 2025 Japan FP2 after I selected VER vs TSU.',
+#                     style={'backgroundColor': '#1a1a1a', 'color': '#eee', 'border': '1px solid #444',
+#                            'minHeight': '170px'}
+#                 )
+#             ]),
+#             html.Div([
+#                 dbc.Label("Contact (optional)", style={'fontSize': '0.85rem', 'marginTop': '1rem'}),
+#                 dbc.Input(
+#                     id='feedback-contact',
+#                     type='text',
+#                     placeholder='Email if you want follow-up',
+#                     style={'backgroundColor': '#1a1a1a', 'color': '#eee', 'border': '1px solid #444'}
+#                 )
+#             ]),
+#             dbc.Alert(id='feedback-submit-alert', is_open=False, duration=5000, style={'marginTop': '1rem'})
+#         ]),
+#         dbc.ModalFooter([
+#             dbc.Button("Cancel", id='cancel-feedback-btn', color='secondary', outline=True, n_clicks=0),
+#             dbc.Button("Submit Feedback", id='submit-feedback-btn', color='danger', n_clicks=0)
+#         ])
+#     ], id='feedback-modal', is_open=False, size='lg', centered=True),
 
     dbc.Toast(
         id="teammate-toast",
@@ -761,8 +761,8 @@ app_layout = dbc.Container([
     dcc.Store(id='sidebar-collapsed-store', storage_type='local', data=False),
     dcc.Interval(id='lap-playback-interval', interval=20, n_intervals=0, disabled=True),
     dcc.Interval(id='preload-status-interval', interval=1500, n_intervals=0, disabled=True),
-    dcc.Store(id='feedback-refresh-store'),
-    dcc.Download(id='feedback-download'),
+#     dcc.Store(id='feedback-refresh-store'),
+#     dcc.Download(id='feedback-download'),
     dcc.ConfirmDialog(id='error-dialog', message='')
 ], id='app-root', fluid=True, className='app-root',
    style={"padding": "0px", "height": "100vh", "overflow": "hidden"})
