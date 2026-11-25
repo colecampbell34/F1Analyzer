@@ -86,10 +86,9 @@ def _compound_name(value):
 
 
 def _pit_laps(session, driver):
-    pits = getattr(session, "pits", pd.DataFrame())
-    if pits.empty:
-        return []
-    return sorted(pd.to_numeric(pits.loc[pits["abbreviation"] == driver, "lap_number"], errors="coerce").dropna().astype(int).unique().tolist())
+    from strategy_insights import build_driver_pit_laps
+
+    return build_driver_pit_laps(session, driver)
 
 
 def _add_status_regions(fig, session):
@@ -184,7 +183,10 @@ def _build_strategy_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         fig.add_annotation(text=note, x=0.01, y=0.98, xref="paper", yref="paper", xanchor="left", yanchor="top", showarrow=False, font=dict(size=10, color="#9ba0a6"))
 
     _apply_base_layout(fig, title="Strategy & Weather", legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="center", x=0.5, font=dict(size=10)), uirevision="strategy")
-    fig.update_xaxes(title_text="Lap number", row=2, col=1)
+    from strategy_insights import session_lap_extent
+
+    max_lap = session_lap_extent(session)
+    fig.update_xaxes(title_text="Lap number", range=[0, max_lap + 0.5], row=2, col=1)
     fig.update_yaxes(title_text="Lap time (s)", row=1, col=1, autorange="reversed")
     fig.update_yaxes(title_text="Track temp (°C)", row=2, col=1)
     return fig
@@ -240,7 +242,7 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
     """Plot observed intervals where available, otherwise a labeled estimate."""
     from plotly.subplots import make_subplots
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.7, 0.3])
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06, row_heights=[0.58, 0.42])
     laps1, laps2 = _driver_laps(session, driver1), _driver_laps(session, driver2)
     if laps1.empty or laps2.empty:
         fig.add_annotation(text="Race lap timing is unavailable for one selected driver.", showarrow=False, x=0.5, y=0.5, xref="paper", yref="paper")
@@ -312,6 +314,17 @@ def _build_race_gaps_fig(session, driver1, driver2, lbl1, lbl2, c1, c2):
         uirevision="gaps",
     )
     fig.update_yaxes(title_text="Relative gap (s)", row=1, col=1)
-    fig.update_yaxes(title_text="Position", row=2, col=1, autorange="reversed", tickvals=list(range(1, 21)))
+    position_columns = [
+        pd.to_numeric(merged[column], errors="coerce")
+        for column in ("position_1", "position_2")
+        if column in merged
+    ]
+    positions = pd.concat(position_columns).dropna() if position_columns else pd.Series(dtype=float)
+    field_max = max(1, int(positions.max()) if not positions.empty else 20)
+    tick_step = max(1, int(np.ceil(field_max / 8)))
+    position_ticks = list(range(1, field_max + 1, tick_step))
+    if field_max not in position_ticks:
+        position_ticks.append(field_max)
+    fig.update_yaxes(title_text="Position", row=2, col=1, autorange="reversed", tickmode="array", tickvals=position_ticks)
     fig.update_xaxes(title_text="Lap number", range=[0, max_lap + 0.5], row=2, col=1)
     return fig

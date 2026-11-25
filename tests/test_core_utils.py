@@ -417,7 +417,11 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
             {"abbreviation": "VER", "lap_number": 60},
         ])
         bundle.laps = pd.DataFrame([
-            {"abbreviation": "VER", "lap_number": lap, "position": 3}
+            {
+                "abbreviation": "VER", "lap_number": lap, "position": 3,
+                "lap_duration": 90.0, "stint_number": 1, "compound": "SOFT",
+                "date_start": pd.Timestamp("2023-05-28T13:00:00Z") + pd.Timedelta(minutes=lap),
+            }
             for lap in range(1, 68)
         ])
 
@@ -429,14 +433,28 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         )
         self.assertTrue(all(event["source"] == "openf1.stints" for event in impacts))
 
+        total_laps = strategy_insights.session_lap_extent(bundle)
+        self.assertEqual(total_laps, 67)
+        pit_laps = strategy_insights.build_driver_pit_laps(bundle, "VER")
+        self.assertEqual(pit_laps, graphs_race._pit_laps(bundle, "VER"))
         overview = callbacks_tabs._render_stint_overview([
-            ("VER", strategy_insights.build_driver_stints(bundle, "VER")),
-        ])
+            ("VER", strategy_insights.build_driver_stints(bundle, "VER"), pit_laps),
+        ], total_laps=total_laps)
         bar = overview.children[1].children[0].children[1]
         markers = [child for child in bar.children if child.className == "stint-pit-marker"]
         self.assertEqual(len(markers), 4)
+        self.assertEqual(
+            [marker.title for marker in markers],
+            ["Pit stop on lap 2", "Pit stop on lap 27", "Pit stop on lap 41", "Pit stop on lap 60"],
+        )
+        self.assertEqual(markers[0].style["left"], f"{2 / 67.5 * 100:.3f}%")
         labels = [child.children for child in bar.children if child.className == "stint-bar-segment"]
         self.assertEqual(labels, ["SOFT 1–11", "HARD 12–27", "MEDIUM 28–41", "HARD 42–60", "HARD 61–66"])
+
+        strategy = graphs_race._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
+        pit_lines = [shape.x0 for shape in strategy.layout.shapes if shape.x0 == shape.x1]
+        self.assertEqual(pit_lines, pit_laps)
+        self.assertEqual(list(strategy.layout.xaxis2.range), [0, 67.5])
 
     def test_pace_excludes_known_pit_and_out_laps_and_race_gap_labels_lapped_strings(self):
         laps = pd.DataFrame({
@@ -474,8 +492,8 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
             {"date": "2023-05-28T13:08:10Z", "category": "Flag", "flag": "DOUBLE YELLOW", "scope": "Sector", "lap_number": 9, "message": "DOUBLE YELLOW IN SECTOR 2"},
         ])
         safety, vsc, red, yellow = data.get_track_status_events(bundle)
-        self.assertEqual(safety, {5})
-        self.assertEqual(vsc, {1, 4})
+        self.assertEqual(safety, {5, 6})
+        self.assertEqual(vsc, {1, 2, 4})
         self.assertEqual(red, {7})
         self.assertEqual(yellow, {9})
         strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
@@ -485,7 +503,7 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
         ]
         self.assertEqual(len(status_regions), 4)
 
-    def test_2026_barcelona_vsc_shading_uses_only_explicit_deployment_laps(self):
+    def test_2026_barcelona_vsc_shading_expands_explicit_intervals(self):
         bundle = _bundle()
         bundle.ref = session_data.SessionRef(
             year=2026, round=9, event_name="Barcelona Grand Prix",
@@ -512,12 +530,12 @@ class TestNormalizedDashboardWorkflows(unittest.TestCase):
 
         safety, vsc, red, _yellow = data.get_track_status_events(bundle)
         self.assertEqual(safety, set())
-        self.assertEqual(vsc, {41, 63})
+        self.assertEqual(vsc, {41, 42, 63, 64, 65})
         self.assertEqual(red, set())
 
         strategy = graphs._build_strategy_fig(bundle, "VER", "ALO", "VER", "ALO", "#3671C6", "#358C75")
         vsc_regions = [shape for shape in strategy.layout.shapes if shape.fillcolor == "yellow"]
-        self.assertEqual([(shape.x0, shape.x1) for shape in vsc_regions], [(40.5, 41.5), (62.5, 63.5)])
+        self.assertEqual([(shape.x0, shape.x1) for shape in vsc_regions], [(40.5, 42.5), (62.5, 65.5)])
 
     def test_public_data_facade_loads_fixture_backed_bundle(self):
         bundle = _bundle()

@@ -1,9 +1,8 @@
 /*
  * Replay deliberately lives outside Dash's callback/render cycle.  Dash still
  * supplies the bounded telemetry payload and owns the controls, but animation
- * frames only mutate the already-mounted Plotly traces.  Returning figures on
- * every 20ms interval made the map feel stop-and-go on otherwise capable
- * machines.
+ * frames update the replay map on a canvas so marker motion is independent of
+ * Plotly's asynchronous redraw and camera transition queues.
  */
 (function() {
     const state = {
@@ -17,11 +16,16 @@
         clockOriginT: 0,
         lastAuxiliaryFrame: 0,
         lastLabelFrame: 0,
-        lastMapUpdate: 0,
         lastCameraUpdate: 0,
-        lastCameraRender: null,
         camera: null,
-        trackBounds: null
+        trackBounds: null,
+        mapCanvas: null,
+        mapCanvasContext: null,
+        mapCanvasParent: null,
+        mapTrackSource: null,
+        mapTrackPath: null,
+        mapHiddenElements: [],
+        mapParentPosition: null
     };
 
     const plotly = function() {
@@ -78,7 +82,129 @@
         const toggle = document.querySelector('#mini-map-follow-toggle input[type="checkbox"]');
         return !toggle || Boolean(toggle.checked);
     };
-    const updateMapCamera = function(pObj, mini, first, second, now) {
+    const activateReplayMap = function(mini) {
+        if (!mini) return null;
+        if (!state.mapCanvas || state.mapCanvasParent !== mini || !state.mapCanvas.isConnected) {
+            const computedPosition = window.getComputedStyle(mini).position;
+            if (computedPosition === 'static') {
+                state.mapParentPosition = mini.style.position;
+                mini.style.position = 'relative';
+            }
+            state.mapCanvas = document.createElement('canvas');
+            state.mapCanvas.className = 'f1-replay-map-canvas';
+            state.mapCanvas.setAttribute('aria-hidden', 'true');
+            Object.assign(state.mapCanvas.style, {
+                position: 'absolute', inset: '0', width: '100%', height: '100%',
+                pointerEvents: 'none', zIndex: '3'
+            });
+            mini.appendChild(state.mapCanvas);
+            state.mapCanvasContext = state.mapCanvas.getContext('2d');
+            state.mapCanvasParent = mini;
+            state.mapTrackSource = null;
+            state.mapTrackPath = null;
+        }
+        const svg = mini.querySelector('.svg-container');
+        if (svg && svg.style.visibility !== 'hidden') {
+            state.mapHiddenElements.push({element: svg, visibility: svg.style.visibility});
+            svg.style.visibility = 'hidden';
+        }
+        return state.mapCanvasContext;
+    };
+    const deactivateReplayMap = function() {
+        state.mapHiddenElements.forEach(function(item) {
+            if (item.element && item.element.isConnected) item.element.style.visibility = item.visibility;
+        });
+        state.mapHiddenElements = [];
+        if (state.mapCanvas && state.mapCanvas.isConnected) state.mapCanvas.remove();
+        if (state.mapCanvasParent && state.mapParentPosition !== null) {
+            state.mapCanvasParent.style.position = state.mapParentPosition;
+        }
+        state.mapCanvas = null;
+        state.mapCanvasContext = null;
+        state.mapCanvasParent = null;
+        state.mapTrackSource = null;
+        state.mapTrackPath = null;
+        state.mapParentPosition = null;
+    };
+    const buildMapTrackPath = function(track) {
+        const path = new Path2D();
+        let started = false;
+        for (let i = 0; i < track.x.length; i++) {
+            const x = Number(track.x[i]), y = Number(track.y[i]);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+            if (!started) {
+                path.moveTo(x, y);
+                started = true;
+            } else {
+                path.lineTo(x, y);
+            }
+        }
+        return path;
+    };
+    const drawReplayMap = function(mini, first, second) {
+        const store = state.miniStore;
+        const track = store && store.track;
+        const ctx = activateReplayMap(mini);
+        if (!ctx || !track || !track.x || !track.y || !track.x.length || !track.y.length) return;
+        if (state.mapTrackSource !== track) {
+            state.mapTrackPath = buildMapTrackPath(track);
+            state.mapTrackSource = track;
+        }
+
+        const rect = mini.getBoundingClientRect();
+        const width = rect.width, height = rect.height;
+        if (!width || !height) return;
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const pixelWidth = Math.round(width * dpr), pixelHeight = Math.round(height * dpr);
+        if (state.mapCanvas.width !== pixelWidth || state.mapCanvas.height !== pixelHeight) {
+            state.mapCanvas.width = pixelWidth;
+            state.mapCanvas.height = pixelHeight;
+            state.mapCanvas.style.width = `${width}px`;
+            state.mapCanvas.style.height = `${height}px`;
+        }
+
+        const camera = state.camera || state.trackBounds;
+        if (!camera) return;
+        const rangeX = Math.max(1e-6, camera.x1 - camera.x0);
+        const rangeY = Math.max(1e-6, camera.y1 - camera.y0);
+        const scale = Math.min(width / rangeX, height / rangeY);
+        const offsetX = (width - rangeX * scale) / 2;
+        const offsetY = (height - rangeY * scale) / 2;
+
+        ctx.clearRect(0, 0, pixelWidth, pixelHeight);
+        ctx.setTransform(
+            dpr * scale, 0, 0, -dpr * scale,
+            dpr * (offsetX - camera.x0 * scale),
+            dpr * (offsetY + camera.y1 * scale)
+        );
+        ctx.strokeStyle = '#444';
+        ctx.lineWidth = 2 / scale;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.stroke(state.mapTrackPath);
+
+        const drawMarker = function(position, color) {
+            const x = offsetX + (position[0] - camera.x0) * scale;
+            const y = offsetY + (camera.y1 - position[1]) * scale;
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.beginPath();
+            ctx.arc(x, y, 5.5, 0, Math.PI * 2);
+            ctx.fillStyle = color || '#f7f7f3';
+            ctx.fill();
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = '#fff';
+            ctx.stroke();
+            ctx.setTransform(
+                dpr * scale, 0, 0, -dpr * scale,
+                dpr * (offsetX - camera.x0 * scale),
+                dpr * (offsetY + camera.y1 * scale)
+            );
+        };
+        drawMarker(first, store.d1.color);
+        drawMarker(second, store.d2.color);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+    };
+    const updateMapCamera = function(first, second, now) {
         const track = state.miniStore && state.miniStore.track;
         if (!track || !track.x || !track.y || !track.x.length || !track.y.length) return;
         if (!state.trackBounds) {
@@ -86,22 +212,23 @@
             const maxX = Math.max.apply(null, track.x);
             const minY = Math.min.apply(null, track.y);
             const maxY = Math.max.apply(null, track.y);
+            const span = Math.max(maxX - minX, maxY - minY, 1);
+            const margin = span * 0.05;
             state.trackBounds = {
-                x0: minX, x1: maxX,
-                y0: minY, y1: maxY,
-                span: Math.max(maxX - minX, maxY - minY, 1)
+                x0: minX - margin, x1: maxX + margin,
+                y0: minY - margin, y1: maxY + margin,
+                span: span + margin * 2
             };
         }
         const fullSpan = state.trackBounds.span;
         const full = state.trackBounds;
+        const followEnabled = shouldFollowCars();
         let target = full;
-        if (shouldFollowCars()) {
+        if (followEnabled) {
             const gap = Math.hypot(first[0] - second[0], first[1] - second[1]);
-            // A tight camera is most useful when both cars are close. As they
-            // separate, deliberately ease back toward the whole circuit.
-            const scale = gap > fullSpan * 0.42
-                ? fullSpan
-                : Math.min(fullSpan, Math.max(fullSpan * 0.16, gap * 3.4, 120));
+            // Zoom continuously with the cars' separation; avoid a threshold
+            // that snaps between the local view and the whole circuit.
+            const scale = Math.min(fullSpan * 1.2, Math.max(fullSpan * 0.2, gap * 3.4, 120));
             const centerX = (first[0] + second[0]) / 2;
             const centerY = (first[1] + second[1]) / 2;
             target = {
@@ -111,50 +238,25 @@
                 y1: centerY + scale / 2
             };
         }
-        if (!state.camera) state.camera = target;
+        if (!state.camera) state.camera = {...full};
         else {
             // Use elapsed time rather than a fixed amount so the camera has
             // the same glide on fast and slower displays.
             const elapsed = Math.max(1, now - state.lastCameraUpdate);
-            const ease = 1 - Math.exp(-elapsed / 360);
+            const ease = 1 - Math.exp(-elapsed / 500);
             ['x0', 'x1', 'y0', 'y1'].forEach(function(key) {
                 state.camera[key] += (target[key] - state.camera[key]) * ease;
             });
         }
         state.lastCameraUpdate = now;
-        // Axis relayouts are much more expensive than moving the car markers.
-        // Keep the camera smooth while avoiding a redraw request on every map
-        // frame, which can starve the replay clock on slower devices.
-        if (state.lastCameraRender !== null && now - state.lastCameraRender < 80) return;
-        state.lastCameraRender = now;
-        pObj.relayout(mini, {
-            'xaxis.range': [state.camera.x0, state.camera.x1],
-            'yaxis.range': [state.camera.y0, state.camera.y1]
-        });
     };
-    const updateMap = function(pObj, now) {
+    const updateMap = function(now) {
         const mini = plot('mini-track-map');
-        if (!mini || !mini.data || !state.miniStore) return;
-        // Plotly queues expensive redraws. A capped, consistent 30fps avoids
-        // queue buildup that made both markers and camera appear stop-and-go.
-        if (now - state.lastMapUpdate < 33) return;
-        state.lastMapUpdate = now;
+        if (!mini || !state.miniStore) return;
         const rawP1 = positionAt(state.miniStore.d1, state.t);
         const rawP2 = positionAt(state.miniStore.d2, state.t);
-        // The server has already filtered noisy position samples. Keep the
-        // markers on the replay timestamp instead of applying another filter
-        // that would make them trail, especially through tight corners.
-        const p1 = rawP1;
-        const p2 = rawP2;
-        pObj.restyle(mini, {
-            x: [[p1[0]], [p2[0]]],
-            y: [[p1[1]], [p2[1]]],
-            hovertemplate: [
-                `<b>${state.miniStore.d1.name}</b><br>t=${state.t.toFixed(2)}s<extra></extra>`,
-                `<b>${state.miniStore.d2.name}</b><br>t=${state.t.toFixed(2)}s<extra></extra>`
-            ]
-        }, [1, 2]);
-        updateMapCamera(pObj, mini, p1, p2, now);
+        updateMapCamera(rawP1, rawP2, now);
+        drawReplayMap(mini, rawP1, rawP2);
     };
     const updateGG = function(pObj) {
         const diagram = plot('gg-diagram');
@@ -211,7 +313,7 @@
         advanceReplayClock(now);
         const pObj = plotly();
         if (pObj) {
-            updateMap(pObj, now);
+            updateMap(now);
             // Secondary plots are still responsive, but do not need to compete
             // with position animation for every display frame.
             if (now - state.lastAuxiliaryFrame >= 66) {
@@ -253,11 +355,11 @@
         state.clockOriginT = state.t;
         state.lastAuxiliaryFrame = 0;
         state.lastLabelFrame = 0;
-        state.lastMapUpdate = 0;
         state.lastCameraUpdate = 0;
-        state.lastCameraRender = null;
         state.camera = null;
         state.trackBounds = null;
+        state.mapTrackSource = null;
+        state.mapTrackPath = null;
         if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
         updateText();
         state.frameId = window.requestAnimationFrame(draw);
@@ -265,6 +367,7 @@
     };
     window.f1AnalyzerPlayback = {
         isRunning: function() { return state.running; },
+        deactivateMapOverlay: deactivateReplayMap,
         start: function(miniStore, ggStore) { return play(miniStore, ggStore, true); },
         toggle: function(miniStore, ggStore) {
             if (state.running) {
@@ -283,6 +386,7 @@
             state.clockOriginMs = null;
             if (state.frameId !== null) window.cancelAnimationFrame(state.frameId);
             state.frameId = null;
+            deactivateReplayMap();
             updateText();
         }
     };
@@ -295,13 +399,50 @@
 })();
 
 (function() {
+    let dragBound = false;
+    const bindAIPanelDrag = function() {
+        const panel = document.getElementById('ai-analysis-panel');
+        const handle = document.getElementById('ai-panel-drag-handle');
+        if (!panel || !handle || dragBound) return;
+        dragBound = true;
+        handle.addEventListener('pointerdown', function(event) {
+            if (event.target.closest('button')) return;
+            const rect = panel.getBoundingClientRect();
+            const offsetX = event.clientX - rect.left;
+            const offsetY = event.clientY - rect.top;
+            panel.style.left = rect.left + 'px';
+            panel.style.top = rect.top + 'px';
+            panel.style.right = 'auto';
+            panel.style.bottom = 'auto';
+            handle.setPointerCapture(event.pointerId);
+            const move = function(moveEvent) {
+                const left = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, moveEvent.clientX - offsetX));
+                const top = Math.max(0, Math.min(window.innerHeight - 60, moveEvent.clientY - offsetY));
+                panel.style.left = left + 'px';
+                panel.style.top = top + 'px';
+            };
+            const stop = function() {
+                handle.removeEventListener('pointermove', move);
+                handle.removeEventListener('pointerup', stop);
+                handle.removeEventListener('pointercancel', stop);
+            };
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('pointerup', stop);
+            handle.addEventListener('pointercancel', stop);
+        });
+    };
+    new MutationObserver(bindAIPanelDrag).observe(document.documentElement, {childList: true, subtree: true});
+    document.addEventListener('DOMContentLoaded', bindAIPanelDrag);
+    window.setTimeout(bindAIPanelDrag, 500);
+})();
+
+(function() {
     const state = {activeTab: null, visible: false};
     const labels = {
         'tab-telemetry': 'Preparing telemetry',
         'tab-trackmap': 'Preparing track map',
         'tab-strategy': 'Preparing strategy analysis',
-        'tab-racepace': 'Preparing race and pace',
-        'tab-ai': 'Preparing AI context'
+        'tab-racepace': 'Preparing race and pace'
     };
     const activePlotForTab = function(tab) {
         return {
@@ -324,7 +465,6 @@
         else detail.textContent = 'Loading the data this view needs…';
     };
     const isViewReady = function(tab) {
-        if (tab === 'tab-ai') return Boolean(document.getElementById('ai-question-input'));
         const graphId = activePlotForTab(tab);
         if (!graphId) return true;
         const container = document.getElementById(graphId);
@@ -427,6 +567,9 @@ window.dash_clientside = Object.assign({}, window.dash_clientside, {
             const dash = document.getElementById('live-telemetry-dashboard');
             if (playbackDisabled === false || (window.f1AnalyzerPlayback && window.f1AnalyzerPlayback.isRunning())) {
                 return window.dash_clientside.no_update;
+            }
+            if (window.f1AnalyzerPlayback && window.f1AnalyzerPlayback.deactivateMapOverlay) {
+                window.f1AnalyzerPlayback.deactivateMapOverlay();
             }
             if (!hoverData || !miniStore || !fig || !hoverData.points || hoverData.points.length === 0) {
                 if (dash) dash.style.display = 'none';

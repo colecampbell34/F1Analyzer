@@ -114,35 +114,46 @@ def register_ai_callbacks(app):
     """Register AI analysis callbacks."""
 
     @app.callback(
+        [Output('ai-analysis-panel', 'style'), Output('ai-panel-open-store', 'data')],
+        [Input('ai-open-button', 'n_clicks'), Input('ai-close-button', 'n_clicks')],
+        [State('ai-panel-open-store', 'data')],
+        prevent_initial_call=True,
+    )
+    def toggle_ai_panel(_open_clicks, _close_clicks, is_open):
+        trigger = dash.callback_context.triggered_id
+        is_open = trigger == 'ai-open-button' if trigger in {'ai-open-button', 'ai-close-button'} else bool(is_open)
+        return ({'display': 'flex'} if is_open else {'display': 'none'}), is_open
+
+    @app.callback(
         [Output('ai-ask-button', 'disabled'),
          Output('ai-question-input', 'placeholder')],
-        [Input('session-context-store', 'data'), Input('main-tabs', 'value'),
+        [Input('session-context-store', 'data'), Input('ai-panel-open-store', 'data'),
          Input('dashboard-params-store', 'data'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value')]
     )
-    def update_ai_input_state(session_context, active_tab, params, d1_lap_value, d2_lap_value):
+    def update_ai_input_state(session_context, panel_open, params, d1_lap_value, d2_lap_value):
         if not AI_ENABLED:
             return True, "AI Analysis is not configured."
         if not params:
             return True, "Update the dashboard before asking AI about a session."
-        if active_tab == 'tab-ai' and not _ai_context_matches_params(session_context, params, d1_lap_value, d2_lap_value):
+        if panel_open and not _ai_context_matches_params(session_context, params, d1_lap_value, d2_lap_value):
             return False, "Ask about this session... context will finish loading if needed."
         return False, 'Ask about this session... (e.g. "What was the optimal strategy in this race?")'
 
     @app.callback(
         Output('session-context-store', 'data', allow_duplicate=True),
-        [Input('dashboard-params-store', 'data'), Input('main-tabs', 'value'),
+        [Input('dashboard-params-store', 'data'), Input('ai-panel-open-store', 'data'),
          Input('d1-lap-dropdown', 'value'), Input('d2-lap-dropdown', 'value'),
          Input('preload-status-interval', 'n_intervals'), Input('active-tab-preload-store', 'data')],
         [State('session-context-store', 'data')],
         prevent_initial_call=True
     )
-    def update_ai_session_context(params, active_tab, d1_lap_value, d2_lap_value, _n, _preload_state, current_context):
-        if not params or active_tab != 'tab-ai':
+    def update_ai_session_context(params, panel_open, d1_lap_value, d2_lap_value, _n, _preload_state, current_context):
+        if not params or not panel_open:
             return dash.no_update
 
         from data import background_preload_enabled, ensure_preload_for_tab
-        status = ensure_preload_for_tab(params, active_tab)
+        status = ensure_preload_for_tab(params, 'tab-racepace')
         if background_preload_enabled() and status.get('status') != 'ready':
             return dash.no_update
 

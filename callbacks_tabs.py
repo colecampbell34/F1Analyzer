@@ -7,26 +7,29 @@ from dash.dependencies import Input, Output, State
 from callbacks_shared import _active_tab_ready, _figure_cache_key, _lap_dropdown_to_mode, _timed_callback
 
 
-def _render_stint_overview(stints_by_driver):
+def _render_stint_overview(stints_by_driver, total_laps=None):
     """Render a compact, proportional stint strip above the strategy charts."""
     from graph_shared import COMPOUND_COLORS
 
     rows = []
-    for driver, stints in stints_by_driver:
+    drawable_by_driver = []
+    for driver, stints, pit_laps in stints_by_driver:
         if not stints:
             continue
         drawable = [stint for stint in stints if stint.get('start_lap') is not None and stint.get('end_lap') is not None]
         if not drawable:
             continue
-        total_laps = max(stint['end_lap'] for stint in drawable)
+        drawable_by_driver.append((driver, drawable, pit_laps))
+    if total_laps is None:
+        total_laps = max(
+            (stint['end_lap'] for _, stints, _ in drawable_by_driver for stint in stints),
+            default=1,
+        )
+    total_laps = max(float(total_laps), 1.0)
+
+    for driver, drawable, pit_laps in drawable_by_driver:
         bars = []
-        for index, stint in enumerate(drawable):
-            if index:
-                bars.append(html.Span(
-                    title=f"Pit stop before lap {stint['start_lap']}",
-                    className='stint-pit-marker',
-                    **{'aria-label': f"Pit stop before lap {stint['start_lap']}"},
-                ))
+        for stint in drawable:
             lap_count = max(1, stint['end_lap'] - stint['start_lap'] + 1)
             compound = stint['compound']
             start_lap = int(stint['start_lap']) if float(stint['start_lap']).is_integer() else stint['start_lap']
@@ -37,14 +40,24 @@ def _render_stint_overview(stints_by_driver):
                 title=(label if compound != 'UNAVAILABLE' else f"{label} · compound unavailable from source"),
                 className='stint-bar-segment',
                 style={
-                    'flex': f'{lap_count:g} 1 0',
+                    'position': 'absolute',
+                    'top': 0,
+                    'bottom': 0,
+                    'left': f"{(float(stint['start_lap']) - 0.5) / (total_laps + 0.5) * 100:.3f}%",
+                    'width': f'{lap_count / (total_laps + 0.5) * 100:.3f}%',
                     'backgroundColor': COMPOUND_COLORS.get(compound, '#737980'),
                     'color': '#101216' if compound in {'MEDIUM', 'HARD', 'INTERMEDIATE'} else '#f7f7f3',
                 },
             ))
+        markers = [html.Span(
+            title=f"Pit stop on lap {pit_lap}",
+            className='stint-pit-marker',
+            style={'left': f"{float(pit_lap) / (total_laps + 0.5) * 100:.3f}%"},
+            **{'aria-label': f"Pit stop on lap {pit_lap}"},
+        ) for pit_lap in pit_laps]
         rows.append(html.Div([
             html.Strong(driver, className='stint-driver-code'),
-            html.Div(bars, className='stint-bar', title=f'{driver}: {int(total_laps) if float(total_laps).is_integer() else total_laps} laps'),
+            html.Div([*bars, *markers], className='stint-bar', title=f'{driver}: {int(total_laps) if float(total_laps).is_integer() else total_laps} laps'),
         ], className='stint-overview-row'))
 
     if not rows:
@@ -82,7 +95,7 @@ def _render_race_context(session, driver1, driver2, color1, color2):
         cards.append(html.Div([
             html.Strong(driver, style={'color': colors.get(driver, '#f7f7f3')}),
             html.Span(f'{grid_label} → {finish_label}')
-        ], className='race-context-card'))
+        ], className='race-context-card', style={'--driver-accent': colors.get(driver, '#f7f7f3')}))
     return html.Div([
         html.Div('Race context', className='race-summary-kicker'),
         html.Div(cards or [html.Span('Classification context unavailable.')], className='race-context-cards'),
@@ -104,15 +117,13 @@ def _compound_chip(compound):
 
 def _render_strategy_impact(impacts_by_driver):
     """Present tyre-service decisions, not a low-signal pit-stop time chart."""
-    lines = []
+    driver_cards = []
     for driver, color, impacts in impacts_by_driver:
         driver_label = html.Strong(driver, style={'color': color})
+        lines = []
         if not impacts:
-            lines.append(html.Div([
-                driver_label, html.Span(' No tyre-service change recorded.')
-            ], className='race-impact-line'))
-            continue
-        for event in impacts:
+            lines.append(html.Div('No tyre-service change recorded.', className='race-impact-line'))
+        for event in impacts or []:
             position = []
             if event['position_before'] is not None and event['position_after'] is not None:
                 position = [html.Span(
@@ -130,12 +141,11 @@ def _render_strategy_impact(impacts_by_driver):
                     html.Span(' → '),
                     _compound_chip(event['to_compound']),
                 ]
-            lines.append(html.Div([
-                driver_label, *service, *position,
-            ], className='race-impact-line'))
+            lines.append(html.Div([*service, *position], className='race-impact-line'))
+        driver_cards.append(html.Div([driver_label, *lines], className='race-impact-driver', style={'--driver-accent': color}))
     return html.Div([
         html.Div('Strategy calls', className='race-summary-kicker'),
-        html.Div(lines or [html.Span('No pit strategy data is available.')], className='race-impact-lines'),
+        html.Div(driver_cards or [html.Span('No pit strategy data is available.')], className='race-impact-lines'),
     ], className='race-impact-panel')
 
 
@@ -357,13 +367,18 @@ def register_tab_callbacks(app):
                     fig_deg = _not_applicable_figure("Tyre degradation not applicable for practice sessions")
                     stint_overview = html.Div('Stint plan is available for Race and Sprint sessions.', className='stint-overview-empty')
                 else:
-                    from strategy_insights import build_driver_stints
+                    from strategy_insights import (
+                        build_driver_pit_laps,
+                        build_driver_stints,
+                        session_lap_extent,
+                    )
                     fig_strat = _build_strategy_fig(session, d1, d2, lbl1, lbl2, c1, c2)
                     fig_deg = _build_deg_fig(session, d1, d2, lbl1, lbl2, c1, c2)
+                    total_laps = session_lap_extent(session)
                     stint_overview = _render_stint_overview([
-                        (d1, build_driver_stints(session, d1)),
-                        (d2, build_driver_stints(session, d2)),
-                    ])
+                        (d1, build_driver_stints(session, d1), build_driver_pit_laps(session, d1)),
+                        (d2, build_driver_stints(session, d2), build_driver_pit_laps(session, d2)),
+                    ], total_laps=total_laps)
 
                 return stint_overview, fig_strat, fig_deg, cache_key
             except Exception as e:

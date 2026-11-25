@@ -66,8 +66,7 @@ def _tab_label(tab_value):
         'tab-telemetry': 'Telemetry',
         'tab-trackmap': 'Track Map',
         'tab-strategy': 'Strategy',
-        'tab-racepace': 'Race & Pace',
-        'tab-ai': 'AI Analysis'
+        'tab-racepace': 'Race & Pace'
     }
     return labels.get(tab_value, 'Unknown')
 

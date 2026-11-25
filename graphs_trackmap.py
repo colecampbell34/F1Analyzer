@@ -179,15 +179,50 @@ def _build_dominance_fig(
         group_start = 0
         for ms in range(1, num_ms + 1):
             if ms == num_ms or winners[ms] != winners[group_start]:
+                # Adjacent colour runs share only their endpoint; retaining that
+                # endpoint keeps the circuit continuous without stacking whole
+                # mini-sector traces on top of each other.
                 sector_data = tel1_s[(tel1_s['MS'] >= group_start) & (tel1_s['MS'] <= ms)]
                 if not sector_data.empty:
                     color = c1 if winners[group_start] == driver1 else c2
                     fig.add_trace(go.Scatter(
                         x=sector_data['X'], y=sector_data['Y'], mode='lines',
-                        line=dict(color=color, width=8), showlegend=False,
+                        line=dict(color=color, width=6), showlegend=False,
                         hoverinfo='skip'
                     ))
                 group_start = ms
+
+        # OpenF1 location traces can finish a few metres before their first
+        # sample. Close that tiny start/finish seam so every circuit is drawn
+        # continuously. A compact checkered marker identifies the join.
+        track_x = tel1_s['X'].to_numpy(dtype=float)
+        track_y = tel1_s['Y'].to_numpy(dtype=float)
+        if len(track_x) > 2:
+            closure = float(np.hypot(track_x[-1] - track_x[0], track_y[-1] - track_y[0]))
+            circuit_scale = float(np.hypot(np.ptp(track_x), np.ptp(track_y)))
+            # Close only a small seam. Larger gaps may reflect missing location
+            # samples and must stay visible instead of being bridged.
+            if circuit_scale > 0 and closure <= circuit_scale * 0.03:
+                fig.add_trace(go.Scatter(
+                    x=[track_x[-1], track_x[0]], y=[track_y[-1], track_y[0]],
+                    mode='lines', line=dict(color=c1, width=7),
+                    showlegend=False, hoverinfo='skip',
+                ))
+            dx, dy = track_x[1] - track_x[0], track_y[1] - track_y[0]
+            norm = float(np.hypot(dx, dy))
+            if norm > 0 and circuit_scale > 0 and closure <= circuit_scale * 0.03:
+                # Use small alternating squares across an estimated track-width
+                # line; coordinates remain illustrative, like the location data.
+                nx, ny = -dy / norm, dx / norm
+                extent = max(float(np.ptp(track_x)), float(np.ptp(track_y))) * 0.012
+                fig.add_trace(go.Scatter(
+                    x=[track_x[0] + nx * extent * t for t in (-1, -0.5, 0, 0.5, 1)],
+                    y=[track_y[0] + ny * extent * t for t in (-1, -0.5, 0, 0.5, 1)],
+                    mode='markers', marker=dict(
+                        color=['#f4f1e8', '#101216', '#f4f1e8', '#101216', '#f4f1e8'],
+                        size=7, symbol='square', line=dict(color='#f4f1e8', width=0.5),
+                    ), showlegend=False, hoverinfo='skip',
+                ))
 
         if not official_corners:
             for corner in _identify_corners(tel1, tel2):

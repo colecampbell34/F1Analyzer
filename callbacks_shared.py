@@ -11,14 +11,13 @@ import dash
 MAX_AI_HISTORY = 20
 
 VALID_TABS = {
-    'tab-trackmap', 'tab-telemetry', 'tab-strategy', 'tab-racepace', 'tab-ai'
+    'tab-trackmap', 'tab-telemetry', 'tab-strategy', 'tab-racepace'
 }
 ANALYSIS_VIEW_OPTIONS = (
     {'label': 'Track map', 'value': 'tab-trackmap'},
     {'label': 'Telemetry', 'value': 'tab-telemetry'},
     {'label': 'Strategy', 'value': 'tab-strategy'},
     {'label': 'Race & pace', 'value': 'tab-racepace'},
-    {'label': 'AI analysis', 'value': 'tab-ai'},
 )
 VALID_LAP_MODES = {'fastest', 'specific'}
 VALID_TRACKMAP_MODES = {'dominance', 'braking', 'speed'}

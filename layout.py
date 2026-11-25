@@ -12,8 +12,8 @@ TAB_HEIGHTS = {
     'telemetry':    'calc(100dvh - 315px)',
     'strategy_top': 'calc((100dvh - 215px) / 2)',
     'strategy_bot': 'calc((100dvh - 215px) / 2)',
-    'race_top':     'calc((100dvh - 215px) / 2)',
-    'race_bot':     'calc((100dvh - 215px) / 2)',
+    'race_top':     'calc((100dvh - 180px) / 2)',
+    'race_bot':     'calc((100dvh - 250px) / 2)',
     'sidecar':      'calc((100dvh - 480px) / 2)',
 }
 
@@ -340,14 +340,18 @@ content = html.Main([
             html.Div(className='workspace-provenance'),
             html.Div([
                 html.Label("Analysis view", className='view-selector-label', htmlFor='main-tabs'),
-                dcc.Dropdown(
-                    id='main-tabs',
-                    options=list(ANALYSIS_VIEW_OPTIONS),
-                    value='tab-trackmap',
-                    clearable=False,
-                    searchable=False,
-                    className='analysis-view-selector',
-                ),
+                html.Div([
+                    dcc.Dropdown(
+                        id='main-tabs',
+                        options=list(ANALYSIS_VIEW_OPTIONS),
+                        value='tab-trackmap',
+                        clearable=False,
+                        searchable=False,
+                        className='analysis-view-selector',
+                    ),
+                    dbc.Button('Ask AI', id='ai-open-button', color='danger', size='sm', n_clicks=0,
+                               disabled=not AI_ENABLED, className='ai-open-button'),
+                ], className='analysis-view-selector-row'),
             ], className='analysis-view-selector-wrap', title='Choose the dashboard view to display'),
         ], className='workspace-actions'),
     ], className='workspace-header'),
@@ -558,12 +562,13 @@ content = html.Main([
             ])
         ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE),
 
-        dcc.Tab(id='tab-ai-control', label=_tab_label(
-            'AI Analysis',
-            "AI Analysis answers questions from the loaded session context. Update the dashboard after changing sessions or drivers before asking.",
-            'beginner'
-        ), value='tab-ai', children=[
-            html.Div([
+    ]),
+    html.Div([
+        html.Div([
+            html.Strong('AI Analysis'),
+            dbc.Button('×', id='ai-close-button', color='secondary', size='sm', n_clicks=0, title='Close AI analysis'),
+        ], className='ai-panel-header', id='ai-panel-drag-handle'),
+        html.Div([
                 html.Div([
                     dbc.InputGroup([
                         dbc.Input(id='ai-question-input', type='text',
@@ -627,10 +632,10 @@ content = html.Main([
 #                 ]),
                 dcc.Store(id='session-context-store', data=''),
                 dcc.Store(id='ai-history-store', storage_type='session', data=[]),
-                dcc.Store(id='ai-history-index-store', storage_type='session', data=0)
-            ], style={'padding': '1.5rem', 'height': TAB_HEIGHTS['single'], 'overflowY': 'auto'})
-        ], style=TAB_STYLE, selected_style=TAB_SELECTED_STYLE)
-    ]),
+                dcc.Store(id='ai-history-index-store', storage_type='session', data=0),
+            ], className='ai-panel-content'),
+        ], id='ai-analysis-panel', className='ai-analysis-panel', style={'display': 'none'}),
+    dcc.Store(id='ai-panel-open-store', data=False),
     html.Div([
         html.Div('Preparing analysis', id='view-loading-title', className='view-loading-title'),
         html.Div('Loading the data this view needs…', id='view-loading-detail', className='view-loading-detail'),

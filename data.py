@@ -384,20 +384,34 @@ def get_best_lap(session, driver_abbr):
 
 
 def _status_laps(bundle: SessionBundle) -> tuple[set, set, set, set]:
-    """Return explicit race-control status laps without timestamp expansion."""
+    """Map explicit race-control intervals onto all overlapping race laps."""
     safety, vsc, red, yellow = set(), set(), set(), set()
     if bundle.messages.empty:
         return safety, vsc, red, yellow
     message_records = bundle.messages.dropna(subset=["timestamp"]).sort_values("timestamp").to_dict("records")
     statuses = {"safety": safety, "vsc": vsc, "red": red, "yellow": yellow}
 
+    active = {}
     for event in message_records:
         kind, action = _classify_race_control_event(event)
         if kind is None or action is None:
             continue
         explicit_lap = event.get("lap_number")
-        if action in {"start", "point"} and pd.notna(explicit_lap):
-            statuses[kind].add(int(explicit_lap))
+        lap_number = int(explicit_lap) if pd.notna(explicit_lap) else None
+        if action == "point":
+            if lap_number is not None:
+                statuses[kind].add(lap_number)
+        elif action == "start":
+            if lap_number is not None:
+                statuses[kind].add(lap_number)
+                active[kind] = lap_number
+        elif action == "end" and kind in active:
+            start_lap = active.pop(kind)
+            if lap_number is not None and kind in {"safety", "vsc"}:
+                # Race-control start/end messages publish lap numbers. Expand
+                # across that explicit interval; timestamps and lap durations
+                # can drift under neutralization and should not invent laps.
+                statuses[kind].update(range(min(start_lap, lap_number), max(start_lap, lap_number) + 1))
 
     # Conflicting status records on one lap produce one plotted status.
     safety.difference_update(red)

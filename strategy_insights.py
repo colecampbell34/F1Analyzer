@@ -27,6 +27,34 @@ def _driver_laps(session, driver):
     return laps.dropna(subset=["lap_number"]).sort_values("lap_number", kind="stable").reset_index(drop=True)
 
 
+def build_driver_pit_laps(session, driver):
+    """Return the published pit laps used by the strategy chart."""
+    pits = getattr(session, "pits", pd.DataFrame())
+    if pits.empty or "abbreviation" not in pits or "lap_number" not in pits:
+        return []
+    laps = pd.to_numeric(
+        pits.loc[pits["abbreviation"] == driver, "lap_number"], errors="coerce",
+    ).dropna()
+    return sorted(laps.astype(int).unique().tolist())
+
+
+def session_lap_extent(session):
+    """Return one shared lap-axis extent for the strategy chart and stint strip."""
+    values = []
+    laps = getattr(session, "laps", pd.DataFrame())
+    if not laps.empty and "lap_number" in laps:
+        values.extend(pd.to_numeric(laps["lap_number"], errors="coerce").dropna().tolist())
+    stints = getattr(session, "stints", pd.DataFrame())
+    if not stints.empty:
+        for column in ("lap_start", "lap_end"):
+            if column in stints:
+                values.extend(pd.to_numeric(stints[column], errors="coerce").dropna().tolist())
+    pits = getattr(session, "pits", pd.DataFrame())
+    if not pits.empty and "lap_number" in pits:
+        values.extend(pd.to_numeric(pits["lap_number"], errors="coerce").dropna().tolist())
+    return max(1.0, max(values, default=1.0))
+
+
 def build_driver_stints(session, driver):
     """Return provider stint records, with per-lap intervals as a fallback."""
     stints = getattr(session, "stints", pd.DataFrame())

@@ -743,7 +743,6 @@ def _register_core_callbacks(app):
             'tab-trackmap': 'track map',
             'tab-strategy': 'strategy',
             'tab-racepace': 'race and pace',
-            'tab-ai': 'AI analysis',
         }.get(active_tab, 'analysis')
         return (
             f"{tab_label.title()} view for {params['year']} {params['race']} "
